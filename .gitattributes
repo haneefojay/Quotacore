@@ -1,0 +1,8 @@
+# These files are UTF-8 with LF line endings, and the specification's own checker
+# reads them as bytes. Normalising line endings here rather than relying on each
+# contributor's core.autocrlf keeps a rewrite from turning into a whole-file diff,
+# and keeps the non-ASCII punctuation in the documents intact.
+* text=auto eol=lf
+
+# The licence text is not ours to reflow.
+LICENSE -text
