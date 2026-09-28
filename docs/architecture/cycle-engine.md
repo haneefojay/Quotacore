@@ -234,10 +234,10 @@ exact RFC 3339 timestamps with offsets.
 | 1 | UTC | hourly | 00:00 | 03:30 | 03:00 | 04:00 | DR-003 |
 | 2 | UTC | daily | 2026-01-01 00:00 | 2026-01-05 12:00 | 2026-01-05 | 2026-01-06 | DR-003 |
 | 3 | UTC | daily | 2026-03-28 00:00 | 2026-03-30 12:00 | 2026-03-30 | 2026-03-31 | DR-003 |
-| 4 | Europe/Berlin | daily | 2026-03-01 00:00 | 2026-03-30 12:00 | 2026-03-30 00:00 +01:00 | 2026-03-31 00:00 +02:00 | DR-007 |
-| 5 | Europe/Berlin | weekly | 2026-01-05 09:00 | 2026-04-01 | 2026-03-29 09:00 +01:00 | 2026-04-05 09:00 +02:00 | DR-006 |
-| 6 | UTC | monthly | 2026-01-31 00:00 | 2026-04-10 | 2026-04-01 | 2026-05-01 | DR-004 |
-| 7 | UTC | monthly | 2026-01-31 00:00 | 2026-03-01 | 2026-03-01 | 2026-04-01 | DR-004 |
+| 4 | Europe/Berlin | daily | 2026-03-01 00:00 | 2026-03-30 12:00 | 2026-03-30 00:00 +02:00 | 2026-03-31 00:00 +02:00 | DR-007 |
+| 5 | Europe/Berlin | weekly | 2026-01-05 09:00 | 2026-04-01 | 2026-03-30 09:00 +02:00 | 2026-04-06 09:00 +02:00 | DR-006 |
+| 6 | UTC | monthly | 2026-01-31 00:00 | 2026-04-10 | 2026-03-31 | 2026-04-30 | DR-004 |
+| 7 | UTC | monthly | 2026-01-31 00:00 | 2026-03-01 | 2026-02-28 | 2026-03-31 | DR-004 |
 | 8 | UTC | yearly | 2026-01-01 | 2028-06-01 | 2028-01-01 | 2029-01-01 | DR-005 |
 | 9 | UTC | yearly | 2024-02-29 00:00 | 2025-06-01 | 2025-02-28 | 2026-02-28 | DR-005, degraded |
 | 10 | UTC | yearly | 2024-02-29 00:00 | 2028-06-01 | 2028-02-29 | 2029-02-28 | DR-005, restored on a leap year |
@@ -261,6 +261,16 @@ plausible one. Both boundaries are computed from the anchor, so a leap-day ancho
 instead produces 2025-02-28, 2026-02-28, 2027-02-28, 2028-02-28 — permanently one day early, with
 no error, no exception and no failed test anywhere else in the matrix. Row 10 is the assertion that
 finds it, which is why it is in the table rather than left to review.
+
+**Correction, 2026-09-28, by `IP-03`.** Rows 4–7 originally carried four date-math errors that
+neither the checker nor the rest of the matrix could detect: a Berlin daily boundary at `2026-03-30
+00:00` was written `+01:00` though EU summer time began 2026-03-29 (DR-007, [ADR-0007](../decisions/0007-per-tenant-timezone.md));
+a weekly boundary was written on a Sunday, two full days before the anchor's weekday; and the two
+monthly rows with a 2026-01-31 anchor were written as if the anchor were the 1st, contradicting
+DR-004's clamping example. The corrected cells above were each verified against Go's own tzdata,
+which is the same calendar authority the binary embeds, and against the web-sourced transition dates
+stated in [ADR-0007](../decisions/0007-per-tenant-timezone.md). The values asserted in the test
+fixture (T-07) are the corrected ones.
 
 ## 7. Interaction with overrides and plan changes
 

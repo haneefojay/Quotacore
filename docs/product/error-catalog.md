@@ -125,18 +125,45 @@ The complete mapping, so no error can be documented in one place and forgotten i
 | Endpoint | Possible codes |
 | --- | --- |
 | `POST /v1/consume` | `validation_failed`, `invalid_amount`, `invalid_window`, `missing_idempotency_key`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `feature_not_in_plan`, `feature_archived`, `tenant_suspended`, `tenant_not_found`, `idempotency_key_reuse`, `payload_too_large`, `quota_exceeded`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
-| `POST /v1/refund` | as `consume`, plus `refund_exceeds_grant`; never `quota_exceeded` |
-| `POST /v1/check` | `validation_failed`, `invalid_window`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `feature_not_in_plan`, `feature_archived`, `tenant_suspended`, `tenant_not_found`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error`; never `quota_exceeded`, never `idempotency_key_reuse` |
+| `POST /v1/refund` | `validation_failed`, `invalid_amount`, `invalid_window`, `missing_idempotency_key`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `feature_not_in_plan`, `feature_archived`, `tenant_suspended`, `tenant_not_found`, `idempotency_key_reuse`, `payload_too_large`, `refund_exceeds_grant`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
+| `POST /v1/check` | `validation_failed`, `invalid_window`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `feature_not_in_plan`, `feature_archived`, `tenant_suspended`, `tenant_not_found`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
 | `GET /v1/balance` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `feature_not_found`, `tenant_not_found`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
-| `GET /v1/admin/features`, `POST`, `GET /{key}`, `PATCH`, `POST /{key}/archive` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `feature_not_found`, `feature_key_exists`, `feature_in_use`, `feature_unit_immutable`, `resource_version_conflict`, `payload_too_large`, `not_implemented` |
-| `GET /v1/admin/plans`, `POST`, `GET /{id}`, `PATCH /{id}`, `POST /{id}/apply`, `POST /{id}/archive` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `plan_not_found`, `plan_key_exists`, `plan_in_use`, `resource_version_conflict`, `confirmation_required`, `payload_too_large` |
+| `GET /v1/admin/features`, `POST /v1/admin/features`, `GET /v1/admin/features/{feature_key}`, `PATCH /v1/admin/features/{feature_key}`, `POST /v1/admin/features/{feature_key}/archive` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `feature_not_found`, `feature_key_exists`, `feature_in_use`, `feature_unit_immutable`, `resource_version_conflict`, `payload_too_large`, `not_implemented` |
+| `GET /v1/admin/plans`, `POST /v1/admin/plans`, `GET /v1/admin/plans/{id}`, `PATCH /v1/admin/plans/{id}`, `POST /v1/admin/plans/{id}/apply`, `POST /v1/admin/plans/{id}/archive` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `plan_not_found`, `plan_key_exists`, `plan_in_use`, `resource_version_conflict`, `confirmation_required`, `payload_too_large` |
 | `GET /v1/admin/plans/{id}/impact` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `plan_not_found` |
-| `GET /v1/admin/tenants`, `POST`, `GET /{id}`, `PATCH /{id}`, `POST /{id}/suspend`, `POST /{id}/resume`, `DELETE /{id}` | `validation_failed`, `invalid_timezone`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `tenant_exists`, `tenant_deleted`, `resource_version_conflict`, `payload_too_large` |
-| `POST /v1/admin/tenants/{id}/grant`, `POST /{id}/set`, `POST /{id}/force-rollover`, `POST /{id}/overrides` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `feature_not_found`, `grant_exceeds_ceiling`, `reset_not_supported`, `resource_version_conflict`, `payload_too_large` |
+| `GET /v1/admin/tenants`, `POST /v1/admin/tenants`, `GET /v1/admin/tenants/{id}`, `PATCH /v1/admin/tenants/{id}`, `POST /v1/admin/tenants/{id}/suspend`, `POST /v1/admin/tenants/{id}/resume`, `DELETE /v1/admin/tenants/{id}` | `validation_failed`, `invalid_timezone`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `tenant_exists`, `tenant_deleted`, `resource_version_conflict`, `payload_too_large` |
+| `POST /v1/admin/tenants/{id}/grant`, `POST /v1/admin/tenants/{id}/set`, `POST /v1/admin/tenants/{id}/force-rollover`, `POST /v1/admin/tenants/{id}/overrides` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `feature_not_found`, `grant_exceeds_ceiling`, `reset_not_supported`, `resource_version_conflict`, `payload_too_large` |
+| `DELETE /v1/admin/tenants/{id}/overrides/{feature_key}` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `payload_too_large` |
 | `GET /v1/admin/tenants/{id}/events` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `rate_limited` |
 | `GET /v1/admin/audit` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `rate_limited` |
 | `POST /v1/admin/keys`, `GET /v1/admin/keys`, `DELETE /v1/admin/keys/{id}` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `resource_version_conflict`, `payload_too_large` |
-| `GET /v1/admin/status`, `GET /healthz`, `GET /readyz` | none. These are unauthenticated probes and return no error envelope |
+| `GET /v1/admin/status`, `GET /healthz`, `GET /readyz` | none |
+| `GET /metrics`, `GET /openapi.json`, `GET /docs` | none |
+
+Each cell names complete routes. An earlier version of this table abbreviated them, with a bare verb
+inheriting the first cell's path, and that was ambiguous in a way a reader could resolve two ways: a
+bare `PATCH` on the features row is a collection `PATCH` or a `PATCH` of one feature, and only the
+second has a `version` to conflict on. The contract check reads these cells, so a cell that can be
+read two ways would have to be guessed at.
+
+A cell that lists several routes states the codes those routes **can** return, not that each route
+returns all of them. `POST /v1/admin/plans/{id}/apply` is the clearest case: it cannot return
+`plan_key_exists`, but it shares a cell with the route that creates a plan. The union across a cell
+is what the contract is checked against, and a code that is reachable on one route in the cell and
+not another is the ordinary case, not an error.
+
+Three constraints are expressed by what a route does **not** list, so they are stated here rather
+than left to inference:
+
+- `POST /v1/refund` never returns `quota_exceeded`. A refund cannot exceed a balance; the bound it
+  can break is `balance <= limit + bonus`, which is `refund_exceeds_grant` (DR-019).
+- `POST /v1/check` never returns `quota_exceeded` and never returns `idempotency_key_reuse`. A
+  denial is `allowed: false` at `200`, and `check` mutates nothing, so there is no key to reuse
+  (DR-024, [Q-07](assumptions-and-open-questions.md#2-open-questions)).
+- `GET /v1/admin/status`, `GET /healthz`, `GET /readyz`, `GET /metrics`, `GET /openapi.json` and
+  `GET /docs` return no error envelope, because they are the probe and operator surfaces rather
+  than the API. `GET /v1/admin/status` still requires the `admin` scope (NFR-O5): it returns no
+  envelope so that a dependency being down can be reported, which is the one thing it exists to do.
 
 `tenant_deleted` and `plan_not_found` are in the matrix because the endpoints can reach those
 states. A soft-deleted tenant is treated exactly as absent by every endpoint that takes an
@@ -144,8 +171,13 @@ identifier, which is why `tenant_not_found` remains the common response and `ten
 appears only where a caller has already been authorised to see the tenant exists.
 
 `payload_too_large` appears on every endpoint that accepts a request body, and on none that does
-not, because the body is capped before it is parsed (NFR-T6, DR-016). It is absent from the
-`refund` row, which inherits the `consume` row in full.
+not, because the body is capped before it is parsed (NFR-T6, DR-016). That includes
+`DELETE /v1/admin/tenants/{id}/overrides/{feature_key}`, whose only field is `apply_at`: the route
+takes a body, so it is capped like every other one, and it is absent from every read route.
+
+The rule is stated in terms of whether a route has a body rather than which HTTP method it uses,
+because one route here is a `DELETE` that takes a body. `payload_too_large` on a `DELETE` is not a
+mistake in the table, and a future route that takes a `DELETE` body will need it too.
 
 ---
 

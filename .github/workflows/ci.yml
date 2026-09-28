@@ -30,6 +30,8 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
+      - name: Generated artefacts match the contract
+        run: make generate-check
       - name: Lint
         run: make lint
       - name: Unit tests
@@ -96,6 +98,20 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/readyz)" = "503"
       - name: No product route exists yet
         run: test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/v1/balance)" = "404"
+      - name: The running binary serves the contract it was built from
+        run: |
+          curl -fsS -o /tmp/served.json http://127.0.0.1:8080/openapi.json
+          python3 -c "import json;d=json.load(open('/tmp/served.json'));assert d['openapi'].startswith('3.1'),d['openapi'];missing=[p for p in ['/v1/consume','/v1/refund','/v1/check','/v1/balance','/healthz','/readyz','/metrics','/openapi.json','/docs'] if p not in d['paths']];assert not missing,missing"
+      - name: The running binary serves the committed reference page
+        run: |
+          curl -fsS -o /tmp/served.html http://127.0.0.1:8080/docs
+          cmp /tmp/served.html api/docs.html
+      - name: The documentation routes take no credential and are GET only
+        run: |
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/openapi.json)" = "405"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/docs)" = "405"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/v1/consume)" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/v1/admin/tenants)" = "404"
       - name: Refuses to start on an unacknowledged bootstrap key
         run: |
           if docker run --rm --network quotacore_default \

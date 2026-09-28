@@ -29,24 +29,32 @@ already decided, [Q-04](../../docs/product/assumptions-and-open-questions.md#2-o
 [Q-14](../../docs/product/assumptions-and-open-questions.md#2-open-questions) produced new rules and a
 new route, and [Q-21](../../docs/product/assumptions-and-open-questions.md#2-open-questions) produced
 [ADR-0017](../../docs/decisions/0017-noeviction-and-duplicate-reversal.md). `IP-00` is therefore
-`COMPLETE`. The current phase is `IP-01`, the toolchain and CI foundation, started on 2026-09-27,
-and `IP-02` follows it with the OpenAPI document that is the output of the questions `IP-00`
-closed. `IP-01` closed on 2026-09-27 with all six Definition-of-Done items met, after item 4 was
-amended by its owner: the item had asked for an SBOM over the Go module graph *and the base image*,
-no image exists in this phase, and the base-image half moved to `IP-15`'s item 11, which now names
-NFR-C3 and NFR-C4. `IP-02` and `IP-03` are therefore unblocked and both `NOT STARTED`; exactly one
-phase may be `IN PROGRESS` at a time, and the next one to start is the owner's to choose.
-`A-01` is a dated, owner-accepted v0.1 **release** risk, not a code-start blocker, and that is a
-deliberate decision recorded in
-[the register](../../docs/product/assumptions-and-open-questions.md#accepted-risks).
+`COMPLETE`. `IP-01`, the toolchain and CI foundation, closed on 2026-09-27 with all six
+Definition-of-Done items met, after item 4 was amended by its owner: the item had asked for an
+SBOM over the Go module graph *and the base image*, no image exists in that phase, and the
+base-image half moved to `IP-15`'s item 11, which now names NFR-C3 and NFR-C4. **`IP-02`, the
+OpenAPI contract, started and closed on 2026-09-28** with all seven DoD items met: the contract
+that the questions `IP-00` closed were about now exists, is served at `/openapi.json`, and has a
+generated reference at `/docs`. **`IP-03`, the cycle engine and the boundary matrix, started and
+closed on 2026-09-28**: the pure calendar function that every cycle boundary in the product rests on
+now exists, proved by a 20-row boundary table rather than by prose. Its only dependency, `IP-01`, was
+`COMPLETE`, its gating decisions were accepted, and the status was set before any file it owns was
+written, which is what [AGENTS.md](../../AGENTS.md) requires. Verification surfaced two defects, both
+fixed and recorded in the phase's own section: rows 4–7 of the boundary table itself were wrong
+(corrected with a dated note in [cycle-engine.md](../../docs/architecture/cycle-engine.md)), and the
+committed `go.mod`/`go.sum` were never tidy (repaired, because CI's tidy gate requires it). `A-01` is
+a dated, owner-accepted v0.1 **release** risk, not a code-start blocker, and that is a deliberate
+decision recorded in [the register](../../docs/product/assumptions-and-open-questions.md#accepted-risks).
 
 | Item | State |
 | --- | --- |
 | Specification | 63 documents, 49 rules, 17 accepted decisions, 15 named correctness tests |
 | Questions blocking v0.1 | None. 8 open and 3 deferred, none of them gating; the five that needed an answer before the contract was frozen are answered |
-| Phases | 28, `IP-00`–`IP-27`. `IP-00` and `IP-01` are `COMPLETE`; `IP-02` and `IP-03` are unblocked and `NOT STARTED`; the other 24 are `BLOCKED` on an earlier phase |
-| Code written | `IP-01`: 19 Go, Compose, Makefile, module and CI files. No product behaviour, asserted by a test rather than claimed. `IP-00` closed the contract and wrote none; `IP-01` was the first phase to own files in the repository |
+| Phases | 28, `IP-00`–`IP-27`. `IP-00`–`IP-03` are `COMPLETE`; `IP-04` is `NOT STARTED`, its dependencies `IP-02` and `IP-03` both closed; the other 23 are `BLOCKED` on an earlier phase |
+| Code written | `IP-01`: 19 Go, Compose, Makefile, module and CI files. No product behaviour, asserted by a test rather than claimed. `IP-00` closed the contract and wrote none; `IP-01` was the first phase to own files in the repository. `IP-02` added `api/openapi.yaml` — 39 operations, 67 schemas, 34 error codes — plus the types and validation generated from it, the served `/openapi.json` and `/docs`, and the generator that keeps the two in step. It adds no product behaviour either: an enforcement call still returns `404`, because `IP-07` owns the routes, and `TestNoProductBehaviour` fails if that ever stops being true. `IP-03` added `internal/cycle`: the engine and the suite that proves it — boundary matrix, DST pair, `never`, monotonicity, property, tzdata, benchmark and shape-scope tests, 8 files — plus the embedded time-zone database. It is a pure library: no route, no store, no clock; a caller feeds an instant and gets a window, and `TestNoProductBehaviour` now also pins the engine's arithmetic vocabulary inside `internal/cycle` |
 | `IP-01` open DoD items | None. Item 4 was amended before it was met: the Go module graph stays here and the base image moved to `IP-15` item 11, so the obligation has a successor rather than a deletion |
+| `IP-02` open DoD items | None. All 7 met on 2026-09-28, each closed by a named test recorded in the phase's own section. Item 7 was added by its owner on 2026-09-28 because `mvp-scope.md` and ADR-0010 both required a generated `/docs` page and no phase owned it |
+| `IP-03` open DoD items | None. All 7 met on 2026-09-28. Verification found and fixed two defects, both recorded in the phase section and in CHANGELOG: rows 4–7 of the boundary table itself were wrong, and the committed `go.mod`/`go.sum` were never tidy |
 
 ## 3. How to use this roadmap
 
@@ -78,11 +86,22 @@ from a decision record, an issue or a commit message stays valid for the life of
 | `IN REVIEW` | DoD claimed complete and under review against its own items |
 | `COMPLETE` | Every DoD item satisfied and evidenced, and the phase's exit criteria met |
 
-**`IP-00` and `IP-01` are `COMPLETE`, and `IP-02` is the next phase.** `IP-00` was the phase that
-closed the contract questions, and it closed them on 2026-09-27. `IP-01` was the first phase allowed
-to own code files, and it closed on 2026-09-27 with all six DoD items met. Every later phase is
-`BLOCKED` on an earlier phase, not on a question, and exactly one phase may be `IN PROGRESS` at a
-time, so the next phase to start is set deliberately rather than by whoever looks next.
+**`IP-00`, `IP-01`, `IP-02` and `IP-03` are `COMPLETE`; `IP-04` is unblocked and `NOT STARTED`.**
+`IP-00` was the phase that closed the contract questions, and it closed them on 2026-09-27. `IP-01`
+was the first phase allowed to own code files, and it closed on 2026-09-27 with all six DoD items
+met. `IP-02`, the OpenAPI contract, started and closed on 2026-09-28 with all seven DoD items met,
+including item 7, the generated `/docs` page, which was added by its owner on the day it was needed
+because [mvp-scope.md](../product/mvp-scope.md) and
+[ADR-0010](../decisions/0010-go-chi-spec-first-openapi.md) required a page that no phase owned.
+
+`IP-03`, the cycle engine and the boundary matrix, started and closed on 2026-09-28 with all seven
+DoD items met. Its only dependency, `IP-01`, was `COMPLETE`, and its gating decisions were accepted;
+verification then found and fixed two defects, both recorded in the phase's own section: four rows
+of the boundary table were wrong, and the committed `go.mod`/`go.sum` were never tidy. Every later
+phase is `BLOCKED` on an earlier phase, not on a question. `IP-04` is the next phase permitted: its
+dependencies, `IP-02` and `IP-03`, are both closed, and no work has begun on it. Exactly one phase
+may be `IN PROGRESS` at a time, and the status is recorded as the truth about the work — nothing is
+marked in progress while it is not.
 
 ### Phase-complete checkpoint
 
@@ -111,9 +130,9 @@ answer.
 | --- | --- | --- | --- |
 | `IP-00` | Close the blocking questions | — | `COMPLETE` — closed 2026-09-27 |
 | `IP-01` | Repository, toolchain and CI foundation | ADR-0009, ADR-0010, ADR-0011, ADR-0014 | `COMPLETE` — closed 2026-09-27, 6 of 6 DoD items met, item 4 amended to the Go module graph with its base-image half moved to `IP-15` |
-| `IP-02` | The OpenAPI contract | ADR-0010 | `NOT STARTED` — unblocked by `IP-01` |
-| `IP-03` | Cycle engine and boundary matrix | ADR-0003, ADR-0007, ADR-0008 | `NOT STARTED` — unblocked by `IP-01` |
-| `IP-04` | Data-plane skeleton, keyspace and snapshot cache | ADR-0001, ADR-0011 | `BLOCKED` on `IP-02`, `IP-03` |
+| `IP-02` | The OpenAPI contract | ADR-0010 | `COMPLETE` — started and closed 2026-09-28, 7 of 7 DoD items met, item 7 added by its owner on 2026-09-28 |
+| `IP-03` | Cycle engine and boundary matrix | ADR-0003, ADR-0007, ADR-0008 | `COMPLETE` — started and closed 2026-09-28, 7 of 7 DoD items met |
+| `IP-04` | Data-plane skeleton, keyspace and snapshot cache | ADR-0001, ADR-0011 | `NOT STARTED` — unblocked by `IP-02` and `IP-03`, both `COMPLETE` |
 | `IP-05` | The four atomic scripts | ADR-0002, ADR-0005 | `BLOCKED` on `IP-03`, `IP-04` |
 | `IP-06` | Idempotency prevention in the data plane | ADR-0004 | `BLOCKED` on `IP-05` |
 | `IP-07` | Data-plane endpoints | ADR-0001, ADR-0012 | `BLOCKED` on `IP-05`, `IP-06` |

@@ -10,6 +10,11 @@ import (
 	"syscall"
 	"time"
 
+	// Embed the time-zone database so a boundary is correct without a system
+	// database and without egress, and so a host that updates its zone data
+	// cannot shift a customer's boundaries retroactively (NFR-OPS8, IP-03 DoD 7).
+	_ "time/tzdata"
+
 	"github.com/quotacore/quotacore/internal/api"
 	"github.com/quotacore/quotacore/internal/db"
 )

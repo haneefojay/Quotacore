@@ -39,7 +39,7 @@ why the MVP can ship without SDKs, and it is why the API is honest about `check`
 | Cycle control | Lazy monotonic rollover on the request path plus an idempotent reset worker (ADR-0003) |
 | Allocation caps | `consume 1` on create, `refund 1` on delete, same atomic path (DR-017, DR-019) |
 | Idempotency | Required on `consume` and `refund`, 24 h window (DR-026 to DR-030) |
-| Admin operations | `grant`, `set`, `force-rollover`, `suspend`, `resume`, `apply-now`, soft delete |
+| Admin operations | `grant`, `set`, `force-rollover`, `suspend`, `resume`, `apply-now`, override clear, soft delete |
 | Destructive bulk operations | `apply-now` above `QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD` returns `409 confirmation_required` with a single-use token and applies nothing (DR-046) |
 | Plan impact preview | `GET /v1/admin/plans/{id}/impact` — read-only affected count and earliest affected `cycle_end` (UC-19) |
 | Audit | `audit_log` for every administrative mutation (DR-041) |

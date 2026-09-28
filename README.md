@@ -64,7 +64,17 @@ order of the work is [28 phases in `docs/roadmaps/`](docs/roadmaps/roadmap-index
 the repository, the toolchain and the CI foundation and closed on 2026-09-27: the module graph
 pinned, the two health probes, embedded up-only migrations, a service that starts and reports
 not-ready, a licence gate and an SBOM. It contains no product behaviour, which a test asserts rather
-than claims. The contract is `IP-02`, which is unblocked and `NOT STARTED`.
+than claims. [`IP-02`](docs/roadmaps/v0-1-enforcement-path.md#ip-02--the-openapi-contract) then
+wrote the contract and closed on 2026-09-28: 39 operations, 67 schemas and all 34 catalogue codes,
+the Go types generated from them, the contract served at `/openapi.json` and a generated reference at
+`/docs`. It also contains no product behaviour — an enforcement call still returns `404`, because
+`IP-07` owns the routes — and a test asserts that too. [`IP-03`](docs/roadmaps/v0-1-enforcement-path.md#ip-03--cycle-engine-and-boundary-matrix),
+the cycle engine and its boundary matrix, started and closed on 2026-09-28: the pure calendar
+function that every cycle boundary in the product rests on, with the Go time-zone database embedded
+in the binary and the 20-row boundary table, the daylight-saving pair, a property test and the
+index-monotonicity tests as its proof. Verification caught and fixed two defects, both recorded in
+the phase section: rows 4–7 of the boundary table were wrong, and the committed `go.mod`/`go.sum`
+were never tidy.
 
 Start with [PROJECT.md](PROJECT.md), then follow the reading order it gives you.
 
@@ -94,14 +104,27 @@ The complete index, with what each document settles and who should read it, is
 ├── CLAUDE.md              the same entry point, for other agent harnesses
 ├── CHANGELOG.md           what changed in the specification, and when
 ├── LICENSE                Apache-2.0
+├── Makefile               the documented steps, and the ones CI runs
+├── docker-compose.yml     the fast store and Postgres, and nothing else
+├── go.mod, go.sum         the module graph, pinned
+├── api/                   the contract, and everything generated from it
+│   ├── openapi.yaml       THE contract: 39 operations, 67 schemas, 34 codes
+│   ├── docs.html          the generated reference, served at /docs
+│   └── oas_*_gen.go       generated types, codecs and validators. Do not edit
+├── cmd/quotacore/         the service entry point
+├── internal/api/          the router, the probes, and the served contract
+├── internal/db/           embedded up-only migrations
 ├── tools/
-│   └── check-docs.ps1     links, anchors, identifiers, inventory
+│   ├── check-docs.ps1     links, anchors, identifiers, inventory
+│   └── gendocs/           renders openapi.yaml into docs.html
+├── .github/workflows/     the pipeline that runs the checks below
 └── docs/
     ├── README.md          full index and conventions
     ├── product/           what must be true, and for whom
     ├── architecture/      how it is built and proven
     ├── decisions/         why each choice was made
-    └── research/          what was investigated before deciding
+    ├── research/          what was investigated before deciding
+    └── roadmaps/          the phases, and what proves each one finished
 ```
 
 ## Contributing

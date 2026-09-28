@@ -400,7 +400,9 @@ The escape hatch that lets a B2B SaaS stop hard-coding plan names in application
 - An override for a feature the plan does not include → `400 validation_failed`. Overrides
   customise an included feature; they never add one (DR-015).
 - Clearing an override restores the plan value from the next boundary, or immediately when the
-  clearing request sets `apply: now`.
+  clearing request sets `apply_at: immediate`. `DELETE /v1/admin/tenants/{id}/overrides/{feature_key}`
+  is the clearing route, because the `tenant_overrides_not_empty` constraint makes a row with both
+  values null impossible: clearing is the absence of the row, not a row of nulls.
 
 **Postcondition:** effective limit for the feature is the override when present, else the plan
 value; this precedence rule is stated once and used by every read path.

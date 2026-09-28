@@ -8,12 +8,35 @@ import (
 	"testing"
 )
 
-// DoD item 6 for IP-01: no package contains product behaviour. The route half
-// is asserted by TestRouterServesOnlyTheTwoHealthProbes. This asserts the
-// other half as a source-level check, which is the form testing-strategy.md
-// section 4 blesses for a property that has no other observable: the package
-// set is exactly the three this phase owns, and no file in the module mentions
-// the arithmetic the product exists to perform.
+// DoD item 6 for IP-01, kept true by IP-02: no package contains product
+// behaviour. The route half is asserted by TestRouterServesOnlyTheTwoHealthProbes.
+// This asserts the other half as a source-level check, which is the form
+// testing-strategy.md section 4 blesses for a property that has no other
+// observable: the package set is exactly the five this phase owns, and no file
+// in the module mentions the arithmetic the product exists to perform.
+//
+// The `api` package is here because IP-02 owns it. It holds ogen's generated
+// types, JSON codecs and request validators, which is the opposite of product
+// behaviour: a validator that rejects a malformed quota request is not the
+// arithmetic that decides whether the request is allowed. What `api` must not
+// contain is anything that *decides* anything, and the ogen config enforces
+// that by disabling every router, client and unimplemented-handler feature.
+//
+// `tools/gendocs` is here because IP-02 owns it too. It renders the contract
+// into the page at /docs, which is a rendering of a document rather than a
+// decision about a request, and it is the same code the service's test suite
+// runs when it checks the committed page is not stale. A documentation generator
+// is not a place product behaviour can grow, and keeping it in its own command
+// is what makes that true: it has no route, no store and no configuration.
+//
+// `internal/cycle` is here because IP-03 owns it. It is the pure boundary
+// engine: a function from an anchor, an interval and a zone to a cycle window,
+// which is arithmetic, not enforcement, and it is deliberately the only package
+// that may perform cycle arithmetic (cycle-engine.md §4: "no second
+// implementation"). cycleScopedSymbols captures that rule at the source level —
+// the engine's vocabulary is allowed inside `internal/cycle` and nowhere else —
+// while balance, idempotency and script symbols remain forbidden everywhere,
+// including inside the engine.
 func TestNoProductBehaviour(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -22,9 +45,12 @@ func TestNoProductBehaviour(t *testing.T) {
 	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
 
 	wantPackages := map[string]bool{
-		"cmd/quotacore": true,
-		"internal/api":  true,
-		"internal/db":   true,
+		"api":            true,
+		"cmd/quotacore":  true,
+		"internal/api":   true,
+		"internal/cycle": true,
+		"internal/db":    true,
+		"tools/gendocs":  true,
 	}
 	gotPackages := map[string]bool{}
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -76,6 +102,13 @@ func TestNoProductBehaviour(t *testing.T) {
 		"balanceRemaining", "DeductBalance", "CheckAndDeduct",
 		"idempotencyKey", "EVALSHA", "EvalSha", "ScriptSha",
 	}
+	// The engine's own arithmetic vocabulary, which may live only in
+	// internal/cycle. A second implementation of boundary arithmetic anywhere
+	// else would be a second authority over the calendar, which is the one
+	// thing this phase exists to keep single (cycle-engine.md §4).
+	cycleScopedSymbols := []string{
+		"currentIndex", "addMonths", "addDays", "addYears",
+	}
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -97,14 +130,25 @@ func TestNoProductBehaviour(t *testing.T) {
 		if sameFile(path, file) {
 			return nil
 		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		rel = filepath.ToSlash(rel)
 		body, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
 		}
 		for _, symbol := range productSymbols {
 			if strings.Contains(string(body), symbol) {
-				rel, _ := filepath.Rel(root, path)
-				t.Errorf("%s mentions %s, which is product behaviour", filepath.ToSlash(rel), symbol)
+				t.Errorf("%s mentions %s, which is product behaviour", rel, symbol)
+			}
+		}
+		if !strings.HasPrefix(rel, "internal/cycle") {
+			for _, symbol := range cycleScopedSymbols {
+				if strings.Contains(string(body), symbol) {
+					t.Errorf("%s mentions %s, which may only appear inside internal/cycle", rel, symbol)
+				}
 			}
 		}
 		return nil
