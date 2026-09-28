@@ -313,6 +313,23 @@ Things that are decided, and that a later reader could plausibly "fix" in the wr
     not describe the window as surviving a flush.
 - **The event ledger is best effort and at-least-once.** `event_id` deduplication at the consumer is
   part of the contract, not an oversight.
+- **The `security` arrays in `api/openapi.yaml` are empty on purpose.** Every operation's requirement
+  is `bearerAuth: []`, and the scope each route needs is the `x-required-scope` extension
+  ([api-conventions.md §5.1](docs/architecture/api-conventions.md#51-how-the-contract-states-security)).
+  Putting `runtime` or `admin` in the array would mean *exactly* that scope, which would stop an
+  `admin` key working on the data plane — the opposite of what section 5 of that document requires.
+  OpenAPI 3.1 has no "at least this scope" vocabulary, so the minimum is a named vendor extension
+  rather than a non-conformant invention. This one *is* decided.
+- **`oas_*_gen.go` is generated and must never be edited.** `api/openapi.yaml` is the input;
+  `make generate` is the only way these files change. The generator runs with `disable_all`, so it
+  emits types, JSON codecs and validators and **no router, no client and no `501` handler** — the
+  routes belong to `IP-07` and `IP-09`, and a generated stub answering `501` for a v0.1 endpoint
+  would be a second wrong meaning for `not_implemented`. `TestOgenEmitsNoRoutes` fails if the
+  configuration ever stops producing that.
+- **`api/docs.html` is generated and committed.** It is written by `make docs` from the same
+  `api/openapi.yaml`, and `make generate-check` fails if the committed page differs. Do not hand-edit
+  it and do not regenerate it from a different tool version; the page is deterministic, and a diff in
+  a 219,000-byte artefact is unreadable unless the generator did it.
 - **A cache miss may read the database once.** DR-039 permits a single bounded lookup on a miss.
   The prohibition is on a per-request read of configuration or API keys, not on any database access
   at all.

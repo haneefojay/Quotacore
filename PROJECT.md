@@ -10,7 +10,7 @@
 
 | Field | Value |
 | --- | --- |
-| Stage | Specification complete, `IP-01` closed, `IP-02` unblocked |
+| Stage | Specification complete; `IP-01`, `IP-02` and `IP-03` closed |
 | Version target | v0.1.0 (MVP) |
 | Canonical name | Quotacore. "Threshold" is a deprecated alias and must not appear in code, docs or marketing |
 | Licence | Apache-2.0 — [LICENSE](LICENSE), decided in [ADR-0014](docs/decisions/0014-apache-2-0-license.md) |
@@ -26,8 +26,13 @@ and [Q-21](docs/product/assumptions-and-open-questions.md#2-open-questions). Imp
 started, and deliberately at the bottom rather than the top:
 [`IP-01`](docs/roadmaps/v0-1-enforcement-path.md#ip-01--repository-toolchain-and-ci-foundation) built
 the repository, the toolchain and the pipeline, contains no product behaviour, and closed on
-2026-09-27. The contract is `IP-02`, which is unblocked and `NOT STARTED`, and the data plane comes
-after it. A market assumption is carried as a dated, owner-accepted release risk
+2026-09-27. [`IP-02`](docs/roadmaps/v0-1-enforcement-path.md#ip-02--the-openapi-contract) then wrote
+the contract the code is written against — 39 operations, 67 schemas, 34 error codes, served at
+`/openapi.json` with a generated reference at `/docs` — and closed on 2026-09-28.
+[`IP-03`](docs/roadmaps/v0-1-enforcement-path.md#ip-03--cycle-engine-and-boundary-matrix), the cycle
+engine and its boundary matrix, started and closed on 2026-09-28, and the data plane (`IP-04`, the
+keyspace and the snapshot cache) comes after that. A
+market assumption is carried as a dated, owner-accepted release risk
 ([A-01](docs/product/assumptions-and-open-questions.md#accepted-risks)) rather than a code-start
 blocker, because no amount of further specification work would settle it.
 
@@ -118,14 +123,21 @@ The first four tasks, in order, each one a phase in
    gate and SBOM, and a pipeline that runs the checks in this file. There is no product behaviour in
    it, which a test asserts rather than claims. The steps and the evidence are in
    [the phase section](docs/roadmaps/v0-1-enforcement-path.md#ip-01--repository-toolchain-and-ci-foundation).
-3. `IP-02`, unblocked and `NOT STARTED`: `api/openapi.yaml`, generated from the contract rather than
-   written ahead of it, and
-   the validation and the reference it produces —
-   [ADR-0010](docs/decisions/0010-go-chi-spec-first-openapi.md).
-4. `IP-03`: the cycle engine and its boundary test table, which is the component most likely to
-   contain a silent permanent defect — [cycle-engine.md](docs/architecture/cycle-engine.md). The
-   atomic script and T-01, T-02 and T-09 follow it; if those three pass, the central argument of
-   the product holds.
+3. ~~`IP-02`: the OpenAPI contract.~~ Closed on 2026-09-28 with all seven Definition-of-Done items
+   met: `api/openapi.yaml` written from the specification rather than ahead of it, covering 39
+   operations, 67 schemas and all 34 catalogue codes; the types, JSON codecs and validation generated
+   from it, with no router and no unimplemented handler; the contract served at `/openapi.json`; and
+   a self-contained generated reference at `/docs`. The generator, the page and the served document
+   are all checked for drift, and the catalogue, matrix, example, header, scope and schema claims in
+   [api-conventions.md](docs/architecture/api-conventions.md#13-contract-tests) are enforced by named
+   tests. It contains no product behaviour either, and `TestNoProductBehaviour` fails if that ever
+   stops being true. The steps and the evidence are in
+   [the phase section](docs/roadmaps/v0-1-enforcement-path.md#ip-02--the-openapi-contract).
+4. `IP-03`, `COMPLETE` (closed 2026-09-28): the cycle engine and its boundary
+   test table — the component most likely to contain a silent permanent defect, which verification
+   proved it did: rows 4–7 of the table were wrong and are corrected —
+   [cycle-engine.md](docs/architecture/cycle-engine.md). The atomic script and T-01, T-02 and T-09
+   follow it; if those three pass, the central argument of the product holds.
 
 Run the specification's own consistency checks at any time. One command verifies every link and
 anchor, every identifier reference, that nothing is defined twice, that the inventory in

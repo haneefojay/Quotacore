@@ -70,8 +70,78 @@ exists, because a future implementer needs to know which statements are new.
   [testing-strategy.md](docs/architecture/testing-strategy.md), or the constraint in
   [data-model.md](docs/architecture/data-model.md). The rules previously stated no verification
   method at all, which both [AGENTS.md](AGENTS.md) and [docs/README.md](docs/README.md) require.
+- `IP-03`, the cycle engine and the boundary matrix, closed with its evidence recorded in the phase
+  section of [v0-1-enforcement-path.md](docs/roadmaps/v0-1-enforcement-path.md). The engine is
+  `internal/cycle`, a pure function from an anchor and an interval to the current window, embedded
+  with the Go time-zone database (`import _ "time/tzdata"` in the engine and the binary, satisfying
+  NFR-OPS8 without egress). Eight files, closed by a test each: `TestBoundaryMatrix` (all 20 rows of
+  the [cycle-engine.md](docs/architecture/cycle-engine.md) §6 table to the exact RFC 3339 instant),
+  `TestDaylightSavingPair`, `TestNeverHasNoBoundary`, `TestProjectedWindowEqualsComputedWindow`
+  (six fixed DST probes plus 4,000 seeded draws over five zones), `TestCycleIndexIsMonotonic` and
+  `TestClockJumpBackwards` (T-05), `TestIdleAcrossBoundaries` (T-06), `TestZoneDatabaseIsPresent`,
+  and `TestSearchIsNotLinearByConstruction` with two benchmarks (five-years: hourly 348 ns/op,
+  daily 18.2 µs/op, weekly 15.1 µs/op, monthly 7.3 µs/op, yearly 4.4 µs/op; `Add` 7.2 ns/op, no
+  allocations). `TestNoProductBehaviour` in `internal/api` now also pins the engine's arithmetic
+  vocabulary — `currentIndex`, `addMonths`, `addDays`, `addYears` — inside `internal/cycle`.
 
 ### Changed
+
+- **`IP-02` is `COMPLETE`, started and closed on 2026-09-28, with all seven Definition-of-Done
+  items met.** The contract exists, is served, and is generated from the specification rather than
+  ahead of it.
+  **The contract.** `api/openapi.yaml` is 5,037 lines covering 39 operations, 67 named schemas and
+  all 34 catalogue codes, with the response envelope, `X-Request-Id` on every response, the
+  `Idempotency-Key` header, cursor pagination, `additionalProperties: false` on every request body,
+  and a request and response example on every operation.
+  **The generated types.** ogen 1.24.0 with `disable_all` emits types, JSON codecs and validators
+  and nothing else: no router, no client, no telemetry layer, and no `501` handler, because a
+  generated stub answering `501` for a v0.1 endpoint would be a second wrong meaning for
+  `not_implemented` (`TestOgenEmitsNoRoutes`).
+  **Served, not just written.** `GET /openapi.json` returns the embedded document converted from
+  YAML to JSON once at start-up and cached, with object key order preserved so the bytes are stable
+  and diffable; a request path that parsed a 5,000-line document would be a request path spending
+  time on something that cannot change while the process runs. `GET /docs` returns a committed
+  219,356-byte HTML page generated from the same file by `tools/gendocs`, self-contained with inline
+  CSS, no JavaScript and nothing fetched, because a reference that needs the network is a reference
+  that is blank on the air-gapped deployment this product is designed for. Both are `no-store` and
+  both are unauthenticated. The served document is asserted to be the committed bytes and the
+  document the binary was built from, so the contract cannot drift from the binary unnoticed.
+  **Eight claims that were promises became tests.** [api-conventions.md](docs/architecture/api-conventions.md#13-contract-tests)
+  section 13 promised eight enforced contract checks and named only five. The catalogue, matrix,
+  example, `X-Request-Id` and `additionalProperties` checks existed; the other three did not.
+  `TestEverySchemaHasADescription` and `TestEverySchemaFieldHasATypeAndADescription` enforce item 3,
+  `TestNoRefIsUnresolvedAndNoComponentIsDead` enforces item 7, and
+  `TestUnexpressibleConstraintsNameTheirMechanism` enforces item 8 — the override constraint JSON
+  Schema cannot express and the data store enforces as `tenant_overrides_not_empty`. A specification
+  that claims a check nothing performs is a wish, and the cost of finding out was **47 fields and 21
+  schemas that had no description at all**: 47 additions to the contract, which is why every
+  response field now reads as a specification rather than as a type listing.
+  **Security is stated the way the implementation enforces it.** `bearerAuth` is declared once
+  globally; every operation's `security` array is empty, because a scope in the array means *exactly*
+  that scope and would exclude an `admin` key from the data plane, which section 5 requires it to
+  work on. The minimum each route needs is `x-required-scope: runtime` or `admin`, a named vendor
+  extension, because OpenAPI 3.1 has no vocabulary for "at least this scope" and inventing one would
+  make the document non-conformant. Operational routes state `security: []` explicitly rather than
+  inheriting a global requirement and opting out of it.
+  **No product behaviour.** An enforcement call still returns `404`, because `IP-07` owns the routes.
+  `TestNoProductBehaviour` and `TestOgenEmitsNoRoutes` both fail if that ever stops being true, so
+  the claim is asserted by a test rather than by prose.
+  **The seventh item was added on the day it was needed.** `mvp-scope.md` and
+  [ADR-0010](docs/decisions/0010-go-chi-spec-first-openapi.md) both require a generated `/docs` page
+  and no phase owned it, so it was either unowned or silently dropped. It is now `IP-02` item 7, and
+  it can fail: the page is generated by `make docs` and CI fails if the committed page differs from
+  the generated one.
+  Status is in [roadmap-index.md](docs/roadmaps/roadmap-index.md#4-phase-map) and
+  [v0-1-enforcement-path.md](docs/roadmaps/v0-1-enforcement-path.md#ip-02--the-openapi-contract), and
+  the evidence for each item is a table in the phase section rather than a sentence about it.
+- **`api-conventions.md` gained [section 5.1](docs/architecture/api-conventions.md#51-how-the-contract-states-security)
+  and [section 14](docs/architecture/api-conventions.md#14-the-served-contract).** Section 5.1 states
+  how the contract expresses security, including why the requirement arrays are empty and why
+  `x-required-scope` is a vendor extension. Section 14 states the served contract: what `/openapi.json`
+  and `/docs` return, why the JSON is generated at start-up rather than parsed per request, why the
+  page is a committed artefact rather than a runtime template, and why both routes are `GET` only.
+  Section 14 was added as a new section rather than inserted, because renumbering is forbidden and a
+  section 14 after section 13 is cheaper than a broken link.
 
 - **`IP-01` is `COMPLETE`, and one of its six Definition-of-Done items was amended before it was
   met.** All six items are now satisfied, four of them by evidence recorded in the phase's own
@@ -173,9 +243,34 @@ exists, because a future implementer needs to know which statements are new.
   whole-file diff on a machine with `core.autocrlf` set. No CI workflow is added here, because
   [ADR-0010](docs/decisions/0010-go-chi-spec-first-openapi.md) and `IP-01` own `.github/`, and
   adding one now would be code outside a phase.
+- **`make ogen-check` now compares regenerated bytes instead of asking git whether the working tree
+  is clean.** The previous implementation regenerated in place and failed if
+  `git status --porcelain` reported anything, which cannot tell "the generated code is stale" from
+  "the generated code is correct but not yet committed". It therefore failed for anyone in the
+  middle of editing the contract, running `make generate` and committing both, and could only pass
+  in CI — the one place it is genuinely needed. The target now generates into `.ogen-check/`,
+  copies the committed files alongside, and diffs the two trees, which answers the same way on a
+  laptop and in CI and also catches a file added or removed by the generator rather than only
+  edited. `.ogen-check/` is in `.gitignore`, and is removed whether the check passes or fails.
+  Proven in both directions: a one-line description change in `api/openapi.yaml` fails the check
+  with a unified diff pointing at the changed comment, and restoring the contract passes it.
+  `make ci` is unchanged as a set of steps and now runs green on Windows as well as Linux.
 
 ### Fixed
 
+- Rows 4–7 of the boundary table in [cycle-engine.md](docs/architecture/cycle-engine.md) §6 were
+  wrong, and an implementer reading them would have built the wrong calendar engine while the tests
+  written from the same document passed. The daily and weekly rows around the EU spring forward
+  named times an hour and a weekday too early, and the two monthly rows for a January-31 anchor
+  named the open and closed ends a day off on both sides. Corrected at the instant the Go time-zone
+  database computes, with a dated note recording the change, and the `T-07` fixture now asserts the
+  corrected values. Found by `IP-03`.
+- The committed `go.mod`/`go.sum` were not tidy: `go build ./...` failed on a clean checkout with
+  "updates to `go.mod` needed", and the CI gate that checks tidiness was red before `IP-03` touched
+  the tree. The generated `api` package imports `ogen-go/ogen`, `go-faster/errors` and
+  `go-faster/jx`, none of which the committed `go.mod` required. `go mod tidy` repairs it, adding
+  only requirements the committed `go.sum` already satisfied; `internal/cycle` imports nothing but
+  the standard library.
 - The `Files in the repository` inventory count included build output, so the number in
   [docs/README.md](docs/README.md) was unreproducible the moment anything in the repository produced
   an artefact. The count now honours the anchored directory patterns in `.gitignore` — `/bin/` and

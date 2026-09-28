@@ -19,3 +19,7 @@ Thumbs.db
 *.test
 coverage.out
 *.log
+
+# Scratch space for `make ogen-check`, which regenerates the contract into a temporary
+# directory to compare bytes rather than consulting the git index. Never a deliverable.
+/.ogen-check/

@@ -1,0 +1,5037 @@
+openapi: 3.1.0
+
+info:
+  title: Quotacore
+  version: 0.1.0
+  summary: Quota and metering enforcement for AI SaaS.
+  description: |
+    Quotacore is a quota service. It holds a balance per tenant, per feature, and answers
+    whether a call is allowed before the call is made, or applies it after.
+
+    This document is the source of truth for the wire format. It is generated from
+    `docs/architecture/api-conventions.md` and `docs/product/error-catalog.md`, not from the
+    code, and the types and request validation in the service are generated from this file
+    (ADR-0010). A disagreement between this file and those documents is a defect in whichever
+    one was edited last.
+
+    **Conventions that hold on every route in this document.**
+
+    - Every response carries `X-Request-Id`, and the `request_id` in an error body equals it
+      (NFR-S10). Quote it in a bug report.
+    - Every error body is the same envelope, and `code` is the only field to branch on. The HTTP
+      status is a class hint; `429` in particular means two different things, which is
+      `quota_exceeded` and `rate_limited` (DR-040).
+    - `Idempotency-Key` is required on `POST /v1/consume` and `POST /v1/refund` and on nothing
+      else. There is no server-generated fallback, because a generated key silently defeats the
+      purpose.
+    - Amounts are JSON integers, never floats. A float is `400 validation_failed` naming the
+      field.
+    - Timestamps are RFC 3339 **with an explicit offset**, always, including `Z`. A client never
+      has to branch on whether the zone is UTC.
+    - `cycle_start` and `cycle_end` are `null` together, for a `never` entitlement. That is the
+      documented shape, not an omission (DR-008, INV-C6).
+    - A request with an undeclared field is `400 validation_failed`. Every object in this
+      document sets `additionalProperties: false`, which is what makes a typo a clear error
+      instead of a silently ignored key.
+    - Validation errors aggregate. Three bad fields produce one `validation_failed` naming all
+      three, in `details.errors`.
+
+    **Two guarantees worth reading before integrating.**
+
+    A `500` on `consume` or `refund` always means the balance is unchanged. The mutation is a
+    single atomic script execution, so there is no state in which a deduction was partially
+    applied, and a client-side retry after a `500` is safe.
+
+    A retry with the *same* `Idempotency-Key` is charged once, within 24 hours of the first
+    application. A retry with a *new* key is a second operation and is charged twice. No
+    server-side scheme detects that (FS-03).
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+  contact:
+    name: Quotacore
+    url: https://github.com/quotacore/quotacore
+
+servers:
+  - url: http://localhost:8080
+    description: Local development, the default in `docker compose up`
+  - url: https://{host}
+    description: A deployment of your own
+    variables:
+      host:
+        default: quota.example.com
+        description: The host serving this instance
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: data-plane
+    description: |
+      The four routes a customer's application calls on the request path. These are the ones
+      with a latency budget, and the ones that open no database connection.
+  - name: admin-features
+    description: The catalogue of metered features. A feature is a key, a unit and a name.
+  - name: admin-plans
+    description: Plans and their entitlements. A plan is an offer; a tenant override is a contract term.
+  - name: admin-tenants
+    description: Tenants, their plan assignment, grants, overrides and usage history.
+  - name: admin-keys
+    description: API key issuance and revocation. A key is never readable after issue.
+  - name: admin-observe
+    description: Status and audit. The two routes an operator reads when something is wrong.
+  - name: operational
+    description: |
+      Probes, metrics and this document. No error envelope, and the probes need no
+      credential.
+
+paths:
+  /v1/consume:
+    post:
+      tags: [data-plane]
+      security:
+        - bearerAuth: []
+      x-required-scope: runtime
+      operationId: consume
+      summary: Deduct an amount from the current cycle's balance
+      description: |
+        The call a customer's application makes instead of decrementing a counter itself.
+
+        `Idempotency-Key` is required. The same key replayed with the same
+        `operation | tenant | feature | amount` returns the original response byte for byte with
+        `replayed: true`, and the same key with a different fingerprint is
+        `409 idempotency_key_reuse` with no state change at all (DR-028, INV-I2).
+
+        The window is 24 hours from the first application. A key first seen after that is a new
+        operation, not a replay (DR-029). The window is fixed and is not configurable, because it
+        is a documented customer guarantee.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeteredRequest'
+            examples:
+              metered:
+                summary: 4200 output tokens
+                value:
+                  feature_key: llm.tokens.output
+                  amount: 4200
+                  tenant_external_id: acme-prod-01
+                  metadata:
+                    model: claude-opus-5
+                    conv: c_9f3a
+      responses:
+        '200':
+          $ref: '#/components/responses/MeteredOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestMetered'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenEntitlement'
+        '404':
+          $ref: '#/components/responses/ErrorTenantNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorIdempotencyKeyReuse'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorQuotaAndRate'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
+
+  /v1/refund:
+    post:
+      tags: [data-plane]
+      security:
+        - bearerAuth: []
+      x-required-scope: runtime
+      operationId: refund
+      summary: Return an amount to the current cycle's balance
+      description: |
+        A refund is its own operation, not a negative consume. The direction is the endpoint and
+        never a sign (DR-023, ADR-0005), so a refund can never be confused with a malformed
+        amount.
+
+        `Idempotency-Key` is required, on the same 24-hour window as `consume`.
+
+        A refund never returns `quota_exceeded`. A refund cannot exceed a balance; the bound it
+        can break is `balance <= limit + bonus`, which is `refund_exceeds_grant` (DR-019). If the
+        intent is a permanent increase, use an admin `grant` instead.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeteredRequest'
+            examples:
+              metered:
+                summary: Return 400 tokens after a retry
+                value:
+                  feature_key: llm.tokens.output
+                  amount: 400
+                  tenant_external_id: acme-prod-01
+      responses:
+        '200':
+          $ref: '#/components/responses/MeteredOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestMetered'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenEntitlement'
+        '404':
+          $ref: '#/components/responses/ErrorTenantNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorRefundConflict'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
+
+  /v1/check:
+    post:
+      tags: [data-plane]
+      security:
+        - bearerAuth: []
+      x-required-scope: runtime
+      operationId: check
+      summary: Ask whether an amount would be allowed
+      description: |
+        Advisory. Returns `200` with `allowed: false` when the answer is no; a denial here is
+        **not** a `429` (DR-024). A `429` from this route means the *service* is rate-limiting
+        you, which is a different problem with a different remedy (DR-040).
+
+        No `Idempotency-Key`, because nothing is mutated, so a duplicate is harmless
+        (DR-024). This route never returns `idempotency_key_reuse`.
+
+        It is `POST` rather than `GET` because the question is in a body, and a `GET` with a body
+        is not portable. The verb is `check` and not `quote` because it reserves nothing.
+
+        The limitation is stated here as well as in the reference, because ignoring it looks like
+        a bug the first time a customer hits it: two requests can both pass `check` and one can
+        then be denied at `consume`. `check` reduces denials, it does not eliminate the race.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeteredRequest'
+            examples:
+              metered:
+                summary: Would 1000 tokens fit?
+                value:
+                  feature_key: llm.tokens.output
+                  amount: 1000
+                  tenant_external_id: acme-prod-01
+      responses:
+        '200':
+          $ref: '#/components/responses/CheckOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestWindow'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenEntitlement'
+        '404':
+          $ref: '#/components/responses/ErrorTenantNotFound'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
+
+  /v1/balance:
+    get:
+      tags: [data-plane]
+      security:
+        - bearerAuth: []
+      x-required-scope: runtime
+      operationId: balance
+      summary: Read the balances of a tenant
+      description: |
+        With `feature_key`, one entry. Without it, the tenant's full set, which is bounded by the
+        plan's entitlement count (NFR-T5), so the unbounded case does not exist. `feature_key` is
+        optional.
+
+        `cycle_start` and `cycle_end` are always present and are `null` together for a `never`
+        entitlement.
+
+        An unknown feature key on this route is `404 feature_not_found`. This is the admin-plane
+        behaviour and it is the one documented exception to the data plane's non-disclosure rule:
+        the caller already knows a key it is asking about, and `feature_not_in_plan` would be
+        indistinguishable from an exhausted allowance, which is the distinction the caller most
+        needs (FS-17).
+      parameters:
+        - $ref: '#/components/parameters/TenantExternalIdQuery'
+        - $ref: '#/components/parameters/FeatureKeyQuery'
+      responses:
+        '200':
+          $ref: '#/components/responses/BalanceOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorNotFoundResource'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
+
+  /v1/admin/features:
+    get:
+      tags: [admin-features]
+      operationId: listFeatures
+      summary: List the feature catalogue
+      description: |
+        The whole catalogue is small by construction, so this returns everything rather than a
+        page. A feature is a key, a unit and a name, and the unit is what an `amount` counts.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          $ref: '#/components/responses/FeatureListOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '501':
+          $ref: '#/components/responses/ErrorNotImplemented'
+    post:
+      tags: [admin-features]
+      operationId: createFeature
+      summary: Create a feature
+      description: |
+        `key` and `unit` are immutable once the feature is referenced, because reinterpreting a
+        historical amount is not allowed. The two have distinct error codes for that reason
+        (INV-F2, INV-F3); `feature_unit_immutable` is on this cell because a create that races an
+        assignment is the case the DDL cannot catch.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeatureCreate'
+            examples:
+              feature:
+                summary: An output-token feature
+                value:
+                  feature_key: llm.tokens.output
+                  name: LLM output tokens
+                  unit: token
+                  description: Completion tokens billed to the customer
+      responses:
+        '201':
+          $ref: '#/components/responses/FeatureCreated'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '409':
+          $ref: '#/components/responses/ErrorConflictFeature'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '501':
+          $ref: '#/components/responses/ErrorNotImplemented'
+
+  /v1/admin/features/{feature_key}:
+    parameters:
+      - $ref: '#/components/parameters/FeatureKeyPath'
+    get:
+      tags: [admin-features]
+      operationId: getFeature
+      summary: Read one feature
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      responses:
+        '200':
+          $ref: '#/components/responses/FeatureOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorFeatureNotFound'
+        '501':
+          $ref: '#/components/responses/ErrorNotImplemented'
+    patch:
+      tags: [admin-features]
+      operationId: updateFeature
+      summary: Rename a feature
+      description: |
+        `version` is required and is the optimistic-concurrency token. A mismatch is
+        `409 resource_version_conflict` with the current version in `details`, so a client can
+        re-read and retry deliberately. Last-write-wins on a resource that governs a customer's
+        money is not acceptable, and an operator with two open browser tabs is exactly the case
+        (FS-12).
+
+        `unit` is absent from this body on purpose. It is immutable, so offering the field and
+        then refusing it would be a worse API than not offering it.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeatureUpdate'
+            examples:
+              rename:
+                summary: Correct a display name
+                value:
+                  version: 3
+                  name: LLM output tokens (completion)
+      responses:
+        '200':
+          $ref: '#/components/responses/FeatureOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorFeatureNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflictFeature'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '501':
+          $ref: '#/components/responses/ErrorNotImplemented'
+
+  /v1/admin/features/{feature_key}/archive:
+    parameters:
+      - $ref: '#/components/parameters/FeatureKeyPath'
+    post:
+      tags: [admin-features]
+      operationId: archiveFeature
+      summary: Archive a feature
+      description: |
+        Archiving, not deleting. A feature referenced by a plan, a tenant or a historical event
+        may be archived but not deleted, so the audit and event history never dangles (DR-016).
+
+        Archiving denies new consumption with `403 feature_archived` and leaves existing balances
+        intact until their natural cycle end. A zeroed balance would be a lie about money the
+        customer has already paid for.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchiveRequest'
+            examples:
+              archive:
+                summary: Retire an unused feature
+                value:
+                  version: 1
+                  reason: replaced by llm.tokens.total
+      responses:
+        '200':
+          $ref: '#/components/responses/FeatureOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorFeatureNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflictFeature'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '501':
+          $ref: '#/components/responses/ErrorNotImplemented'
+
+  /v1/admin/plans:
+    get:
+      tags: [admin-plans]
+      operationId: listPlans
+      summary: List plans
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          $ref: '#/components/responses/PlanListOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '409':
+          $ref: '#/components/responses/ErrorConflictPlan'
+    post:
+      tags: [admin-plans]
+      operationId: createPlan
+      summary: Create a plan
+      description: |
+        A plan is bounded at 100 entitlements, and the bound is a documented validation limit
+        rather than a struct size (NFR-T5), so a larger plan is a validation error rather than a
+        slow request.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanCreate'
+            examples:
+              plan:
+                summary: A two-feature plan
+                value:
+                  plan_key: pro
+                  name: Pro
+                  entitlements:
+                    - feature_key: llm.tokens.output
+                      limit: 1000000
+                      reset_interval: monthly
+                    - feature_key: api.requests
+                      limit: 100000
+                      reset_interval: monthly
+      responses:
+        '201':
+          $ref: '#/components/responses/PlanCreated'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '409':
+          $ref: '#/components/responses/ErrorConflictPlan'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+
+  /v1/admin/plans/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PlanIdPath'
+    get:
+      tags: [admin-plans]
+      operationId: getPlan
+      summary: Read one plan
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      responses:
+        '200':
+          $ref: '#/components/responses/PlanOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorPlanNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflictPlan'
+    patch:
+      tags: [admin-plans]
+      operationId: updatePlan
+      summary: Edit a plan's entitlements
+      description: |
+        The edit changes what applies to **new assignments immediately** and to **existing
+        tenants at their next boundary**. It does not touch an open cycle's balance, and it does
+        not move a boundary. `POST /v1/admin/plans/{id}/apply` is the route that changes that, and
+        it is guarded by blast radius (DR-014).
+
+        `entitlements` replaces the whole set, because a partial update of a bounded set is an
+        ambiguity, and a plan that is an offer should be edited as one.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanUpdate'
+            examples:
+              edit:
+                summary: Raise the output limit
+                value:
+                  version: 7
+                  entitlements:
+                    - feature_key: llm.tokens.output
+                      limit: 2000000
+                      reset_interval: monthly
+                    - feature_key: api.requests
+                      limit: 100000
+                      reset_interval: monthly
+      responses:
+        '200':
+          $ref: '#/components/responses/PlanOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorPlanNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflictPlan'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+
+  /v1/admin/plans/{id}/apply:
+    parameters:
+      - $ref: '#/components/parameters/PlanIdPath'
+    post:
+      tags: [admin-plans]
+      operationId: applyPlan
+      summary: Re-anchor and re-limit every assigned tenant, now
+      description: |
+        This re-anchors every tenant assigned to the plan, so it is guarded by **blast radius**
+        rather than by operator intent (DR-046).
+
+        At or below `QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD` (default 50) it is one call and a
+        `200`. Above it, the service counts first, writes nothing, and returns
+        `409 confirmation_required` carrying a single-use token. Re-issue the identical request
+        with `confirmation_token` and it applies.
+
+        The token is bound to the plan `resource_version` it was issued against, so a plan edited
+        in between is refused: the count the operator approved is no longer the count. There is
+        no `Idempotency-Key` on this route, deliberately. The handshake is already exactly-once
+        by construction, and adding a second exactly-once mechanism to one operation is a way to
+        have two opinions about whether it happened.
+
+        To preview the numbers without provoking the error, call
+        `GET /v1/admin/plans/{id}/impact` first.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanApplyRequest'
+            examples:
+              first:
+                summary: Below the threshold
+                value:
+                  reason: new contract for Northwind
+              confirm:
+                summary: Re-issued with the token
+                value:
+                  reason: new contract for Northwind
+                  confirmation_token: cnf_01J8Z6M2QK9V3X7B4C0N5TDEFA
+      responses:
+        '200':
+          $ref: '#/components/responses/PlanAppliedOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorPlanNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConfirmationRequired'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+
+  /v1/admin/plans/{id}/archive:
+    parameters:
+      - $ref: '#/components/parameters/PlanIdPath'
+    post:
+      tags: [admin-plans]
+      operationId: archivePlan
+      summary: Archive a plan
+      description: |
+        Archiving a plan does not reassign its tenants and does not change any balance. It stops
+        new assignments, and a tenant already on the plan keeps working until it is moved
+        (DR-016).
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchiveRequest'
+            examples:
+              archive:
+                summary: Retire a plan no longer sold
+                value:
+                  version: 4
+                  reason: superseded by pro-2026
+      responses:
+        '200':
+          $ref: '#/components/responses/PlanOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorPlanNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflictPlan'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+
+  /v1/admin/plans/{id}/impact:
+    parameters:
+      - $ref: '#/components/parameters/PlanIdPath'
+    get:
+      tags: [admin-plans]
+      operationId: planImpact
+      summary: Preview how many tenants an edit would affect
+      description: |
+        Read-only. Nothing is re-anchored, no audit row records a mutation and no token is
+        issued. The route exists so that the common case is a quiet read rather than a `409`
+        (UC-19).
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      responses:
+        '200':
+          $ref: '#/components/responses/PlanImpactOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorPlanNotFound'
+
+  /v1/admin/tenants:
+    get:
+      tags: [admin-tenants]
+      operationId: listTenants
+      summary: List tenants
+      description: |
+        Newest first, with an opaque signed cursor. Totals are not returned: a count over a large
+        tenant table is a slow query pretending to be metadata.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/PlanKeyQuery'
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantListOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestTimezone'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '409':
+          $ref: '#/components/responses/ErrorConflictTenant'
+    post:
+      tags: [admin-tenants]
+      operationId: createTenant
+      summary: Provision a tenant
+      description: |
+        Balances are materialised here, at provisioning, and at cycle transitions. They are
+        **not** materialised on first read, because a balance created on demand would hand a full
+        allowance to whoever triggered it (DR-045).
+
+        `timezone` is an IANA name such as `Europe/Berlin`. Abbreviations are rejected: a
+        timezone is a set of rules, and an abbreviation is not one. The tenant's zone is what its
+        cycle boundaries are computed in, so a wrong zone is a wrong bill.
+
+        `external_id` cannot contain `@`, which makes it structurally impossible to store an
+        email address as a tenant identifier (DR-034, NFR-S2).
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantCreate'
+            examples:
+              tenant:
+                summary: A new customer on Pro
+                value:
+                  external_id: acme-prod-01
+                  display_name: Acme Production
+                  plan_key: pro
+                  timezone: Europe/Berlin
+      responses:
+        '201':
+          $ref: '#/components/responses/TenantCreated'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestTimezone'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '409':
+          $ref: '#/components/responses/ErrorConflictTenant'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+
+  /v1/admin/tenants/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TenantIdPath'
+    get:
+      tags: [admin-tenants]
+      operationId: getTenant
+      summary: Read one tenant
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestTimezone'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorTenantNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflictTenant'
+    patch:
+      tags: [admin-tenants]
+      operationId: updateTenant
+      summary: Change a tenant's plan, name or zone
+      description: |
+        **Changing `plan_key` is a hard reset.** The new plan's limits apply immediately and the
+        tenant's anchor is set to the current instant, starting a fresh cycle. The previous
+        balance is discarded, not prorated, and the discard is recorded as a `plan_changed` event
+        so it is visible in history (DR-013).
+
+        Proration is deferred, and it is deferred on purpose: prorating a limit is a claim about
+        time that the customer did not buy. The balance was for the cycle that just ended.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantUpdate'
+            examples:
+              move:
+                summary: Move to a larger plan
+                value:
+                  version: 12
+                  plan_key: enterprise
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestTimezone'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorTenantNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflictTenant'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+    delete:
+      tags: [admin-tenants]
+      operationId: deleteTenant
+      summary: Soft-delete a tenant
+      description: |
+        A soft delete, and it is **not retroactive**. Existing usage events and audit rows stay
+        queryable, which is what makes a billing dispute answerable after a churn event (T-15).
+
+        Soft deletion is terminal: there is no undelete. A soft-deleted tenant is treated exactly
+        as absent by every endpoint that takes an identifier, so `tenant_not_found` is the usual
+        answer and `tenant_deleted` appears only where the caller has already been authorised to
+        see that the tenant exists.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteRequest'
+            examples:
+              softDelete:
+                summary: Customer churned
+                value:
+                  reason: contract ended 2026-09-30
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestTimezone'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorTenantNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflictTenant'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+
+  /v1/admin/tenants/{id}/suspend:
+    parameters:
+      - $ref: '#/components/parameters/TenantIdPath'
+    post:
+      tags: [admin-tenants]
+      operationId: suspendTenant
+      summary: Suspend a tenant
+      description: |
+        Consumption becomes `403 tenant_suspended`. **The balance is preserved, not zeroed**, and
+        resuming restores it exactly, because a suspension is a billing decision by the operator
+        and not a change in what the customer bought (DR-032).
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReasonRequest'
+            examples:
+              suspend:
+                summary: Payment failure
+                value:
+                  version: 13
+                  reason: payment failed, retrying
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestTimezone'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorTenantNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflictTenant'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+
+  /v1/admin/tenants/{id}/resume:
+    parameters:
+      - $ref: '#/components/parameters/TenantIdPath'
+    post:
+      tags: [admin-tenants]
+      operationId: resumeTenant
+      summary: Resume a suspended tenant
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReasonRequest'
+            examples:
+              resume:
+                summary: Payment received
+                value:
+                  version: 14
+                  reason: payment received
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestTimezone'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorTenantNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflictTenant'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+
+  /v1/admin/tenants/{id}/grant:
+    parameters:
+      - $ref: '#/components/parameters/TenantIdPath'
+    post:
+      tags: [admin-tenants]
+      operationId: grantTenant
+      summary: Add bonus quota for the current cycle
+      description: |
+        Raises `bonus` for the current cycle, subject to the `balance <= limit + bonus` ceiling,
+        and applies immediately. A grant is **cycle-scoped**: it does not survive the boundary,
+        because a bonus is a gesture and a limit is a contract (DR-019, DR-020).
+
+        A grant on a `never` entitlement increases the balance with no ceiling tied to a cycle
+        and no expiry, which is the one case where the ceiling does not apply.
+
+        A grant that would break the ceiling is `409 grant_exceeds_ceiling`. To raise a limit
+        durably, use an override, which is the correct remedy for a lasting increase.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantRequest'
+            examples:
+              grant:
+                summary: Goodwill for an outage
+                value:
+                  feature_key: llm.tokens.output
+                  amount: 50000
+                  reason: incident INC-2211, 30 minutes of failed responses
+      responses:
+        '200':
+          $ref: '#/components/responses/BalanceEntryOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorNotFoundResource'
+        '409':
+          $ref: '#/components/responses/ErrorConflictQuota'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+
+  /v1/admin/tenants/{id}/set:
+    parameters:
+      - $ref: '#/components/parameters/TenantIdPath'
+    post:
+      tags: [admin-tenants]
+      operationId: setTenantBalance
+      summary: Set a balance to an exact value
+      description: |
+        Overwrites the balance outright. It is the blunt instrument, and it is the right one when
+        a migration produced a number that is known to be wrong.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetRequest'
+            examples:
+              set:
+                summary: Correct a migration error
+                value:
+                  feature_key: llm.tokens.output
+                  value: 41250
+                  reason: migration backfill corrected
+      responses:
+        '200':
+          $ref: '#/components/responses/BalanceEntryOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorNotFoundResource'
+        '409':
+          $ref: '#/components/responses/ErrorConflictQuota'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+
+  /v1/admin/tenants/{id}/force-rollover:
+    parameters:
+      - $ref: '#/components/parameters/TenantIdPath'
+    post:
+      tags: [admin-tenants]
+      operationId: forceRollover
+      summary: Roll one feature's cycle over now
+      description: |
+        Applies the allowance for the next cycle immediately, for one feature. It is audited with
+        a mandatory `reason`, and it is a `force_rolled_over` event in the ledger.
+
+        A `never` entitlement cannot be rolled, because there is no cycle to roll:
+        `409 reset_not_supported`. Grant explicitly instead (DR-008).
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForceRolloverRequest'
+            examples:
+              rollover:
+                summary: Customer asked for a fresh month
+                value:
+                  feature_key: llm.tokens.output
+                  reason: support request 88213
+      responses:
+        '200':
+          $ref: '#/components/responses/BalanceEntryOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorNotFoundResource'
+        '409':
+          $ref: '#/components/responses/ErrorConflictQuota'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+
+  /v1/admin/tenants/{id}/overrides:
+    parameters:
+      - $ref: '#/components/parameters/TenantIdPath'
+    post:
+      tags: [admin-tenants]
+      operationId: upsertTenantOverride
+      summary: Set or replace a per-feature override
+      description: |
+        An override is a **contract term** and it outranks the plan (DR-011). It survives later
+        plan edits, because a plan is an offer and an override is what this one customer signed
+        for.
+
+        At least one of `limit_value` or `interval` must be present. An override that set neither
+        would inherit everything from the plan and would therefore be indistinguishable from not
+        existing, so it is `400 validation_failed` (UC-13).
+
+        `apply_at` is `immediate` by default. It is a **mode, not a timestamp**: `next_boundary`
+        defers the new value to the tenant's next boundary, which is the only moment a boundary
+        change is meaningful.
+
+        An override can raise a limit above the plan's. That is the mechanism for "custom limits
+        for an enterprise customer". It cannot add a feature the plan does not include, which is
+        `400 validation_failed` (DR-012, DR-015).
+
+        Clearing an override is `DELETE` on the per-feature sub-path, not this route. See that
+        route for why.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OverrideUpsert'
+            examples:
+              limit:
+                summary: Ten times the plan limit, from the next boundary
+                value:
+                  feature_key: llm.tokens.output
+                  limit_value: 10000000
+                  apply_at: next_boundary
+              interval:
+                summary: Custom reset cadence, limit inherited from the plan
+                value:
+                  feature_key: api.requests
+                  interval: weekly
+                  apply_at: immediate
+      responses:
+        '200':
+          $ref: '#/components/responses/OverrideOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorNotFoundResource'
+        '409':
+          $ref: '#/components/responses/ErrorConflictQuota'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+
+  /v1/admin/tenants/{id}/overrides/{feature_key}:
+    parameters:
+      - $ref: '#/components/parameters/TenantIdPath'
+      - $ref: '#/components/parameters/FeatureKeyPath'
+    delete:
+      tags: [admin-tenants]
+      operationId: clearTenantOverride
+      summary: Clear a per-feature override
+      description: |
+        Removes the override, so the plan value applies again (UC-13).
+
+        `apply_at` is in the body rather than a query parameter because it changes *when* money is
+        owed, and a `DELETE` that silently means "now" would be a surprise in a billing system.
+        `next_boundary` restores the plan value at the tenant's next boundary; `immediate` applies
+        it at once.
+
+        This is a `DELETE` on a per-feature sub-path rather than another `POST` on the collection
+        because the storage cannot represent "an override that sets nothing":
+        `tenant_overrides_not_empty` rejects a row with both `limit_value` and `interval` null, so
+        clearing is the **absence of the row** rather than a row of nulls. Expressing it as a
+        `clear: true` field on the `POST` would mean one route with two mutually exclusive body
+        modes, which is exactly the shape that generated SDKs handle worst.
+
+        This is one of the two routes in the contract where a `DELETE` takes a body: the body
+        holds `apply_at`, and the rule that a body is capped applies here like any other, so
+        `413 payload_too_large` is on this route (NFR-T6).
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OverrideClearRequest'
+            examples:
+              clear:
+                summary: Restore the plan value from the next boundary
+                value:
+                  apply_at: next_boundary
+      responses:
+        '204':
+          $ref: '#/components/responses/NoContent'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorTenantNotFound'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+  
+  /v1/admin/tenants/{id}/events:
+    parameters:
+      - $ref: '#/components/parameters/TenantIdPath'
+    get:
+      tags: [admin-tenants]
+      operationId: listUsageEvents
+      summary: Read a tenant's usage ledger
+      description: |
+        The route that decides whether a team keeps the product, because the first time a
+        customer disputes a deduction is the first time anyone evaluates it (UC-16).
+
+        Each event shows the instant, the signed `delta`, the `balance_after`, the cycle window,
+        the `source` and the `request_id`. Summing the deltas for a cycle and comparing with the
+        reported balance is the reconciliation an operator performs by hand, and it is why
+        `balance_after` is stored rather than recomputed (DR-042).
+
+        For a specific disputed charge, filter by the customer's `Idempotency-Key` to see the
+        recorded outcome, which is how you prove whether a call was applied once or twice.
+
+        A known limitation, stated here because a silently incomplete history is worse than a
+        documented one: events are delivered to the external sink **best effort and at-least-once**.
+        Where the sink could not deliver, `system` events record the gap and the drop counter in
+        `GET /v1/admin/status` is non-zero (ADR-0016).
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/FeatureKeyQuery'
+        - $ref: '#/components/parameters/EventTypeQuery'
+        - $ref: '#/components/parameters/SourceQuery'
+        - $ref: '#/components/parameters/IdempotencyKeyQuery'
+        - $ref: '#/components/parameters/FromQuery'
+        - $ref: '#/components/parameters/ToQuery'
+      responses:
+        '200':
+          $ref: '#/components/responses/UsageEventListOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorTenantNotFound'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+  
+  /v1/admin/keys:
+    get:
+      tags: [admin-keys]
+      operationId: listKeys
+      summary: List API keys
+      description: |
+        Metadata only. The secret is returned exactly once, by the create route, and there is no
+        route that returns it again and none ever will be added (INV-K3). A lost key is replaced,
+        not recovered.
+
+        `prefix` is the public, unique part of a key. It appears in this list and in the audit
+        log so a key leaked in a support ticket can be traced to the key that leaked, which is the
+        entire operational purpose of a credential identifier (DR-043, K-1).
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          $ref: '#/components/responses/KeyListOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '409':
+          $ref: '#/components/responses/ErrorResourceVersionConflict'
+    post:
+      tags: [admin-keys]
+      operationId: createKey
+      summary: Issue an API key
+      description: |
+        The plaintext key is in this response and nowhere else. Only an Argon2id hash and the
+        public prefix are stored, and the hash is deliberately not indexed, because indexing a
+        verifier invites a timing-oracle design (ADR-0012).
+
+        Scope is visible in the token itself, so a scope mismatch is not a 400-line debugging
+        session: `qc_runtime_<prefix>.<secret>` and `qc_admin_<prefix>.<secret>`.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KeyCreate'
+            examples:
+              key:
+                summary: A runtime key for one customer's app
+                value:
+                  name: acme-prod-deploy
+                  scope: runtime
+                  expires_at: '2027-01-01T00:00:00+01:00'
+      responses:
+        '201':
+          $ref: '#/components/responses/KeyCreated'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '409':
+          $ref: '#/components/responses/ErrorResourceVersionConflict'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+
+  /v1/admin/keys/{id}:
+    parameters:
+      - $ref: '#/components/parameters/KeyIdPath'
+    delete:
+      tags: [admin-keys]
+      operationId: revokeKey
+      summary: Revoke an API key
+      description: |
+        Revocation is **immediate, with no cache delay**, because the cache stores the hash and the
+        state and revocation bumps the version. A revoked key is rejected on the next request
+        (UC-15, K-2).
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      responses:
+        '204':
+          $ref: '#/components/responses/NoContent'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '409':
+          $ref: '#/components/responses/ErrorResourceVersionConflict'
+  
+  /v1/admin/audit:
+    get:
+      tags: [admin-observe]
+      operationId: listAudit
+      summary: Read the audit log
+      description: |
+        The contractual record, kept separately from usage history because they answer different
+        questions and merging them would answer neither (UC-16). Every administrative mutation
+        writes an audit row **in the same transaction as the mutation** (NFR-D4). An audit log
+        written best effort is a log, not an audit trail.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/TenantExternalIdQuery'
+        - $ref: '#/components/parameters/FromQuery'
+        - $ref: '#/components/parameters/ToQuery'
+      responses:
+        '200':
+          $ref: '#/components/responses/AuditEntryListOK'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+  
+  /v1/admin/status:
+    get:
+      tags: [admin-observe]
+      operationId: status
+      summary: Dependency health, version and queue state
+      description: |
+        The one call an operator makes when something is wrong, so it is **not** allowed to fail
+        with an error envelope: an endpoint that returned `unauthorized` when a dependency was
+        down could not report that the dependency was down, which is the one thing it exists to
+        do. It reports dependency failure as data, at `200`.
+
+        It does still require the `admin` scope (NFR-O5). Reports the build, the `tzdata` version
+        the binary was built with, the current time and the snapshot size.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      responses:
+        '200':
+          $ref: '#/components/responses/StatusOK'
+
+  /healthz:
+    get:
+      tags: [operational]
+      operationId: healthz
+      summary: Liveness probe
+      description: |
+        Answers `200` while the process is running. It checks no dependency, deliberately: a
+        liveness probe that fails when Postgres is unreachable restarts a process that was not
+        the problem.
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/HealthzOK'
+
+  /readyz:
+    get:
+      tags: [operational]
+      operationId: readyz
+      summary: Readiness probe
+      description: |
+        Answers `200` only when the service can actually serve: the required dependencies are
+        reachable and the bootstrap key has been acknowledged (NFR-S9). This is the probe that
+        gates traffic, and unlike `/healthz` it does look at dependencies.
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/ReadyzOK'
+
+  /metrics:
+    get:
+      tags: [operational]
+      operationId: metrics
+      summary: Prometheus metrics
+      description: |
+        Prometheus text exposition format, not JSON and not an error envelope.
+
+        `quotacore_errors_total` is labelled by `code`, and the label set is
+        [error-catalog.md](../../docs/product/error-catalog.md) by reference: a contract test
+        asserts the two match, so a code cannot be raised in the service without being in the
+        catalogue.
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/MetricsOK'
+
+  /openapi.json:
+    get:
+      tags: [operational]
+      operationId: openapiDocument
+      summary: This document, as served by the running service
+      description: |
+        The contract the running binary was built from, rendered as JSON.
+
+        The source of truth is `api/openapi.yaml`, which is embedded in the binary at build time,
+        so a contract cannot drift from the binary in a way nothing would notice (ADR-0010, DoD
+        item 5). The bytes served are a JSON rendering of that embedded document rather than the
+        YAML text: `application/json` is what a client and a tool expect here, and a YAML body
+        labelled as JSON is the kind of small lie that costs someone an afternoon. A test asserts
+        that the served document is a faithful, order-preserving conversion of the embedded YAML,
+        so the rendering cannot quietly drop or reorder anything either.
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/OpenAPIOK'
+
+  /docs:
+    get:
+      tags: [operational]
+      operationId: docs
+      summary: Generated HTML API reference
+      description: |
+        A single self-contained HTML page generated from this document at build time, with no
+        third-party JavaScript and no call to a CDN. It works on a host with no egress, which is
+        the same constraint as everything else in this product.
+
+        The page is generated by `make docs` and CI fails if the committed page differs from the
+        generated one, so it cannot rot silently.
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/DocsOK'
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Quotacore API key
+      description: |
+        An API key as `Authorization: Bearer <key>`.
+
+        A key is either `qc_runtime_<prefix>.<secret>` or `qc_admin_<prefix>.<secret>`. The scope
+        is visible in the token itself, so a scope mismatch is not a debugging session: a
+        `runtime` key on `/v1/admin/*` is `403 insufficient_scope`, and an `admin` key works on
+        both planes.
+
+        An HTTP bearer scheme has no scopes, so the scope array in every requirement above is
+        empty, as OpenAPI requires. The scope a route needs is recorded instead in
+        `x-required-scope`, which is `runtime` on the four data-plane routes, `admin` on
+        `/v1/admin/*`, and absent on the operational routes that take no credential at all. The
+        rule itself is stated once, in
+        [api-conventions.md](../../docs/architecture/api-conventions.md) (DR-043, NFR-O5).
+
+        Possession of a runtime key gives access to **every** tenant on the instance. A key is a
+        credential for the whole instance, and `external_id` in the request selects the tenant.
+        This is a single-tenant-per-instance product (ADR-0013), and the key issuance is an
+        audited, per-customer decision for that reason.
+
+        There is no recovery path. A key that leaks is rotated, not recovered.
+
+  headers:
+    XRequestId:
+      description: |
+        Identifies this request, and is the join key across logs, events and a customer report
+        (NFR-S10). Adopted from the inbound request when it is a valid ULID or UUID, otherwise
+        minted. Present on **every** response, including the error responses and the probes.
+      required: true
+      schema:
+        $ref: '#/components/schemas/RequestId'
+    IdempotentReplay:
+      description: |
+        `true` when this response is a replay of a stored one rather than a new application. A
+        proxy or a client can tell without parsing the body. The body is byte-identical to the
+        original either way, so `replayed` in the body says the same thing (DR-026).
+      required: false
+      schema:
+        type: boolean
+    RetryAfter:
+      description: |
+        Seconds to wait. Present on `429 rate_limited`, which is the service protecting itself and
+        is deliberately distinguishable from `429 quota_exceeded` (DR-040). It is **not** present
+        on `quota_exceeded`: that one is retryable at `cycle_end`, which is in `details`, and a
+        `Retry-After` of a few seconds would invite a hammering loop.
+      required: false
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        One key per **logical operation**, reused across every attempt including retries. Derive
+        it from your own durable operation identifier where one exists.
+
+        A repeat with a matching fingerprint replays the stored response. A repeat with a
+        different fingerprint is `409 idempotency_key_reuse` and changes nothing. The window is 24
+        hours from application, per tenant, and is not configurable.
+
+        **The one case no server can protect against:** a retry with a *new* key is a second
+        operation and is charged twice. No scheme detects that (FS-03).
+      schema:
+        $ref: '#/components/schemas/IdempotencyKey'
+      examples:
+        ulid:
+          summary: A 26-character ULID
+          value: 01JCQ9W3K2M9XQ3F8V6T0B5NDE
+    IdempotencyKeyQuery:
+      name: idempotency_key
+      in: query
+      required: false
+      description: |
+        Filter the ledger to one logical operation, by the key the customer sent. This is how a
+        disputed charge is resolved: the recorded outcome shows whether it was applied once or
+        twice (UC-16).
+      schema:
+        $ref: '#/components/schemas/IdempotencyKey'
+    TenantExternalIdQuery:
+      name: tenant_external_id
+      in: query
+      required: false
+      description: Your identifier for the tenant. The customer never handles an internal `tenant_id`.
+      schema:
+        $ref: '#/components/schemas/ExternalId'
+    FeatureKeyQuery:
+      name: feature_key
+      in: query
+      required: false
+      description: |
+        Restrict to one feature. On `GET /v1/balance` it is optional, and omitting it returns the
+        tenant's full set, which is bounded by the plan's entitlement count (NFR-T5).
+      schema:
+        $ref: '#/components/schemas/FeatureKey'
+    PlanKeyQuery:
+      name: plan_key
+      in: query
+      required: false
+      description: Restrict the tenant list to one plan.
+      schema:
+        $ref: '#/components/schemas/PlanKey'
+    FeatureKeyPath:
+      name: feature_key
+      in: path
+      required: true
+      description: The feature key, as in the catalogue.
+      schema:
+        $ref: '#/components/schemas/FeatureKey'
+      examples:
+        dotted:
+          summary: A dotted feature key
+          value: llm.tokens.output
+    PlanIdPath:
+      name: id
+      in: path
+      required: true
+      description: A plan identifier. Either the UUID or the plan key; both address a plan.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    TenantIdPath:
+      name: id
+      in: path
+      required: true
+      description: A tenant identifier. Either the UUID or the `external_id`; both address a tenant.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    KeyIdPath:
+      name: id
+      in: path
+      required: true
+      description: A key identifier (the UUID, not the secret).
+      schema:
+        type: string
+        format: uuid
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: |
+        Opaque and signed. A tampered cursor is `400 validation_failed`, never a silent full
+        scan. Newest first, always, with a stable tiebreaker so a cursor is never ambiguous.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Page size. An empty page returns an empty array, never `null`.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 200
+        default: 50
+    FromQuery:
+      name: from
+      in: query
+      required: false
+      description: Start of the time range, RFC 3339 with an explicit offset. Same format as responses.
+      schema:
+        $ref: '#/components/schemas/Timestamp'
+    ToQuery:
+      name: to
+      in: query
+      required: false
+      description: End of the time range, RFC 3339 with an explicit offset.
+      schema:
+        $ref: '#/components/schemas/Timestamp'
+    EventTypeQuery:
+      name: event_type
+      in: query
+      required: false
+      description: |
+        One of the seven ledger event types. Any other value is `400 validation_failed`, never an
+        empty result: a filter that silently matches nothing is worse than one that says no.
+      schema:
+        $ref: '#/components/schemas/EventType'
+    SourceQuery:
+      name: source
+      in: query
+      required: false
+      description: Who caused the event. Any other value is `400 validation_failed`.
+      schema:
+        $ref: '#/components/schemas/EventSource'
+
+  examples:
+    ValidationFailed:
+      summary: One entry per offending field, in one response
+      description: |
+        Aggregated on purpose. Three bad fields produce one `validation_failed` naming all three,
+        not three responses, because a client fixing a request should not have to make three
+        round trips to learn three things.
+      value:
+        error:
+          code: validation_failed
+          message: 2 fields are invalid
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            errors:
+              - field: amount
+                issue: must be an integer, got 4200.0
+              - field: metadata
+                issue: must be at most 4096 bytes
+    InvalidAmount:
+      summary: A negative amount
+      description: |
+        The direction is the endpoint, never a sign. Use `POST /v1/refund`, not a negative
+        `consume` (DR-023, ADR-0005).
+      value:
+        error:
+          code: invalid_amount
+          message: 'amount: must not be negative'
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            field: amount
+            min: 0
+    InvalidWindow:
+      summary: A window that disagrees with the cadence
+      description: |
+        Either the window is not valid for the feature's cadence, or it is a v0.2 feature called
+        on a v0.1 build. The two cadences are never silently mixed, because a silent mix makes
+        the balance a lie.
+      value:
+        error:
+          code: invalid_window
+          message: 'window: rolling_1h is not available in v0.1'
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            field: window
+            requested: rolling_1h
+            supported: anchored
+    InvalidTimezone:
+      summary: An abbreviation where an IANA name is required
+      description: |
+        A timezone is a set of historical and future rules. `CET` is not that. Rejecting
+        abbreviations is what stops a boundary being computed from the wrong rules forever.
+      value:
+        error:
+          code: invalid_timezone
+          message: "timezone: 'CET' is not an IANA time zone name"
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            field: timezone
+            value: CET
+    MissingIdempotencyKey:
+      summary: No Idempotency-Key on a route that requires one
+      description: |
+        There is no server-generated fallback. A generated key silently defeats the purpose of
+        the header, which is to make one logical operation one charge (DR-026).
+      value:
+        error:
+          code: missing_idempotency_key
+          message: the Idempotency-Key header is required on this route
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+    Unauthorized:
+      summary: No credential presented
+      value:
+        error:
+          code: unauthorized
+          message: no API key presented
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+    ApiKeyInvalid:
+      summary: A key that is unknown, revoked, expired or malformed
+      description: |
+        There is no recovery path. Rotate the key; the old one cannot be made to work again.
+      value:
+        error:
+          code: api_key_invalid
+          message: the presented API key is not valid
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+    InsufficientScope:
+      summary: A valid key with the wrong scope
+      description: |
+        `403`, not `404`. Hiding the endpoint from an authenticated caller helps nobody, and a
+        `runtime` key discovering it exists is not a disclosure worth preventing (FS-18).
+      value:
+        error:
+          code: insufficient_scope
+          message: this key does not carry the admin scope
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            required: admin
+            presented: runtime
+    FeatureNotInPlan:
+      summary: No entitlement for the feature
+      description: |
+        A limit of `0` and an absent entitlement are different states, and the difference has to
+        be visible: "you get none of this because you are on Free" and "your Free plan includes
+        zero of this" are different product messages (DR-012).
+
+        An unknown feature key on the data plane produces this same code, so feature existence is
+        not leaked (FS-17).
+      value:
+        error:
+          code: feature_not_in_plan
+          message: 'feature llm.tokens.output is not in the tenant''s plan'
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            feature_key: llm.tokens.output
+    FeatureArchived:
+      summary: The feature exists but is archived
+      description: |
+        Balances are preserved, not zeroed. Archiving a feature does not take money the customer
+        has already bought (DR-016).
+      value:
+        error:
+          code: feature_archived
+          message: 'feature llm.tokens.output is archived and no longer accepts consumption'
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            feature_key: llm.tokens.output
+            archived_at: '2026-08-01T00:00:00+02:00'
+    TenantSuspended:
+      summary: The tenant is suspended
+      description: |
+        The balance is preserved and resuming restores it exactly. A suspension is a billing
+        decision, not a change in what the customer bought (DR-032).
+      value:
+        error:
+          code: tenant_suspended
+          message: tenant acme-prod-01 is suspended
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            tenant_external_id: acme-prod-01
+    TenantNotFound:
+      summary: Unknown or soft-deleted tenant
+      description: |
+        A soft-deleted tenant is treated exactly as absent, so this is also the answer after a
+        soft delete. A recently provisioned tenant may not be visible yet (DR-031).
+      value:
+        error:
+          code: tenant_not_found
+          message: no such tenant
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            tenant_external_id: acme-prod-01
+    FeatureNotFound:
+      summary: Unknown feature key on the admin API
+      value:
+        error:
+          code: feature_not_found
+          message: 'no such feature: llm.tokens.vision'
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            feature_key: llm.tokens.vision
+    PlanNotFound:
+      summary: Unknown plan on the admin API
+      value:
+        error:
+          code: plan_not_found
+          message: 'no such plan: enterprise-legacy'
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            plan_key: enterprise-legacy
+    PayloadTooLarge:
+      summary: metadata above its cap
+      description: |
+        The body is capped before it is parsed, so this is decided without reading the payload
+        (NFR-T6). `metadata` is correlation, not a data store.
+      value:
+        error:
+          code: payload_too_large
+          message: 'metadata exceeds the 4096 byte limit'
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            field: metadata
+            limit_bytes: 4096
+    IdempotencyKeyReuse:
+      summary: The same key, a different operation
+      description: |
+        The fingerprint is a hash of `operation | tenant | feature | amount`. A mismatch is
+        refused and **no state changes**; the original record is preserved (DR-028, INV-I2).
+      value:
+        error:
+          code: idempotency_key_reuse
+          message: this Idempotency-Key was first used for a different operation
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            idempotency_key: 01JCQ9W3K2M9XQ3F8V6T0B5NDE
+            first_seen: '2026-09-27T10:11:12+02:00'
+    PlanInUse:
+      summary: Delete attempted on a referenced plan
+      description: Archive it instead. The reference is enforced in the database too, by
+        `ON DELETE RESTRICT` (DR-016).
+      value:
+        error:
+          code: plan_in_use
+          message: plan pro is assigned to 1840 tenants
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            plan_key: pro
+            referencing_tenants: 1840
+    FeatureInUse:
+      summary: Delete attempted on a referenced feature
+      value:
+        error:
+          code: feature_in_use
+          message: feature llm.tokens.output is referenced by 3 plans
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            feature_key: llm.tokens.output
+            referencing_plans: 3
+    FeatureKeyExists:
+      summary: A duplicate feature key
+      value:
+        error:
+          code: feature_key_exists
+          message: 'feature key llm.tokens.output already exists'
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            feature_key: llm.tokens.output
+    TenantExists:
+      summary: A duplicate external_id
+      description: |
+        Deliberately **not** idempotent, so the data error surfaces. Returning the existing tenant
+        as if it had been created would hide a provisioning bug.
+      value:
+        error:
+          code: tenant_exists
+          message: 'tenant external_id acme-prod-01 already exists'
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            external_id: acme-prod-01
+    TenantDeleted:
+      summary: An operation on a soft-deleted tenant
+      description: |
+        Soft deletion is terminal. Create a new tenant, or restore from a backup. This code
+        appears only where the caller is already authorised to know the tenant exists; elsewhere
+        the answer is `tenant_not_found`.
+      value:
+        error:
+          code: tenant_deleted
+          message: 'tenant acme-prod-01 was deleted on 2026-09-30 and cannot be modified'
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            external_id: acme-prod-01
+            deleted_at: '2026-09-30T00:00:00+02:00'
+    PlanKeyExists:
+      summary: A duplicate plan key
+      value:
+        error:
+          code: plan_key_exists
+          message: 'plan key pro already exists'
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            plan_key: pro
+    RefundExceedsGrant:
+      summary: A refund that would break the ceiling
+      description: |
+        A refund may not take `balance` above `limit + bonus`. A refund never returns
+        `quota_exceeded`: the bound a refund can break is this one (DR-019). If the intent is a
+        permanent increase, use an admin `grant`.
+      value:
+        error:
+          code: refund_exceeds_grant
+          message: refund of 90000 would take the balance above limit plus bonus
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            feature_key: llm.tokens.output
+            balance: 41250
+            limit: 1000000
+            bonus: 0
+    GrantExceedsCeiling:
+      summary: A grant that would break the ceiling
+      description: |
+        Raise the limit with an override first. A grant is cycle-scoped and a limit is a contract,
+        and a lasting increase is a limit change (DR-019, DR-020).
+      value:
+        error:
+          code: grant_exceeds_ceiling
+          message: grant of 960000 would take the balance above limit plus bonus
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            feature_key: llm.tokens.output
+            balance: 41250
+            limit: 1000000
+            bonus: 0
+            ceiling: 1000000
+    ResetNotSupported:
+      summary: A rollover on a `never` entitlement
+      description: |
+        There is no cycle to roll. `never` is a lifetime allowance with no boundary and no
+        expiry, so a rollover request against it is a category error, not a missing feature
+        (DR-008). Grant explicitly.
+      value:
+        error:
+          code: reset_not_supported
+          message: 'feature api.requests has interval never, which has no cycle to roll over'
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            feature_key: api.requests
+            interval: never
+    FeatureUnitImmutable:
+      summary: A unit change on an assigned feature
+      description: |
+        Reinterpreting historical amounts is not allowed, so a unit that has been used to
+        account for anything can never change. Create a new feature (INV-F2).
+      value:
+        error:
+          code: feature_unit_immutable
+          message: 'unit of feature llm.tokens.output cannot change from token to request'
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            feature_key: llm.tokens.output
+            current: token
+            requested: request
+    ResourceVersionConflict:
+      summary: A stale version on a control-plane mutation
+      description: |
+        Retryable **after a re-read**, not by retrying the same body. The current version is in
+        `details` so a client can re-read and retry deliberately (FS-12).
+      value:
+        error:
+          code: resource_version_conflict
+          message: the resource was modified by someone else
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            expected_version: 7
+            current_version: 9
+    ConfirmationRequired:
+      summary: apply-now above the threshold, and nothing was applied
+      description: |
+        The service counted first, wrote nothing, and issued a single-use token bound to the plan
+        `resource_version` it was counted against (DR-046). Re-issue the identical request with
+        `confirmation_token`.
+
+        Retryable by re-issuing **with** the token. A retried confirmation cannot re-apply an
+        operation that already applied.
+      value:
+        error:
+          code: confirmation_required
+          message: this edit would affect 1840 tenants
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            affected_tenants: 1840
+            earliest_cycle_end: '2026-10-01T00:00:00+02:00'
+            confirmation_token: cnf_01J8Z6M2QK9V3X7B4C0N5TDEFA
+            threshold: 50
+            expires_in_s: 900
+            plan_version: 7
+    QuotaExceeded:
+      summary: Not enough in this cycle
+      description: |
+        Retryable at `cycle_end`, which is in `details` and is authoritative. This is **not** the
+        service rate-limiting you: there is no `Retry-After` on this code, on purpose, because a
+        few seconds is not what fixes it and the header would invite a hammering loop (DR-040).
+      value:
+        error:
+          code: quota_exceeded
+          message: 'balance 50 is below the requested amount 100'
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            feature_key: llm.tokens.output
+            balance: 50
+            requested: 100
+            limit: 1000
+            cycle_end: '2026-10-01T00:00:00+02:00'
+    RateLimited:
+      summary: The service protecting itself
+      description: |
+        Deliberately distinguishable from `quota_exceeded` by code, because the remedy is
+        completely different: back off, rather than wait for a reset (DR-040).
+      value:
+        error:
+          code: rate_limited
+          message: too many requests for this key
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          retry_after_ms: 250
+          details:
+            limit_per_second: 2000
+    InternalError:
+      summary: A defect, and nothing was applied
+      description: |
+        A `500` on `consume` or `refund` **always** means the balance is unchanged, because the
+        mutation is one atomic script execution. A client-side retry after a `500` is safe.
+
+        Quote the `request_id`.
+      value:
+        error:
+          code: internal_error
+          message: an unexpected error occurred
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+    ServiceUnavailable:
+      summary: A data-store problem, or the atomic script could not be evaluated
+      description: |
+        Retryable with backoff and jitter. Whether to fail **open** or **closed** is a
+        deliberate decision in your application, not one this service makes for you (DR-037).
+
+        Note that `consume` is not safe to retry blindly here unless you also send the same
+        `Idempotency-Key`; a new key on retry is a second charge (FS-03).
+      value:
+        error:
+          code: service_unavailable
+          message: the data store is unavailable
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          retry_after_ms: 100
+    ControlPlaneUnavailable:
+      summary: Postgres is unreachable and this tenant is not in the snapshot
+      description: |
+        Distinct from `service_unavailable` on purpose. Tenants already in the snapshot are
+        unaffected, which is the whole reason the snapshot exists, and a code that conflated the
+        two would make an incident impossible to diagnose (DR-036).
+      value:
+        error:
+          code: control_plane_unavailable
+          message: tenant configuration is not available in the snapshot
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          retry_after_ms: 100
+          details:
+            tenant_external_id: acme-prod-01
+    NotImplemented:
+      summary: A later-release surface called on an MVP build
+      description: |
+        The remedy is to upgrade, or to use the MVP equivalent. This is not a transient failure
+        and retrying does not help.
+      value:
+        error:
+          code: not_implemented
+          message: this endpoint is not available in v0.1
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            available_in: v0.2
+
+  responses:
+
+    NoContent:
+      x-status: 204
+      description: |
+        Done, and there is nothing to return. `X-Request-Id` is still on the response: NFR-S10 says
+        every response carries it, and a `204` is a response.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+
+    MeteredOK:
+      x-status: 200
+      description: |
+        The deduction was applied, or the stored response was replayed. `balance` is **after** the
+        deduction, `consumed` is the amount the *original* call applied, and the two together
+        reconstruct the balance before it.
+
+        `consumed` is returned unchanged on a replay, because the replayed response is
+        byte-identical to the original (DR-026). To tell whether this particular call moved
+        anything, read `replayed` or the `Idempotent-Replay` header; it is a one-field test rather
+        than an inference from arithmetic.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Idempotent-Replay:
+          $ref: '#/components/headers/IdempotentReplay'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MeteredResponse'
+          examples:
+            applied:
+              summary: A first application
+              value:
+                tenant_external_id: acme-prod-01
+                feature_key: llm.tokens.output
+                balance: 41250
+                limit: 1000000
+                bonus: 0
+                consumed: 4200
+                cycle_start: '2026-09-01T00:00:00+02:00'
+                cycle_end: '2026-10-01T00:00:00+02:00'
+                replayed: false
+            replayed:
+              summary: 'The same key replayed, with the identical body and replayed: true'
+              value:
+                tenant_external_id: acme-prod-01
+                feature_key: llm.tokens.output
+                balance: 41250
+                limit: 1000000
+                bonus: 0
+                consumed: 4200
+                cycle_start: '2026-09-01T00:00:00+02:00'
+                cycle_end: '2026-10-01T00:00:00+02:00'
+                replayed: true
+
+    CheckOK:
+      x-status: 200
+      description: |
+        The answer, which is a `200` whenever the question could be answered. A denial is
+        `allowed: false`, **not** a `429` (DR-024).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CheckResponse'
+          examples:
+            allowed:
+              summary: It would fit
+              value:
+                allowed: true
+                balance: 5000
+                limit: 1000000
+                bonus: 0
+                requested: 100
+                cycle_end: '2026-10-01T00:00:00+02:00'
+            denied:
+              summary: It would not, and this is still a 200
+              value:
+                allowed: false
+                balance: 50
+                limit: 1000
+                bonus: 0
+                requested: 100
+                cycle_end: '2026-10-01T00:00:00+02:00'
+
+    BalanceOK:
+      x-status: 200
+      description: |
+        The balances. With `feature_key`, one entry; without it, the tenant's full set, bounded by
+        the plan's entitlement count (NFR-T5). `cycle_start` and `cycle_end` are `null` together
+        for a `never` entitlement.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BalanceResponse'
+          examples:
+            full:
+              summary: A tenant on a two-feature plan
+              value:
+                tenant_external_id: acme-prod-01
+                entries:
+                  - feature_key: llm.tokens.output
+                    balance: 41250
+                    limit: 1000000
+                    bonus: 0
+                    consumed: 4200
+                    cycle_start: '2026-09-01T00:00:00+02:00'
+                    cycle_end: '2026-10-01T00:00:00+02:00'
+                  - feature_key: api.requests
+                    balance: 100000
+                    limit: 100000
+                    bonus: 0
+                    consumed: 0
+                    cycle_start: null
+                    cycle_end: null
+
+    BalanceEntryOK:
+      x-status: 200
+      description: |
+        The single affected balance, after the administrative change. Returning it is what lets
+        an operator see the effect of a `grant`, a `set` or a `force-rollover` without a second
+        round trip, and it is the same shape `GET /v1/balance` returns for one feature.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BalanceEntry'
+          examples:
+            afterGrant:
+              summary: A grant of 50000 applied
+              value:
+                feature_key: llm.tokens.output
+                balance: 91250
+                limit: 1000000
+                bonus: 50000
+                consumed: 4200
+                cycle_start: '2026-09-01T00:00:00+02:00'
+                cycle_end: '2026-10-01T00:00:00+02:00'
+
+    FeatureOK:
+      x-status: 200
+      description: One feature.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Feature'
+          examples:
+            feature:
+              summary: An active output-token feature
+              value:
+                id: 3f1a9c40-7b2e-4d5a-9e11-8c6b2a0d4e77
+                feature_key: llm.tokens.output
+                name: LLM output tokens
+                unit: token
+                kind: metered
+                description: Completion tokens billed to the customer
+                state: active
+                version: 3
+                created_at: '2026-01-04T09:00:00+01:00'
+                updated_at: '2026-09-01T09:00:00+02:00'
+                archived_at: null
+
+    FeatureListOK:
+      x-status: 200
+      description: The whole catalogue.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FeatureList'
+          examples:
+            catalogue:
+              summary: Two features
+              value:
+                features:
+                  - id: 3f1a9c40-7b2e-4d5a-9e11-8c6b2a0d4e77
+                    feature_key: llm.tokens.output
+                    name: LLM output tokens
+                    unit: token
+                    kind: metered
+                    description: Completion tokens billed to the customer
+                    state: active
+                    version: 3
+                    created_at: '2026-01-04T09:00:00+01:00'
+                    updated_at: '2026-09-01T09:00:00+02:00'
+                    archived_at: null
+                  - id: 9c2d4e18-3a5f-4b7c-8d02-1e9f3a6b5c40
+                    feature_key: api.requests
+                    name: API requests
+                    unit: request
+                    kind: metered
+                    description: ''
+                    state: active
+                    version: 1
+                    created_at: '2026-01-04T09:00:00+01:00'
+                    updated_at: '2026-01-04T09:00:00+01:00'
+                    archived_at: null
+                next_cursor: null
+
+    FeatureCreated:
+      x-status: 201
+      description: Created, with its initial `version` of 1.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Feature'
+
+    PlanOK:
+      x-status: 200
+      description: One plan, with its entitlements.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Plan'
+          examples:
+            plan:
+              summary: A two-feature plan
+              value:
+                id: 6b4c9e22-8d13-4a7f-b0c5-2e7d9a1f3b88
+                plan_key: pro
+                name: Pro
+                description: ''
+                state: active
+                version: 7
+                entitlements:
+                  - feature_key: llm.tokens.output
+                    limit: 1000000
+                    reset_interval: monthly
+                  - feature_key: api.requests
+                    limit: 100000
+                    reset_interval: monthly
+                created_at: '2026-01-04T09:00:00+01:00'
+                updated_at: '2026-09-01T09:00:00+02:00'
+                archived_at: null
+
+    PlanListOK:
+      x-status: 200
+      description: A page of plans.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PlanList'
+
+    PlanCreated:
+      x-status: 201
+      description: Created, with its initial `version` of 1.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Plan'
+
+    PlanAppliedOK:
+      x-status: 200
+      description: |
+        Every assigned tenant has been re-anchored and re-limited. The count is returned so the
+        operator can record what happened, and it matches the `affected_tenants` they were shown
+        in the confirmation.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PlanApplied'
+          examples:
+            applied:
+              summary: 12 tenants re-anchored
+              value:
+                plan_key: pro
+                affected_tenants: 12
+                applied_at: '2026-09-28T14:05:00+02:00'
+                version: 8
+
+    PlanImpactOK:
+      x-status: 200
+      description: |
+        What an edit **would** affect. Nothing changed, no audit row was written and no token was
+        issued (UC-19).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PlanImpact'
+          examples:
+            impact:
+              summary: 12 tenants, the earliest ending in three months
+              value:
+                plan_key: pro
+                affected_tenants: 12
+                earliest_cycle_end: '2026-12-01T00:00:00+01:00'
+                exceeds_confirmation_threshold: false
+
+    TenantOK:
+      x-status: 200
+      description: One tenant.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Tenant'
+          examples:
+            tenant:
+              summary: An active tenant on Pro
+              value:
+                id: 2e7a1f90-5b48-4c3d-9a6e-7f2b8c0d1e45
+                external_id: acme-prod-01
+                display_name: Acme Production
+                plan_key: pro
+                timezone: Europe/Berlin
+                state: active
+                anchor_at: '2026-09-01T00:00:00+02:00'
+                version: 12
+                created_at: '2026-01-04T09:00:00+01:00'
+                updated_at: '2026-09-01T09:00:00+02:00'
+                deleted_at: null
+                metadata: {}
+
+    TenantListOK:
+      x-status: 200
+      description: |
+        A page of tenants, newest first. Totals are deliberately absent: a count over a large
+        tenant table is a slow query pretending to be metadata.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantList'
+
+    TenantCreated:
+      x-status: 201
+      description: |
+        Provisioned, with balances materialised now rather than on first read. A balance created
+        on demand would hand a full allowance to whoever triggered it (DR-045).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Tenant'
+
+    OverrideOK:
+      x-status: 200
+      description: The override as stored, including which aspects it inherits from the plan.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Override'
+          examples:
+            limitOverride:
+              summary: A limit override, interval inherited
+              value:
+                id: 7d1b3e58-2a94-4f60-8c15-6b3d9e7a0c21
+                feature_key: llm.tokens.output
+                limit_value: 10000000
+                interval: null
+                apply_at: next_boundary
+                version: 1
+                created_at: '2026-09-28T14:00:00+02:00'
+                updated_at: '2026-09-28T14:00:00+02:00'
+            intervalOverride:
+              summary: A cadence override, limit inherited
+              value:
+                id: 5c8a2f31-9d47-4e28-b013-8a6f1c4d7e90
+                feature_key: api.requests
+                limit_value: null
+                interval: weekly
+                apply_at: immediate
+                version: 1
+                created_at: '2026-09-28T14:00:00+02:00'
+                updated_at: '2026-09-28T14:00:00+02:00'
+
+    UsageEventListOK:
+      x-status: 200
+      description: |
+        A page of ledger events, newest first. `delta` is signed and never zero, so summing the
+        deltas for a cycle and comparing with `balance_after` is the reconciliation an operator
+        performs by hand (DR-042).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UsageEventList'
+          examples:
+            events:
+              summary: One consume and one rollover
+              value:
+                events:
+                  - id: 1a4d8f23-7c05-4b91-9e3a-6d2f8b0c1e77
+                    tenant_external_id: acme-prod-01
+                    feature_key: llm.tokens.output
+                    cycle_index: 14
+                    delta: -4200
+                    balance_after: 41250
+                    source: api
+                    event_type: consumed
+                    request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+                    idempotency_key: 01JCQ9W3K2M9XQ3F8V6T0B5NDE
+                    cycle_start: '2026-09-01T00:00:00+02:00'
+                    cycle_end: '2026-10-01T00:00:00+02:00'
+                    occurred_at: '2026-09-27T10:11:12+02:00'
+                  - id: 8c3e1b07-4a92-4d56-8f0b-2a7e9c1d4b60
+                    tenant_external_id: acme-prod-01
+                    feature_key: llm.tokens.output
+                    cycle_index: 14
+                    delta: 1000000
+                    balance_after: 1000000
+                    source: system
+                    event_type: cycle_rolled_over
+                    request_id: null
+                    idempotency_key: null
+                    cycle_start: '2026-09-01T00:00:00+02:00'
+                    cycle_end: '2026-10-01T00:00:00+02:00'
+                    occurred_at: '2026-09-01T00:00:00+02:00'
+                next_cursor: null
+
+    KeyListOK:
+      x-status: 200
+      description: |
+        Key metadata. No secret is present, and no route will ever return one (INV-K3).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/KeyList'
+          examples:
+            keys:
+              summary: Two keys
+              value:
+                keys:
+                  - id: 4f8a2c61-9d03-4e57-b2a8-6c1d7e0f3b24
+                    name: acme-prod-deploy
+                    prefix: 9f2c1a4e7b8d
+                    scope: runtime
+                    state: active
+                    created_at: '2026-02-11T10:00:00+01:00'
+                    expires_at: '2027-01-01T00:00:00+01:00'
+                    last_used_at: '2026-09-27T10:11:12+02:00'
+                    revoked_at: null
+                  - id: 6d1c9e34-7b25-4a08-9f3d-2e8b4a6c1d57
+                    name: old-ci-key
+                    prefix: 3a7b9c1d5e2f
+                    scope: admin
+                    state: revoked
+                    created_at: '2025-11-02T08:30:00+01:00'
+                    expires_at: null
+                    last_used_at: '2026-03-04T16:20:00+01:00'
+                    revoked_at: '2026-03-04T17:00:00+01:00'
+                next_cursor: null
+
+    KeyCreated:
+      x-status: 201
+      description: |
+        The only response that ever contains the plaintext key. It is not recoverable afterwards:
+        only an Argon2id hash and the public prefix are stored (ADR-0012, INV-K3).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/KeyCreated'
+          examples:
+            issued:
+              summary: The one time this secret is visible
+              value:
+                id: 4f8a2c61-9d03-4e57-b2a8-6c1d7e0f3b24
+                name: acme-prod-deploy
+                prefix: 9f2c1a4e7b8d
+                scope: runtime
+                state: active
+                created_at: '2026-09-28T14:10:00+02:00'
+                expires_at: '2027-01-01T00:00:00+01:00'
+                key: qc_runtime_9f2c1a4e7b8d.kZ3nQ7xR2vT9wY4bH6mP1sD8fG5jL0cA
+
+    AuditEntryListOK:
+      x-status: 200
+      description: |
+        A page of audit records, newest first. Kept separate from usage history because they
+        answer different questions (UC-16).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuditEntryList'
+          examples:
+            entries:
+              summary: One override, set by the acme-prod-deploy key
+              value:
+                entries:
+                  - id: c7e2a905-3f18-4d6b-90c4-8a1e5b7d2f63
+                    actor: acme-prod-deploy
+                    actor_key_id: null
+                    action: tenant.override_set
+                    subject_type: tenant
+                    subject_id: 2e7a1f90-5b48-4c3d-9a6e-7f2b8c0d1e45
+                    before: null
+                    after:
+                      feature_key: llm.tokens.output
+                      limit_value: 10000000
+                      apply_at: next_boundary
+                    request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+                    occurred_at: '2026-09-28T14:00:00+02:00'
+                next_cursor: null
+
+    StatusOK:
+      x-status: 200
+      description: |
+        The one call an operator makes when something is wrong, so it reports dependency failure
+        as data rather than failing with an error envelope. It does still require the `admin`
+        scope (NFR-O5).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Status'
+          examples:
+            healthy:
+              summary: Everything reachable
+              value:
+                status: ok
+                version: 0.1.0
+                commit: 4f8a2c6
+                zone_data_version: '2026a'
+                server_time: '2026-09-28T14:12:33+02:00'
+                uptime_s: 8412
+                dependencies:
+                  - name: redis
+                    healthy: true
+                    latency_ms: 0.4
+                    error: null
+                  - name: postgres
+                    healthy: true
+                    latency_ms: 1.9
+                    error: null
+                cache:
+                  entries: 41207
+                  tenants: 1840
+                  features: 7
+                  size_bytes: 52428800
+                queue_depth: 0
+                worker: running
+                ledger_dropped_total: 0
+
+    HealthzOK:
+      x-status: 200
+      description: The process is running. No dependency is checked, deliberately.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HealthResponse'
+          examples:
+            alive:
+              value:
+                status: ok
+
+    ReadyzOK:
+      x-status: 200
+      description: |
+        The service can serve: required dependencies are reachable and the bootstrap key has been
+        acknowledged (NFR-S9).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HealthResponse'
+          examples:
+            ready:
+              value:
+                status: ready
+
+    MetricsOK:
+      x-status: 200
+      description: |
+        Prometheus text exposition format. Not JSON, and not an error envelope.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        text/plain:
+          schema:
+            type: string
+          examples:
+            sample:
+              summary: A few series, elided
+              value: |
+                # HELP quotacore_requests_total Total HTTP requests.
+                # TYPE quotacore_requests_total counter
+                quotacore_requests_total{route="consume",status="200"} 18402
+                # HELP quotacore_errors_total Errors by catalogue code.
+                # TYPE quotacore_errors_total counter
+                quotacore_errors_total{code="quota_exceeded"} 91
+
+    OpenAPIOK:
+      x-status: 200
+      description: |
+        This document, as the running binary was built from it. A test asserts the bytes served
+        equal the bytes of `api/openapi.yaml` in the repository (DoD item 5).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+            description: An OpenAPI 3.1 document, identical to `api/openapi.yaml`.
+
+    DocsOK:
+      x-status: 200
+      description: A single self-contained HTML page, with no third-party JavaScript.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        text/html:
+          schema:
+            type: string
+            description: A generated HTML reference for this document.
+
+    ErrorBadRequestMetered:
+      x-status: 400
+      x-codes: [validation_failed, invalid_amount, invalid_window, missing_idempotency_key]
+      description: |
+        The request was not applied. Nothing is charged and nothing is reserved.
+
+        `missing_idempotency_key` and `invalid_window` are in the same `400` as
+        `validation_failed` because they are the same class of mistake, but they are distinct
+        codes: a client that retries with a key fixes one and not the others.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            validation_failed:
+              $ref: '#/components/examples/ValidationFailed'
+            invalid_amount:
+              $ref: '#/components/examples/InvalidAmount'
+            invalid_window:
+              $ref: '#/components/examples/InvalidWindow'
+            missing_idempotency_key:
+              $ref: '#/components/examples/MissingIdempotencyKey'
+
+    ErrorBadRequestWindow:
+      x-status: 400
+      x-codes: [validation_failed, invalid_window]
+      description: |
+        The question could not be asked. `check` takes no `Idempotency-Key` and never returns
+        `quota_exceeded` or `idempotency_key_reuse`, because it mutates nothing (DR-024).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            validation_failed:
+              $ref: '#/components/examples/ValidationFailed'
+            invalid_window:
+              $ref: '#/components/examples/InvalidWindow'
+
+    ErrorBadRequestPlain:
+      x-status: 400
+      x-codes: [validation_failed]
+      description: |
+        The request was rejected and nothing changed. Validation errors aggregate, so one response
+        names every offending field.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            validation_failed:
+              $ref: '#/components/examples/ValidationFailed'
+
+    ErrorBadRequestTimezone:
+      x-status: 400
+      x-codes: [validation_failed, invalid_timezone]
+      description: |
+        A rejected request. `invalid_timezone` is separate from `validation_failed` because the
+        remedy is different and a wrong timezone is a wrong bill, not a typo.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            validation_failed:
+              $ref: '#/components/examples/ValidationFailed'
+            invalid_timezone:
+              $ref: '#/components/examples/InvalidTimezone'
+
+    ErrorUnauthorized:
+      x-status: 401
+      x-codes: [unauthorized, api_key_invalid]
+      description: |
+        No usable credential. `api_key_invalid` covers unknown, revoked, expired and malformed
+        keys, and there is no recovery path for any of them: rotate.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            unauthorized:
+              $ref: '#/components/examples/Unauthorized'
+            api_key_invalid:
+              $ref: '#/components/examples/ApiKeyInvalid'
+
+    ErrorForbiddenEntitlement:
+      x-status: 403
+      x-codes: [insufficient_scope, feature_not_in_plan, feature_archived, tenant_suspended]
+      description: |
+        A refusal that is about the caller or the entitlement, not the request's shape. Nothing
+        was charged.
+
+        All four are `403` and they are told apart by `code`, never by status: this is the case
+        the catalogue's "no code carries meaning in its HTTP status" rule exists for.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            insufficient_scope:
+              $ref: '#/components/examples/InsufficientScope'
+            feature_not_in_plan:
+              $ref: '#/components/examples/FeatureNotInPlan'
+            feature_archived:
+              $ref: '#/components/examples/FeatureArchived'
+            tenant_suspended:
+              $ref: '#/components/examples/TenantSuspended'
+
+    ErrorForbiddenScope:
+      x-status: 403
+      x-codes: [insufficient_scope]
+      description: |
+        A valid key with the wrong scope. `403` and not `404`, because the caller is already
+        authenticated and hiding the endpoint helps nobody (FS-18).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            insufficient_scope:
+              $ref: '#/components/examples/InsufficientScope'
+
+    ErrorFeatureNotFound:
+      x-status: 404
+      x-codes: [feature_not_found]
+      description: No such feature key on the admin API.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            feature_not_found:
+              $ref: '#/components/examples/FeatureNotFound'
+
+    ErrorPlanNotFound:
+      x-status: 404
+      x-codes: [plan_not_found]
+      description: No such plan.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            plan_not_found:
+              $ref: '#/components/examples/PlanNotFound'
+
+    ErrorTenantNotFound:
+      x-status: 404
+      x-codes: [tenant_not_found]
+      description: |
+        Unknown or soft-deleted tenant. A soft-deleted tenant is treated exactly as absent, which
+        is why this is also the answer after a soft delete (T-15).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            tenant_not_found:
+              $ref: '#/components/examples/TenantNotFound'
+
+    ErrorNotFoundResource:
+      x-status: 404
+      x-codes: [feature_not_found, tenant_not_found]
+      description: |
+        Neither the tenant nor the named feature exists. On the admin API existence is not
+        hidden, because the operator is already authorised for the whole instance.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            feature_not_found:
+              $ref: '#/components/examples/FeatureNotFound'
+            tenant_not_found:
+              $ref: '#/components/examples/TenantNotFound'
+
+    ErrorIdempotencyKeyReuse:
+      x-status: 409
+      x-codes: [idempotency_key_reuse]
+      description: |
+        The key was first used for a different operation. No state changed and the original record
+        is preserved (DR-028, INV-I2). Retry with a **new** key only if the new operation is
+        genuinely a new one.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            idempotency_key_reuse:
+              $ref: '#/components/examples/IdempotencyKeyReuse'
+
+    ErrorRefundConflict:
+      x-status: 409
+      x-codes: [idempotency_key_reuse, refund_exceeds_grant]
+      description: |
+        A refund conflict. It never returns `quota_exceeded`: a refund cannot exceed a balance,
+        and the bound it can break is `balance <= limit + bonus` (DR-019).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            idempotency_key_reuse:
+              $ref: '#/components/examples/IdempotencyKeyReuse'
+            refund_exceeds_grant:
+              $ref: '#/components/examples/RefundExceedsGrant'
+
+    ErrorConflictFeature:
+      x-status: 409
+      x-codes: [feature_key_exists, feature_in_use, feature_unit_immutable, resource_version_conflict]
+      description: |
+        A feature conflict, and nothing changed. `feature_unit_immutable` and
+        `resource_version_conflict` are the two ways a feature mutation is refused; the other two
+        are duplicate-key and still-referenced.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            feature_key_exists:
+              $ref: '#/components/examples/FeatureKeyExists'
+            feature_in_use:
+              $ref: '#/components/examples/FeatureInUse'
+            feature_unit_immutable:
+              $ref: '#/components/examples/FeatureUnitImmutable'
+            resource_version_conflict:
+              $ref: '#/components/examples/ResourceVersionConflict'
+
+    ErrorConflictPlan:
+      x-status: 409
+      x-codes: [plan_key_exists, plan_in_use, resource_version_conflict, confirmation_required]
+      description: |
+        A plan conflict, and **nothing changed**. `confirmation_required` is the same status
+        because it also applied nothing: it is a refusal that hands back a token, not a partial
+        application (DR-046).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            plan_key_exists:
+              $ref: '#/components/examples/PlanKeyExists'
+            plan_in_use:
+              $ref: '#/components/examples/PlanInUse'
+            resource_version_conflict:
+              $ref: '#/components/examples/ResourceVersionConflict'
+            confirmation_required:
+              $ref: '#/components/examples/ConfirmationRequired'
+
+    ErrorConfirmationRequired:
+      x-status: 409
+      x-codes: [confirmation_required]
+      description: |
+        The edit would affect more tenants than
+        `QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD` (default 50), so it applied **nothing** and
+        returned a single-use token instead.
+
+        Re-issue the identical request with `confirmation_token`. The token is bound to the plan
+        `resource_version` it was issued against, so a plan edited in between is refused.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            confirmation_required:
+              $ref: '#/components/examples/ConfirmationRequired'
+
+    ErrorConflictTenant:
+      x-status: 409
+      x-codes: [tenant_exists, tenant_deleted, resource_version_conflict]
+      description: |
+        A tenant conflict, and nothing changed. `tenant_exists` is deliberately not idempotent, so
+        a provisioning bug surfaces instead of being hidden.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            tenant_exists:
+              $ref: '#/components/examples/TenantExists'
+            tenant_deleted:
+              $ref: '#/components/examples/TenantDeleted'
+            resource_version_conflict:
+              $ref: '#/components/examples/ResourceVersionConflict'
+
+    ErrorConflictQuota:
+      x-status: 409
+      x-codes: [grant_exceeds_ceiling, reset_not_supported, resource_version_conflict]
+      description: |
+        A refused administrative change to a balance. Nothing was applied in any of the three
+        cases.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            grant_exceeds_ceiling:
+              $ref: '#/components/examples/GrantExceedsCeiling'
+            reset_not_supported:
+              $ref: '#/components/examples/ResetNotSupported'
+            resource_version_conflict:
+              $ref: '#/components/examples/ResourceVersionConflict'
+
+    ErrorResourceVersionConflict:
+      x-status: 409
+      x-codes: [resource_version_conflict]
+      description: |
+        Optimistic concurrency. Re-read the resource and retry with the current `version`; retrying
+        the same body will fail the same way.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            resource_version_conflict:
+              $ref: '#/components/examples/ResourceVersionConflict'
+
+    ErrorPayloadTooLarge:
+      x-status: 413
+      x-codes: [payload_too_large]
+      description: |
+        The body was refused **before it was parsed** (NFR-T6). Absent from every read route, and
+        from `DELETE .../overrides/{feature_key}`, which takes no body.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            payload_too_large:
+              $ref: '#/components/examples/PayloadTooLarge'
+
+    ErrorQuotaAndRate:
+      x-status: 429
+      x-codes: [quota_exceeded, rate_limited]
+      description: |
+        Two entirely different problems that share a status, which is why the catalogue says no
+        code may carry meaning in its status alone (DR-040).
+
+        `quota_exceeded` is the tenant's money for this cycle and is retryable at
+        `details.cycle_end`, with no `Retry-After`. `rate_limited` is this service protecting
+        itself and is retryable in seconds, with a `Retry-After`.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            quota_exceeded:
+              $ref: '#/components/examples/QuotaExceeded'
+            rate_limited:
+              $ref: '#/components/examples/RateLimited'
+
+    ErrorRateLimited:
+      x-status: 429
+      x-codes: [rate_limited]
+      description: |
+        This service is rate-limiting the key. Distinct from `quota_exceeded`, which is the
+        tenant's allowance rather than the service's protection (DR-040).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            rate_limited:
+              $ref: '#/components/examples/RateLimited'
+
+    ErrorInternal:
+      x-status: 500
+      x-codes: [internal_error]
+      description: |
+        A defect, and **nothing was applied**. On `consume` or `refund` a `500` always means the
+        balance is unchanged, because the mutation is a single atomic script execution, so a
+        client-side retry is safe.
+
+        Quote the `request_id`.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            internal_error:
+              $ref: '#/components/examples/InternalError'
+
+    ErrorNotImplemented:
+      x-status: 501
+      x-codes: [not_implemented]
+      description: |
+        A later-release surface called on an MVP build. Not transient: retrying does not help.
+        Upgrade, or use the MVP equivalent.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            not_implemented:
+              $ref: '#/components/examples/NotImplemented'
+
+    ErrorUnavailable:
+      x-status: 503
+      x-codes: [service_unavailable, control_plane_unavailable]
+      description: |
+        A dependency is unavailable. Both are retryable with backoff and jitter, and whether to
+        fail **open** or **closed** is a decision your application makes deliberately
+        (DR-037).
+
+        The two codes are separate because cached tenants are unaffected when Postgres is
+        unreachable, and conflating them would make an incident impossible to diagnose
+        (DR-036).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            service_unavailable:
+              $ref: '#/components/examples/ServiceUnavailable'
+            control_plane_unavailable:
+              $ref: '#/components/examples/ControlPlaneUnavailable'
+
+  schemas:
+
+    RequestId:
+      type: string
+      description: |
+        A ULID or a UUID. Adopted from the inbound `X-Request-Id` when it is one of those,
+        otherwise minted. It is the join key across logs, ledger events and a customer's bug
+        report (NFR-S10).
+      pattern: '^(?:[0-9A-HJKMNP-TV-Z]{26}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$'
+      examples:
+        ulid:
+          summary: A ULID
+          value: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+
+    IdempotencyKey:
+      type: string
+      description: |
+        One key per logical operation, reused across every attempt including retries. The window
+        is 24 hours from application and is **not** configurable, because it is a documented
+        customer guarantee (DR-029).
+      pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'
+      examples:
+        ulid:
+          value: 01JCQ9W3K2M9XQ3F8V6T0B5NDE
+
+    Timestamp:
+      type: string
+      description: |
+        RFC 3339 with an **explicit offset**, always, including `Z`. The offset is present even
+        when it is `Z` unless `Z` is the whole value, so no client branches on whether a zone is
+        UTC.
+
+        The difference this prevents is not academic: the gap between a UTC assumption and
+        `Europe/Berlin` across a DST change is 31 days minus one hour, and a customer notices.
+      format: date-time
+      examples:
+        offset:
+          summary: An explicit offset
+          value: '2026-10-01T00:00:00+02:00'
+        utc:
+          summary: The same instant in UTC
+          value: '2026-09-30T22:00:00Z'
+
+    ExternalId:
+      type: string
+      description: |
+        Your identifier for a tenant, as in `tenant_external_id`.
+
+        The character class **excludes `@`**, which makes it structurally impossible to store an
+        email address as a tenant identifier. That is a schema-level guarantee about the absence
+        of PII rather than a convention (DR-034, NFR-S2).
+      pattern: '^[A-Za-z0-9._:-]{1,128}$'
+      examples:
+        tenant:
+          value: acme-prod-01
+
+    FeatureKey:
+      type: string
+      description: |
+        A metered feature's key, matching the `features_key_format` constraint. The key is
+        immutable once created (INV-F3).
+      pattern: '^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$'
+      examples:
+        dotted:
+          value: llm.tokens.output
+
+    PlanKey:
+      type: string
+      description: A plan key, matching the `plans_key_format` constraint.
+      pattern: '^[a-z0-9][a-z0-9_-]{0,62}$'
+      examples:
+        plan:
+          value: pro
+
+    Unit:
+      type: string
+      description: |
+        What one `amount` counts: `token`, `request`, `image`, and so on. The unit is documented on
+        the feature and is **never inferred**, which is why it is immutable once the feature is
+        used for anything (INV-F2).
+      pattern: '^[a-z][a-z0-9_]{0,31}$'
+      examples:
+        unit:
+          value: token
+
+    Amount:
+      type: integer
+      description: |
+        A count of the feature's unit. JSON **integers only**: `4200.0` is
+        `400 validation_failed` naming the field, because accepting a float and rounding it
+        silently is how a customer loses money without noticing (DR-022).
+
+        The maximum is `2^53 - 1`, not `2^63 - 1`, and that is a scripting-language limit rather
+        than a storage one: the atomic script's numbers are doubles, so a balance above `2^53 - 1`
+        cannot be represented exactly by the code that enforces the ceiling. The database, the API
+        and the script all reject the same values, so a metering system that silently rounds is
+        avoided in favour of one that refuses the value.
+      format: int64
+      minimum: 0
+      maximum: 9007199254740991
+
+    Limit:
+      type: integer
+      description: A cycle allowance. Same integer rules and same `2^53 - 1` ceiling as `Amount`.
+      format: int64
+      minimum: 0
+      maximum: 9007199254740991
+      examples:
+        monthly:
+          value: 1000000
+
+    Version:
+      type: integer
+      description: |
+        Optimistic-concurrency token. Read it, send it back, and on a mismatch re-read before
+        retrying. Last-write-wins on a resource that governs a customer's money is not acceptable
+        (FS-12).
+      format: int64
+      minimum: 1
+      examples:
+        current:
+          value: 7
+
+    ResetInterval:
+      type: string
+      description: |
+        The cadence of an entitlement. A `never` entitlement is a lifetime allowance: no boundary,
+        no expiry, no rollover, and `cycle_start` and `cycle_end` are `null` (DR-008, INV-C6).
+      enum: [hourly, daily, weekly, monthly, yearly, never]
+
+    OverrideApplyAt:
+      type: string
+      description: |
+        A **mode, not a timestamp**. `immediate` applies now; `next_boundary` applies at the
+        tenant's next boundary, which is the only moment a boundary change is meaningful.
+
+        It is a mode because the actual instant an override takes effect is always the tenant's
+        next boundary, computed by the cycle engine and never stored. The name is a deliberate
+        wart kept for the API's benefit, and it is why the enum type exists in the schema: a
+        `timestamptz DEFAULT 'immediate'` would not be a slightly awkward value, it would not
+        parse.
+      enum: [immediate, next_boundary]
+      default: immediate
+
+    KeyScope:
+      type: string
+      description: |
+        `runtime` for `/v1/*`, `admin` for `/v1/admin/*`. An `admin` key also works on the data
+        plane.
+      enum: [runtime, admin]
+
+    KeyState:
+      type: string
+      description: A key's lifecycle. Revocation is effective on the next request, with no cache delay.
+      enum: [active, revoked, expired]
+
+    TenantState:
+      type: string
+      description: |
+        `suspended` preserves the balance exactly; resuming restores it (DR-032). `deleted` is a
+        soft delete and is terminal.
+      enum: [active, suspended, deleted]
+
+    ArchiveState:
+      type: string
+      description: |
+        A resource is archived rather than deleted, so audit and event history never dangles
+        (DR-016).
+      enum: [active, archived]
+
+    FeatureKind:
+      type: string
+      description: |
+        `metered` in v0.1. `boolean` exists in the schema with no v0.1 use, because adding an enum
+        value later is a schema change and v0.2's design is already known.
+      enum: [metered, boolean]
+
+    EventSource:
+      type: string
+      description: Who caused the event.
+      enum: [api, admin, system]
+
+    EventType:
+      type: string
+      description: |
+        The seven ledger event types. `delta` is signed and never zero, so an `amount: 0` consume
+        records no event at all (DR-023).
+      enum: [consumed, refunded, granted, set, plan_changed, cycle_rolled_over, force_rolled_over]
+
+    # There is deliberately no shared `CycleWindow` schema, and the repetition of
+    # `cycle_start`/`cycle_end` across MeteredResponse, CheckResponse, BalanceEntry and
+    # UsageEvent is deliberate.
+    #
+    # The obvious "fix" is to factor the pair into one schema and reference it with `allOf`.
+    # That silently breaks request/response strictness: in JSON Schema 2020-12 a subschema's
+    # `additionalProperties: false` only sees the `properties` declared in *that* subschema,
+    # so the shared window would reject every sibling field (MeteredResponse would fail its own
+    # `balance`). The correct refactor needs `unevaluatedProperties: false` at the outer level
+    # or a `discriminator`-style merge, both of which would put DoD item 3 at the mercy of
+    # ogen support that has not been verified.
+    #
+    # Four inline copies of a nullable timestamp pair is a smaller cost than a generated
+    # validator that stops rejecting undeclared fields. The invariant that `cycle_start` is null
+    # exactly when `cycle_end` is null, being a `never` entitlement, lives once in
+    # domain-rules.md (DR-002, DR-003) rather than being restated per schema.
+
+    Metadata:
+      type: object
+      description: |
+        Correlation only: at most 4 KiB, never indexed, never logged, and **never returned by any
+        endpoint** (DR-043, NFR-T6). It is not a data store and it is not a place for PII.
+      additionalProperties: true
+      examples:
+        correlation:
+          value:
+            model: claude-opus-5
+            conv: c_9f3a
+
+    ErrorCode:
+      type: string
+      description: |
+        The only field to branch on. Stable, permanent, lower snake case. A code may be retired
+        only in a major version, and only if no client could reasonably depend on it.
+
+        The enum is the catalogue by reference, and a contract test asserts the two match, so the
+        service cannot raise a code that is not in
+        [error-catalog.md](../../docs/product/error-catalog.md).
+      enum:
+        - validation_failed
+        - invalid_amount
+        - invalid_window
+        - invalid_timezone
+        - missing_idempotency_key
+        - unauthorized
+        - api_key_invalid
+        - insufficient_scope
+        - feature_not_in_plan
+        - feature_archived
+        - tenant_suspended
+        - tenant_not_found
+        - feature_not_found
+        - plan_not_found
+        - payload_too_large
+        - idempotency_key_reuse
+        - plan_in_use
+        - feature_in_use
+        - feature_key_exists
+        - tenant_exists
+        - tenant_deleted
+        - plan_key_exists
+        - refund_exceeds_grant
+        - grant_exceeds_ceiling
+        - reset_not_supported
+        - feature_unit_immutable
+        - resource_version_conflict
+        - confirmation_required
+        - quota_exceeded
+        - rate_limited
+        - service_unavailable
+        - control_plane_unavailable
+        - internal_error
+        - not_implemented
+
+    ErrorResponse:
+      type: object
+      description: |
+        The one error shape, everywhere, and it is non-negotiable. No endpoint returns a bare
+        `400` or a bare `500` without it.
+
+        `additionalProperties: false` here is what makes a typo in an error field a visible
+        defect rather than a silently dropped key.
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          description: |
+            The error itself, nested under `error` so the envelope is extensible. `code` is the
+            contract; `message` is not.
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code:
+              $ref: '#/components/schemas/ErrorCode'
+            message:
+              type: string
+              description: |
+                Human-readable and may improve between releases. **Never parse it.** Branch on
+                `code` and on `details`.
+            request_id:
+              $ref: '#/components/schemas/RequestId'
+            retry_after_ms:
+              type: integer
+              format: int64
+              minimum: 0
+              description: |
+                Present only when retrying is correct. On `quota_exceeded` it is **absent**,
+                because the wait is a calendar duration in `details.cycle_end` and a small number
+                here would invite a hammering loop.
+            details:
+              $ref: '#/components/schemas/ErrorDetails'
+
+    ErrorDetails:
+      type: object
+      description: |
+        Code-specific and additive across versions. Every code-specific field lives **here**, not
+        beside `code`, which is what keeps the envelope one shape everywhere.
+
+        Additive means a field may be added without a version bump. It does not mean a field's
+        type or meaning may change, and a client must tolerate a field it does not know.
+      additionalProperties: true
+      examples:
+        validation:
+          summary: Aggregated field errors
+          value:
+            errors:
+              - field: amount
+                issue: must be an integer, got 4200.0
+
+    MeteredRequest:
+      type: object
+      description: |
+        The body of `consume`, `refund` and `check`. It is the same body on all three, because the
+        three differ in what they do with it rather than in what they need.
+      additionalProperties: false
+      required: [feature_key, amount, tenant_external_id]
+      properties:
+        feature_key:
+          allOf:
+            - $ref: '#/components/schemas/FeatureKey'
+          description: |
+            A **single** key, never an array. One feature per call, by design: a bundle would have
+            to attribute its cost across features, which breaks the per-feature event model and
+            the idempotency fingerprint, and a partial bundle failure is a state the caller cannot
+            reason about. A bundle is two calls ([Q-05](../../docs/product/assumptions-and-open-questions.md#2-open-questions)).
+        amount:
+          $ref: '#/components/schemas/Amount'
+        tenant_external_id:
+          allOf:
+            - $ref: '#/components/schemas/ExternalId'
+          description: The customer never handles an internal `tenant_id`.
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+        window:
+          type: string
+          description: |
+            v0.2. Omitted means the anchored cycle, which is the only cadence in v0.1
+            (ADR-0008). A window that disagrees with the feature's cadence is
+            `400 invalid_window`, and supplying any window on a v0.1 build is also
+            `invalid_window`, because the two cadences are never silently mixed.
+          enum: [rolling_5m, rolling_15m, rolling_1h, rolling_6h, rolling_24h, rolling_7d, rolling_30d]
+      examples:
+        metered:
+          value:
+            feature_key: llm.tokens.output
+            amount: 4200
+            tenant_external_id: acme-prod-01
+            metadata:
+              model: claude-opus-5
+              conv: c_9f3a
+
+    MeteredResponse:
+      description: |
+        One feature's numbers after a metered call, describing the cycle the call fell in. A replay
+        returns the same body with `replayed: true`, because a retrying client must not be able to
+        tell a replay from a second charge by its shape alone (DR-049).
+      type: object
+      additionalProperties: false
+      required: [tenant_external_id, feature_key, balance, limit, bonus, consumed, cycle_start, cycle_end, replayed]
+      properties:
+        tenant_external_id:
+          $ref: '#/components/schemas/ExternalId'
+        feature_key:
+          $ref: '#/components/schemas/FeatureKey'
+        balance:
+          allOf:
+            - $ref: '#/components/schemas/Amount'
+          description: The remaining balance **after** the deduction.
+        limit:
+          $ref: '#/components/schemas/Limit'
+        bonus:
+          allOf:
+            - $ref: '#/components/schemas/Amount'
+          description: Cycle-scoped granted quota. It does not survive the boundary (DR-020).
+        consumed:
+          allOf:
+            - $ref: '#/components/schemas/Amount'
+          description: |
+            The amount the **original** call applied, returned unchanged on a replay because the
+            replayed response is byte-identical (DR-026). `balance` minus `consumed` is the
+            balance before the original deduction.
+        cycle_start:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        cycle_end:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        replayed:
+          type: boolean
+          description: |
+            Whether this response is a replay of a stored one. A client that needs to know
+            whether **this call** moved anything reads this, rather than inferring it from
+            arithmetic, and it can also read the `Idempotent-Replay` header.
+
+    CheckResponse:
+      type: object
+      description: The answer to "would this be allowed", which is always a `200` when answerable.
+      additionalProperties: false
+      required: [allowed, balance, limit, bonus, requested, cycle_end]
+      properties:
+        allowed:
+          type: boolean
+          description: |
+            A denial is `allowed: false` at `200`, **not** a `429` (DR-024). A `429` from this
+            route means the service is rate-limiting you.
+        balance:
+          $ref: '#/components/schemas/Amount'
+        limit:
+          $ref: '#/components/schemas/Limit'
+        bonus:
+          $ref: '#/components/schemas/Amount'
+        requested:
+          $ref: '#/components/schemas/Amount'
+        cycle_end:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+          description: When a currently-denied amount would become available.
+
+    BalanceEntry:
+      description: |
+        One feature's balance for the current cycle. A feature the tenant's plan does not include is
+        absent rather than zero, so a caller can tell an omission from an exhausted allowance.
+      type: object
+      additionalProperties: false
+      required: [feature_key, balance, limit, bonus, consumed, cycle_start, cycle_end]
+      properties:
+        feature_key:
+          $ref: '#/components/schemas/FeatureKey'
+        balance:
+          $ref: '#/components/schemas/Amount'
+        limit:
+          $ref: '#/components/schemas/Limit'
+        bonus:
+          $ref: '#/components/schemas/Amount'
+        consumed:
+          allOf:
+            - $ref: '#/components/schemas/Amount'
+          description: Consumption so far in this cycle, as recorded in the ledger.
+        cycle_start:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        cycle_end:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+
+    BalanceResponse:
+      description: |
+        Every feature's balance for one tenant, in one call. Paged by feature rather than by tenant,
+        because the question is never about a tenant on its own.
+      type: object
+      additionalProperties: false
+      required: [tenant_external_id, entries]
+      properties:
+        tenant_external_id:
+          $ref: '#/components/schemas/ExternalId'
+        entries:
+          type: array
+          description: |
+            One entry, or the tenant's full set. The set is bounded by the plan's entitlement
+            count (NFR-T5), so the unbounded case does not exist. An empty page is `[]`, never
+            `null`.
+          items:
+            $ref: '#/components/schemas/BalanceEntry'
+
+    Feature:
+      description: |
+        One feature in Quotacore's catalogue. A feature is the thing that is metered; a plan says how
+        much of it a tenant gets, and a tenant is assigned to exactly one plan (UC-05).
+      type: object
+      additionalProperties: false
+      required: [id, feature_key, name, unit, kind, description, state, version, created_at, updated_at, archived_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: |
+            Internal, and what `/v1/admin/features/{id}` takes. Unlike a tenant's `external_id`
+            there is no customer-chosen form, because a feature is Quotacore's own catalogue entry.
+        feature_key:
+          allOf:
+            - $ref: '#/components/schemas/FeatureKey'
+          description: Immutable once created (INV-F3).
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: The operator's display name. Cosmetic, and the only mutable field but `description`.
+        unit:
+          allOf:
+            - $ref: '#/components/schemas/Unit'
+          description: |
+            Immutable once the feature is referenced by an assignment or an event. Reinterpreting
+            historical amounts is not allowed, and that is what `feature_unit_immutable` is for
+            (INV-F2).
+        kind:
+          $ref: '#/components/schemas/FeatureKind'
+        description:
+          type: string
+          maxLength: 2000
+          description: Free text for an operator reading a plan. Empty when there is nothing to say.
+        state:
+          $ref: '#/components/schemas/ArchiveState'
+        version:
+          $ref: '#/components/schemas/Version'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+        archived_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+          description: Null unless `state` is `archived`.
+
+    FeatureCreate:
+      description: |
+        Create a feature. The catalogue is small and edited deliberately, because a feature key whose
+        meaning later changes is a change to history (INV-F2, INV-F3).
+      type: object
+      additionalProperties: false
+      required: [feature_key, name, unit]
+      properties:
+        feature_key:
+          allOf:
+            - $ref: '#/components/schemas/FeatureKey'
+          description: Immutable. A duplicate is `409 feature_key_exists`.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: The operator's display name for the new feature.
+        unit:
+          allOf:
+            - $ref: '#/components/schemas/Unit'
+          description: Immutable once referenced, and documented on the feature rather than inferred.
+        description:
+          type: string
+          maxLength: 2000
+          description: Optional free text. Absent and `''` are the same thing, which is why it defaults to `''`.
+          default: ''
+
+    FeatureUpdate:
+      type: object
+      description: |
+        A rename. `unit` and `feature_key` are absent by design: offering an immutable field and
+        then refusing it is a worse API than not offering it.
+      additionalProperties: false
+      required: [version]
+      properties:
+        version:
+          allOf:
+            - $ref: '#/components/schemas/Version'
+          description: |
+            Required. The optimistic-concurrency token from the `GET` that preceded this call. A
+            mismatch is `409 resource_version_conflict` with the current version in `details`.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: The new display name, replacing the current one.
+        description:
+          type: string
+          maxLength: 2000
+          description: Replaces the current free text. `''` clears it, so clearing is an explicit act.
+
+    FeatureList:
+      description: |
+        A page of the feature catalogue, for a picker or a review. Features are created and archived,
+        never deleted, so a historical event always resolves to something (UC-05).
+      type: object
+      additionalProperties: false
+      required: [features]
+      properties:
+        features:
+          type: array
+          description: The page of features. An empty page is `[]`, never `null`.
+          items:
+            $ref: '#/components/schemas/Feature'
+        next_cursor:
+          oneOf:
+            - $ref: '#/components/schemas/Cursor'
+            - type: 'null'
+          description: Null on the last page. An empty page is an empty array, never `null`.
+
+    PlanEntitlement:
+      type: object
+      description: One feature's allowance in a plan.
+      additionalProperties: false
+      required: [feature_key, limit, reset_interval]
+      properties:
+        feature_key:
+          $ref: '#/components/schemas/FeatureKey'
+        limit:
+          $ref: '#/components/schemas/Limit'
+        reset_interval:
+          $ref: '#/components/schemas/ResetInterval'
+
+    Plan:
+      description: |
+        One plan: the offer a tenant is assigned to. A plan is a bounded set of entitlements and
+        nothing else â€” no tenant, no key and no balance (DR-011).
+      type: object
+      additionalProperties: false
+      required: [id, plan_key, name, description, state, version, entitlements, created_at, updated_at, archived_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Internal, and what `/v1/admin/plans/{id}` and `/v1/admin/plans/{id}/impact` take.
+        plan_key:
+          $ref: '#/components/schemas/PlanKey'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: The operator's display name for the plan.
+        description:
+          type: string
+          maxLength: 2000
+          description: Free text for an operator reading the plan. Empty when there is nothing to say.
+        state:
+          $ref: '#/components/schemas/ArchiveState'
+        version:
+          $ref: '#/components/schemas/Version'
+        entitlements:
+          type: array
+          description: |
+            At most 100. The bound is a documented validation limit rather than a struct size, so
+            a larger plan is a `400 validation_failed` rather than a slow request (NFR-T5).
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/PlanEntitlement'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+        archived_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+
+    PlanCreate:
+      description: |
+        Create a plan, entitlements included. A plan is created whole, because a plan with no
+        entitlements is not a plan (UC-11).
+      type: object
+      additionalProperties: false
+      required: [plan_key, name, entitlements]
+      properties:
+        plan_key:
+          allOf:
+            - $ref: '#/components/schemas/PlanKey'
+          description: A duplicate is `409 plan_key_exists`.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: The operator's display name for the new plan.
+        description:
+          type: string
+          maxLength: 2000
+          description: Optional free text. Absent and `''` are the same thing, which is why it defaults to `''`.
+          default: ''
+        entitlements:
+          type: array
+          description: |
+            The whole offer, 1 to 100 features. The upper bound is a documented validation limit
+            rather than a struct size, so a larger plan is a `400 validation_failed` rather than a
+            slow request (NFR-T5).
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/PlanEntitlement'
+
+    PlanUpdate:
+      type: object
+      description: |
+        An edit to a plan's entitlements. It applies to new assignments immediately and to
+        existing tenants at their next boundary; it does not touch an open balance and it does not
+        move a boundary (DR-014).
+      additionalProperties: false
+      required: [version]
+      properties:
+        version:
+          allOf:
+            - $ref: '#/components/schemas/Version'
+          description: |
+            Required. The plan is an offer that governs a customer's money, so last-write-wins is
+            not acceptable: a mismatch is `409 resource_version_conflict` (FS-12).
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: The new display name, replacing the current one.
+        description:
+          type: string
+          maxLength: 2000
+          description: Replaces the current free text. `''` clears it, so clearing is an explicit act.
+        entitlements:
+          type: array
+          description: |
+            **Replaces the whole set.** A partial update of a bounded set is an ambiguity, and a
+            plan is edited as one offer.
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/PlanEntitlement'
+
+    PlanApplyRequest:
+      description: |
+        Re-anchor every tenant assigned to a plan. It is the only control-plane write that touches
+        tenants it was not addressed to, and the reason a reason is required is that a decision with a
+        blast radius is a decision worth reading later (DR-014).
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: |
+            Required and audited. Re-anchoring every assigned tenant is a decision with a blast
+            radius, and a decision with a blast radius is one whose reason is worth having later.
+        confirmation_token:
+          type: string
+          description: |
+            Present only when re-issuing after `409 confirmation_required`. Single-use, bound to
+            the plan `resource_version` it was issued against, and expiring on
+            `QUOTACORE_CONFIRMATION_TTL`, because an abandoned token must not accumulate in a
+            store that cannot evict (DR-048).
+          pattern: '^cnf_[0-9A-HJKMNP-TV-Z]{26}$'
+          examples:
+            token:
+              value: cnf_01J8Z6M2QK9V3X7B4C0N5TDEFA
+
+    PlanApplied:
+      description: |
+        The outcome of a completed apply, so a caller can record what happened without re-reading the
+        plan and hoping it has not been edited since (UC-18).
+      type: object
+      additionalProperties: false
+      required: [plan_key, affected_tenants, applied_at, version]
+      properties:
+        plan_key:
+          $ref: '#/components/schemas/PlanKey'
+        affected_tenants:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            How many tenants were re-anchored, matching the `affected_tenants` the operator was
+            shown in the confirmation.
+        applied_at:
+          $ref: '#/components/schemas/Timestamp'
+        version:
+          allOf:
+            - $ref: '#/components/schemas/Version'
+          description: The plan's version after the apply.
+
+    PlanImpact:
+      type: object
+      description: |
+        What an edit would affect, read-only. Nothing is re-anchored, no audit row records a
+        mutation and no token is issued (UC-19).
+      additionalProperties: false
+      required: [plan_key, affected_tenants, earliest_cycle_end, exceeds_confirmation_threshold]
+      properties:
+        plan_key:
+          $ref: '#/components/schemas/PlanKey'
+        affected_tenants:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            How many tenants the edit would affect, which is the number
+            `exceeds_confirmation_threshold` compares against the configured threshold.
+        earliest_cycle_end:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+          description: |
+            The earliest `cycle_end` among affected tenants, or null when none are affected. It is
+            the same value `confirmation_required` reports, so the common case is a quiet read
+            rather than a `409`.
+        exceeds_confirmation_threshold:
+          type: boolean
+          description: |
+            Whether `affected_tenants` is above `QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD`. The
+            operator can tell whether to expect a confirmation without provoking one.
+
+    PlanList:
+      description: |
+        A page of plans, for a picker or a review.
+      type: object
+      additionalProperties: false
+      required: [plans]
+      properties:
+        plans:
+          type: array
+          description: The page of plans. An empty page is `[]`, never `null`.
+          items:
+            $ref: '#/components/schemas/Plan'
+        next_cursor:
+          oneOf:
+            - $ref: '#/components/schemas/Cursor'
+            - type: 'null'
+
+    TenantMetadata:
+      type: object
+      description: |
+        A small JSON object on the tenant, explicitly not PII, not indexed by content and excluded
+        from logs (DR-043, NFR-O6). Distinct from a request body's `metadata`, which is never
+        returned.
+      additionalProperties: true
+
+    Tenant:
+      description: |
+        One tenant: the customer Quotacore meters. `external_id` is the customer's identifier, and
+        every other field is either derived from it or operational bookkeeping (DR-001).
+      type: object
+      additionalProperties: false
+      required: [id, external_id, display_name, plan_key, timezone, state, anchor_at, version, created_at, updated_at, deleted_at, metadata]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: |
+            Internal.             The customer uses `external_id`; this exists for the audit log's
+            `subject_id`.
+        external_id:
+          $ref: '#/components/schemas/ExternalId'
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: |
+            A label for an operator reading a tenant list. Not an identity and not a lookup key:
+            two tenants may share one, so the uniqueness rule is on `external_id` alone.
+        plan_key:
+          $ref: '#/components/schemas/PlanKey'
+        timezone:
+          type: string
+          description: |
+            An IANA name. The tenant's cycle boundaries are computed in this zone, so a wrong zone
+            is a wrong bill. Abbreviations are `400 invalid_timezone`; a timezone is a set of rules
+            and an abbreviation is not one (ADR-0007).
+          pattern: '^[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+$'
+          examples:
+            berlin:
+              value: Europe/Berlin
+        state:
+          $ref: '#/components/schemas/TenantState'
+        anchor_at:
+          allOf:
+            - $ref: '#/components/schemas/Timestamp'
+          description: |
+            The tenant's **only** per-tenant cycle state (DR-002). There is deliberately no stored
+            current window: a stored window that could disagree with the anchor is exactly the
+            defect the pure-function design removes, and boundaries are computed from the anchor
+            in the application, in UTC, with the zone applied to the arithmetic (ADR-0003).
+        version:
+          $ref: '#/components/schemas/Version'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+        deleted_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+          description: |
+            Set by a soft delete, which is **not retroactive**: events and audit rows stay
+            queryable, which is what makes a dispute answerable after a churn event (T-15). There
+            is no undelete.
+        metadata:
+          $ref: '#/components/schemas/TenantMetadata'
+
+    TenantCreate:
+      description: |
+        Provision a tenant on a plan. The cycle starts now, at the anchor, and the allowance is
+        materialised immediately rather than on first use, so a missing balance is a defect and not a
+        lazy read (DR-002, DR-045).
+      type: object
+      additionalProperties: false
+      required: [external_id, display_name, plan_key]
+      properties:
+        external_id:
+          allOf:
+            - $ref: '#/components/schemas/ExternalId'
+          description: |
+            Your identifier for this tenant. A duplicate is `409 tenant_exists`, deliberately not
+            idempotent, so a provisioning bug surfaces instead of being hidden.
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: An operator-facing label. Not unique, and never a lookup key.
+        plan_key:
+          $ref: '#/components/schemas/PlanKey'
+        timezone:
+          type: string
+          description: |
+            An IANA name; defaults to `UTC`. The zone the tenant's cycle boundaries are computed
+            in.
+          pattern: '^[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+$'
+          default: UTC
+        metadata:
+          $ref: '#/components/schemas/TenantMetadata'
+
+    TenantUpdate:
+      type: object
+      description: |
+        A change to a tenant. **Changing `plan_key` is a hard reset**: the new limits apply
+        immediately, the anchor is set to now, and the previous balance is discarded rather than
+        prorated, recorded as a `plan_changed` event so the discard is visible (DR-013).
+
+        Proration is deferred deliberately. Prorating a limit is a claim about time the customer
+        did not buy; the balance was for the cycle that just ended.
+      additionalProperties: false
+      required: [version]
+      properties:
+        version:
+          allOf:
+            - $ref: '#/components/schemas/Version'
+          description: |
+            Required. The optimistic-concurrency token. A mismatch is
+            `409 resource_version_conflict`.
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: The new operator-facing label, replacing the current one.
+        plan_key:
+          allOf:
+            - $ref: '#/components/schemas/PlanKey'
+          description: A change here starts a fresh cycle and discards the open balance.
+        timezone:
+          type: string
+          pattern: '^[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+$'
+          description: |
+            An IANA name, as on `Tenant.timezone`, and an abbreviation is `400
+            invalid_timezone` for the same reason. The zone boundaries are recomputed from the
+            unchanged anchor, so this moves future boundaries and leaves past ones alone.
+        metadata:
+          $ref: '#/components/schemas/TenantMetadata'
+
+    TenantList:
+      description: |
+        A page of tenants, for an operator. Admin-scoped, because it enumerates other customers.
+      type: object
+      additionalProperties: false
+      required: [tenants]
+      properties:
+        tenants:
+          type: array
+          description: The page of tenants. An empty page is `[]`, never `null`.
+          items:
+            $ref: '#/components/schemas/Tenant'
+        next_cursor:
+          oneOf:
+            - $ref: '#/components/schemas/Cursor'
+            - type: 'null'
+          description: |
+            Null on the last page. Totals are deliberately not returned: a count over a large
+            tenant table is a slow query pretending to be metadata.
+
+    Cursor:
+      type: string
+      description: |
+        An opaque, signed pagination cursor. Never parse it and never construct one. A tampered
+        cursor is `400 validation_failed`, not a silent full scan.
+      minLength: 1
+      maxLength: 512
+      examples:
+        cursor:
+          value: eyJjcmVhdGVkX2F0IjoiMjAyNi0wOS0yOVQwMjoxMToySisic29ydCI6ImRlc2MifQ
+
+    ReasonRequest:
+      type: object
+      description: A state-changing admin call with a mandatory reason, audited with before and after.
+      additionalProperties: false
+      required: [version, reason]
+      properties:
+        version:
+          allOf:
+            - $ref: '#/components/schemas/Version'
+          description: The optimistic-concurrency token. A mismatch is `409 resource_version_conflict`.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: |
+            Required. Every administrative mutation writes an audit row in the same transaction as
+            the mutation (NFR-D4), and a reason is the part of that row a human reads later.
+
+    ArchiveRequest:
+      description: |
+        Archive a plan or a feature. Archiving is not deletion: the record keeps its history and stops
+        being assignable, and archiving again is what reverses it (INV-P2, UC-13).
+      type: object
+      additionalProperties: false
+      required: [version, reason]
+      properties:
+        version:
+          allOf:
+            - $ref: '#/components/schemas/Version'
+          description: The optimistic-concurrency token.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: |
+            Required and audited. Archiving hides a plan or feature from new assignments, so the
+            reason is what an operator reads to know whether it was deliberate.
+
+    DeleteRequest:
+      description: |
+        Soft-delete a tenant. Deletion is terminal for the tenant, so the open balance is not re-granted
+        and the ledger is kept, because a deleted tenant still has events (UC-14).
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: |
+            Required and audited. Soft deletion is terminal, so the reason is the only record of
+            why it happened.
+
+    GrantRequest:
+      type: object
+      description: |
+        Add cycle-scoped bonus quota. A grant does not survive the boundary: a bonus is a gesture
+        and a limit is a contract (DR-019, DR-020).
+      additionalProperties: false
+      required: [feature_key, amount, reason]
+      properties:
+        feature_key:
+          $ref: '#/components/schemas/FeatureKey'
+        amount:
+          allOf:
+            - $ref: '#/components/schemas/Amount'
+          description: |
+            A grant only adds, so it is never negative. A grant on a `never` entitlement
+            increases the balance with no ceiling tied to a cycle and no expiry.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Required, and audited. Goodwill is a decision, not a correction.
+
+    SetRequest:
+      type: object
+      description: |
+        Set a balance to an exact value. The blunt instrument, and the right one when a migration
+        produced a number that is known to be wrong.
+      additionalProperties: false
+      required: [feature_key, value, reason]
+      properties:
+        feature_key:
+          $ref: '#/components/schemas/FeatureKey'
+        value:
+          allOf:
+            - $ref: '#/components/schemas/Amount'
+          description: The balance after this call.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: |
+            Required and audited. Overwriting a balance destroys the previous figure, so the reason
+            is the only record of what it was replaced by.
+
+    ForceRolloverRequest:
+      type: object
+      description: |
+        Roll one feature's cycle over now, applying the next cycle's allowance immediately. It is
+        audited and recorded as a `force_rolled_over` event.
+      additionalProperties: false
+      required: [feature_key, reason]
+      properties:
+        feature_key:
+          $ref: '#/components/schemas/FeatureKey'
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: |
+            Required and audited. Rolling a cycle over early gives the tenant its next allowance
+            now, so the reason is the record of who decided to and why.
+
+    OverrideUpsert:
+      type: object
+      description: |
+        Set or replace a per-feature override. An override is a **contract term** and outranks the
+        plan: it survives later plan edits, because a plan is an offer and an override is what one
+        customer signed for (DR-011).
+
+        Clearing an override is `DELETE /v1/admin/tenants/{id}/overrides/{feature_key}`, not this
+        route, because the storage cannot represent an override that sets nothing.
+
+        **`limit_value` and `interval` are both required and both nullable.** UC-13 says "a limit,
+        a reset interval, or both", and a required-but-nullable field is how "this aspect is not
+        overridden" is stated without ambiguity. Requiring the key is deliberate: absence would
+        mean two things, that the aspect is inherited and that the operator forgot it, and a
+        quota system should not have a wire format with those two readings.
+
+        **At least one of the two must be non-null, and this schema does not enforce that.** It is
+        the one constraint in the contract that lives in the data store, as
+        `tenant_overrides_not_empty`, and a request that sends both null is
+        `400 validation_failed`. The reason is recorded here rather than papered over: expressing
+        it in JSON Schema needs an `anyOf` over object branches, and the generator
+        (ogen 1.24.0) cannot generate that, failing with "complex anyOf is not implemented yet".
+        Silently dropping the constraint from the document to make the generator happy would
+        leave a reader believing the wire format guarantees something it does not.
+
+        The rule is normative in api-conventions.md section 7.4, which states the
+        presence-and-null convention and the division of labour between the schema and the store.
+      additionalProperties: false
+      required: [feature_key, limit_value, interval]
+      properties:
+        feature_key:
+          $ref: '#/components/schemas/FeatureKey'
+        limit_value:
+          oneOf:
+            - $ref: '#/components/schemas/Limit'
+            - type: 'null'
+          description: |
+            Null means "inherit the limit from the plan for this aspect". A non-null value may
+            exceed the plan's limit: that is the mechanism for custom limits for an enterprise
+            customer (DR-015).
+        interval:
+          oneOf:
+            - $ref: '#/components/schemas/ResetInterval'
+            - type: 'null'
+          description: Null means "inherit the cadence from the plan".
+        apply_at:
+          allOf:
+            - $ref: '#/components/schemas/OverrideApplyAt'
+          description: |
+            `immediate` by default. A mode, not a timestamp; the instant an override takes effect
+            is always the tenant's next boundary, computed rather than stored.
+        version:
+          allOf:
+            - $ref: '#/components/schemas/Version'
+          description: |
+            Optional expected version for the existing override. Omitted means "create or replace
+            without a concurrency check", which is appropriate when a single operator is the only
+            writer.
+      examples:
+        limit:
+          summary: Ten times the plan limit, from the next boundary
+          value:
+            feature_key: llm.tokens.output
+            limit_value: 10000000
+            interval: null
+            apply_at: next_boundary
+        interval:
+          summary: Custom cadence, limit inherited from the plan
+          value:
+            feature_key: api.requests
+            limit_value: null
+            interval: weekly
+            apply_at: immediate
+        both:
+          summary: A limit and a cadence, neither inherited
+          value:
+            feature_key: api.requests
+            limit_value: 5000
+            interval: weekly
+            apply_at: immediate
+
+    OverrideClearRequest:
+      type: object
+      description: |
+        The body of the override-clearing `DELETE`.
+
+        `apply_at` is in the body rather than a query parameter because it changes **when** money
+        is owed, and a `DELETE` that silently meant "now" would be a surprise in a billing system.
+      additionalProperties: false
+      required: [apply_at]
+      properties:
+        apply_at:
+          $ref: '#/components/schemas/OverrideApplyAt'
+      examples:
+        clear:
+          summary: Restore the plan value from the next boundary
+          value:
+            apply_at: next_boundary
+
+    Override:
+      description: |
+        One per-feature override on one tenant. An override is a contract term and outranks the plan,
+        which is why it is modelled separately rather than expressed as a plan edit (DR-011).
+      type: object
+      additionalProperties: false
+      required: [id, feature_key, limit_value, interval, apply_at, version, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: |
+            Internal. An override is addressed by tenant and `feature_key` rather than by this id,
+            so there is at most one per pair.
+        feature_key:
+          $ref: '#/components/schemas/FeatureKey'
+        limit_value:
+          oneOf:
+            - $ref: '#/components/schemas/Limit'
+            - type: 'null'
+          description: Null when the limit is inherited from the plan.
+        interval:
+          oneOf:
+            - $ref: '#/components/schemas/ResetInterval'
+            - type: 'null'
+          description: Null when the cadence is inherited from the plan.
+        apply_at:
+          $ref: '#/components/schemas/OverrideApplyAt'
+        version:
+          $ref: '#/components/schemas/Version'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    UsageEvent:
+      type: object
+      description: |
+        One ledger row. The ledger is append-only (INV-U2), reconstructed rather than trusted, and
+        delivered downstream best effort and at-least-once, so `event_id` deduplication at the
+        consumer is part of the contract rather than an oversight (ADR-0016).
+      additionalProperties: false
+      required: [id, tenant_external_id, feature_key, cycle_index, delta, balance_after, source, event_type, request_id, idempotency_key, cycle_start, cycle_end, occurred_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The `event_id` a downstream consumer deduplicates on.
+        tenant_external_id:
+          $ref: '#/components/schemas/ExternalId'
+        feature_key:
+          $ref: '#/components/schemas/FeatureKey'
+        cycle_index:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Which cycle this was, monotonically increasing. A memo for reconciliation and
+            pagination, **not** a second authority: the window itself is recomputed from the
+            tenant's anchor, and a disagreement here is a reconciliation finding rather than a
+            truth.
+        delta:
+          type: integer
+          format: int64
+          description: |
+            Signed and **never zero** (a database constraint), so an `amount: 0` consume records no
+            event at all. Negative consumes, positive refunds, grants, sets and rollovers.
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+          examples:
+            consumed:
+              summary: A consumption
+              value: -4200
+            rolled:
+              summary: A rollover
+              value: 1000000
+        balance_after:
+          allOf:
+            - $ref: '#/components/schemas/Amount'
+          description: |
+            Stored so history is readable without replaying, and so the reconciliation identity of
+            DR-042 is directly checkable: the opening allowance plus the sum of the deltas equals
+            this.
+        source:
+          $ref: '#/components/schemas/EventSource'
+        event_type:
+          $ref: '#/components/schemas/EventType'
+        request_id:
+          oneOf:
+            - $ref: '#/components/schemas/RequestId'
+            - type: 'null'
+          description: Null for `system` events, which no request caused.
+        idempotency_key:
+          oneOf:
+            - $ref: '#/components/schemas/IdempotencyKey'
+            - type: 'null'
+          description: |
+            The customer's key, on `consumed` and `refunded`. Filtering by it is how a disputed
+            charge is resolved: the recorded outcome shows whether it was applied once or twice
+            (UC-16).
+        cycle_start:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        cycle_end:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        occurred_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    UsageEventList:
+      description: |
+        A page of the ledger, newest first, for reconciliation and for settling a disputed charge
+        (UC-16).
+      type: object
+      additionalProperties: false
+      required: [events]
+      properties:
+        events:
+          type: array
+          description: Newest first, with a stable tiebreaker. An empty page is `[]`, never `null`.
+          items:
+            $ref: '#/components/schemas/UsageEvent'
+        next_cursor:
+          oneOf:
+            - $ref: '#/components/schemas/Cursor'
+            - type: 'null'
+
+    AuditEntry:
+      type: object
+      description: |
+        One administrative mutation, written in the same transaction as the mutation (NFR-D4). An
+        audit log written best effort is a log, not an audit trail.
+      additionalProperties: false
+      required: [id, actor, actor_key_id, action, subject_type, subject_id, before, after, request_id, occurred_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The audit row's own identifier, for citing a row rather than for looking one up by resource.
+        actor:
+          type: string
+          description: |
+            `bootstrap`, `cli:<host>`, or a key's name. A key's name rather than its secret, so an
+            audit record can be shown to someone without handing them a credential (DR-043).
+          examples:
+            key:
+              value: acme-prod-deploy
+        actor_key_id:
+          oneOf:
+            - type: string
+              format: uuid
+            - type: 'null'
+          description: Null for the bootstrap actor and for CLI calls, which have no key.
+        action:
+          type: string
+          description: A dotted action name.
+          pattern: '^[a-z_]+\.[a-z_]+$'
+          examples:
+            apply:
+              value: plan.apply_now
+        subject_type:
+          type: string
+          enum: [tenant, plan, feature, api_key]
+          description: Which kind of resource changed, so a log reader can filter by it.
+        subject_id:
+          oneOf:
+            - type: string
+              format: uuid
+            - type: 'null'
+          description: |
+            The resource's internal id, or null when the mutation has no single subject — a plan
+            `apply-now` touches every assigned tenant, so the tenants are not recorded here one by
+            one.
+        before:
+          description: The resource before the change, or null when it was created.
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: 'null'
+        after:
+          description: The resource after the change, or null when it was deleted.
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: 'null'
+        request_id:
+          $ref: '#/components/schemas/RequestId'
+        occurred_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    AuditEntryList:
+      description: |
+        A page of the audit log, newest first. Append-only, and the reason a mutation cannot be
+        quietly undone after the fact (NFR-D4).
+      type: object
+      additionalProperties: false
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          description: The page of entries, newest first. An empty page is `[]`, never `null`.
+          items:
+            $ref: '#/components/schemas/AuditEntry'
+        next_cursor:
+          oneOf:
+            - $ref: '#/components/schemas/Cursor'
+            - type: 'null'
+
+    Key:
+      type: object
+      description: |
+        Key metadata. The secret is never present here and no route will return it (INV-K3).
+      additionalProperties: false
+      required: [id, name, prefix, scope, state, created_at, expires_at, last_used_at, revoked_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Internal, and what `/v1/admin/keys/{id}` takes.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Unique. A duplicate name is `400 validation_failed` naming the field.
+        prefix:
+          type: string
+          description: |
+            The public, unique part of the key. It appears in this list, in the audit log and in
+            logs **in place of the key**, which is how a key leaked in a support ticket is traced
+            to the key that leaked (DR-043, K-1).
+          pattern: '^[0-9a-f]{8,64}$'
+        scope:
+          $ref: '#/components/schemas/KeyScope'
+        state:
+          $ref: '#/components/schemas/KeyState'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        expires_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+          description: |
+            Optional at issue time, enforced on every request. A key past this is
+            `401 api_key_invalid`.
+        last_used_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        revoked_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+          description: |
+            Revocation is immediate and **effective on the next request with no cache delay**,
+            because the cache stores the hash and the state and revocation bumps the version
+            (UC-15, K-2).
+
+    KeyCreate:
+      description: |
+        Issue an API key. The plaintext is returned once, on this route and nowhere else
+        (ADR-0012).
+      type: object
+      additionalProperties: false
+      required: [name, scope]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: |
+            Unique and operator-chosen. It is the `actor` on every audit row this key produces, so
+            it should say what the key is for rather than who typed it.
+        scope:
+          allOf:
+            - $ref: '#/components/schemas/KeyScope'
+          description: |
+            Visible in the token itself, so a scope mismatch is not a debugging session. Issuance
+            is an admin action and is audited, and it is a per-customer decision: a runtime key is
+            a credential for the whole instance.
+        expires_at:
+          allOf:
+            - $ref: '#/components/schemas/Timestamp'
+          description: Optional. An expiry is a limit on a credential's blast radius.
+
+    KeyCreated:
+      type: object
+      description: |
+        The **only** response that ever contains the plaintext key. It is not recoverable
+        afterwards; only an Argon2id hash and the public prefix are stored, and the hash is
+        deliberately not indexed because indexing a verifier invites a timing-oracle design
+        (ADR-0012).
+
+        A lost key is replaced, not recovered (UC-15).
+      additionalProperties: false
+      required: [id, name, prefix, scope, state, created_at, expires_at, key]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The new key's id, as it appears in every later `Key` response.
+        name:
+          type: string
+          description: The name chosen at creation, echoed back.
+        prefix:
+          type: string
+          description: The public prefix, so it can be recorded where the key cannot.
+        scope:
+          $ref: '#/components/schemas/KeyScope'
+        state:
+          $ref: '#/components/schemas/KeyState'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        expires_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        key:
+          type: string
+          description: |
+            The plaintext credential, in the form `qc_<scope>_<prefix>.<secret>`. Shown once.
+          pattern: '^qc_(runtime|admin)_[0-9a-f]{8,64}\.[A-Za-z0-9_-]{16,}$'
+
+    KeyList:
+      description: |
+        A page of key metadata. The secret is never present, and no route will return it (INV-K3).
+      type: object
+      additionalProperties: false
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          description: The page of keys. An empty page is `[]`, never `null`.
+          items:
+            $ref: '#/components/schemas/Key'
+        next_cursor:
+          oneOf:
+            - $ref: '#/components/schemas/Cursor'
+            - type: 'null'
+
+    DependencyHealth:
+      type: object
+      description: |
+        One dependency's health, reported as data. A failure here is a `200` with
+        `healthy: false`, never an error envelope, because a status endpoint that fails when a
+        dependency is down cannot report that it is down.
+      additionalProperties: false
+      required: [name, healthy, latency_ms, error]
+      properties:
+        name:
+          type: string
+          enum: [redis, postgres]
+          description: Which dependency this row is about.
+        healthy:
+          type: boolean
+          description: |
+            Whether a probe succeeded. `false` is reported here rather than as an error envelope,
+            so the status endpoint can still answer the question that was asked of it.
+        latency_ms:
+          oneOf:
+            - type: number
+              format: double
+              minimum: 0
+            - type: 'null'
+          description: The probe's round-trip time, or null when the probe did not complete.
+        error:
+          oneOf:
+            - type: string
+            - type: 'null'
+          description: 'The failure reason, and safe to show: it is a connection error, not data.'
+
+    CacheStats:
+      type: object
+      description: |
+        The configuration snapshot's size. An empty key space after a restart is a normal state and
+        it is reported as such rather than inferred from a failing request.
+      additionalProperties: false
+      required: [entries, tenants, features, size_bytes]
+      properties:
+        entries:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Configuration entries held in the snapshot, across all tenants and features.
+        tenants:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Tenants the snapshot currently covers. Zero right after a restart is normal.
+        features:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Features the snapshot currently covers.
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Approximate memory held by the snapshot. Sizing the store needs this number, which is
+            why it is reported rather than estimated by a reader.
+
+    Status:
+      type: object
+      description: |
+        Everything an operator needs when something is wrong, in one call: dependency health, the
+        build, the `tzdata` version the binary was built with, the current time and the snapshot
+        size (NFR-O5).
+
+        The `tzdata` version is reported because a boundary disagreement between a node and the
+        reference tables is diagnosable if you know which tables the node used, and is not
+        diagnosable otherwise (ADR-0007).
+      additionalProperties: false
+      required: [status, version, commit, zone_data_version, server_time, uptime_s, dependencies, cache, queue_depth, worker, ledger_dropped_total]
+      properties:
+        status:
+          type: string
+          description: |
+            A single word for a dashboard. Read `dependencies` for the detail: one word cannot say
+            which dependency is down, and a status that cannot is the status that gets ignored.
+          enum: [ok, degraded]
+        version:
+          type: string
+          description: The build version.
+        commit:
+          type: string
+          description: The build commit, so a running binary is traceable to a source tree.
+        zone_data_version:
+          type: string
+          description: The `tzdata` version the binary was built with.
+        server_time:
+          allOf:
+            - $ref: '#/components/schemas/Timestamp'
+          description: |
+            The service's own time, so a client that disagrees can see the discrepancy instead of
+            computing a silent one.
+        uptime_s:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Seconds since this process started, which is not the same as seconds since the
+            service was last healthy. A restart is visible here and not in `status`.
+        dependencies:
+          type: array
+          description: |
+            One row per dependency, and the reason to read this endpoint at all: the detail behind
+            the one word in `status`.
+          items:
+            $ref: '#/components/schemas/DependencyHealth'
+        cache:
+          $ref: '#/components/schemas/CacheStats'
+        queue_depth:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The reset worker's queue depth (ADR-0003).
+        worker:
+          type: string
+          description: The reset worker's state, so a stalled rollover is visible before a customer's balance is wrong.
+          enum: [running, stopped, draining]
+        ledger_dropped_total:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Ledger events the external sink failed to accept. **Non-zero means the downstream
+            history is incomplete**, and that is reported rather than hidden, because a silently
+            incomplete history is worse than a documented one (ADR-0016).
+
+    HealthResponse:
+      type: object
+      description: |
+        The probe response. Deliberately minimal: a liveness probe that inspects dependencies
+        restarts a process that was not the problem.
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, ready]
+          description: |
+            `ok` from the liveness probe, `ready` from the readiness probe. The two differ
+            deliberately: a process that is alive but not ready is still the right process to keep
+            running.

@@ -1,11 +1,15 @@
 # Documentation
 
-Every document in this repository, what it settles, and who should read it. 88 files: 63 Markdown
+Every document in this repository, what it settles, and who should read it. 111 files: 63 Markdown
 documents — 10 root, 9 product, 12 architecture, 17 decisions, 8 research, 6 roadmaps and this
-index — plus 25 that are not documents: `LICENSE`, the two checkers and one allowlist under
-`tools/`, `.gitignore`, `.gitattributes`, two files under `.github/`, and the eighteen Go, SQL,
-Compose, Makefile and module files `IP-01` owns. One tool,
-[`tools/check-docs.ps1`](../tools/check-docs.ps1), holds the specification to its own rules.
+index — plus 48 that are not documents: `LICENSE`, the two checkers, one allowlist and the
+documentation generator under `tools/`, `.gitignore`, `.gitattributes`, the two files under
+`.github/`, the module, Compose and Makefile files `IP-01` owns, and the twenty files `IP-02` owns
+under `api/` — the contract, its generator config, the generated types, codecs and validators, the
+JSON and HTML renderers, the committed reference page, and the tests that hold them to the document.
+Two tools hold the work to its own rules:
+[`tools/check-docs.ps1`](../tools/check-docs.ps1) for the specification and
+[`tools/gendocs`](../tools/gendocs/main.go) for the served contract.
 
 Not sure where to start? [PROJECT.md](../PROJECT.md#reading-order) has four reading orders. This
 file is the reference. If you are an agent or a contributor making changes, read
@@ -109,8 +113,8 @@ Evidence, with dates and sources, so a future reader can tell a re-check from a 
 Execution plan, in [roadmaps/](roadmaps/). [ROADMAP.md](../ROADMAP.md) decides what ships in which
 release and [mvp-scope.md](product/mvp-scope.md) decides what a release contains; these decide the
 order of the work and what proves a piece of it finished. [Gate 0](../ROADMAP.md#gate-0--unblock-the-specification)
-is closed: `IP-00` is `COMPLETE`, `IP-01` is `IN PROGRESS` and the only unblocked phase, and the
-other 26 wait on their dependencies.
+is closed: `IP-00` to `IP-03` are `COMPLETE`; `IP-04` is unblocked and `NOT STARTED`; the other 23
+wait on their dependencies.
 
 | Document | What it settles | Read it if |
 | --- | --- | --- |
@@ -140,7 +144,7 @@ documents themselves and fails if this table disagrees, so a stale count cannot 
 | Named tests | 15 | [architecture/testing-strategy.md](architecture/testing-strategy.md) |
 | Decisions | 17 | [decisions/](decisions/) |
 | Markdown documents | 63 | repository root |
-| Files in the repository | 88 | repository root, excluding the paths `.gitignore` marks as build output |
+| Files in the repository | 119 | repository root, excluding the paths `.gitignore` marks as build output (8 files added by `IP-03`: the cycle engine and its test suite) |
 
 ## Identifier namespaces
 

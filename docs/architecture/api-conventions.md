@@ -105,7 +105,38 @@ Authorization: Bearer qc_live_9f2c1a4e7b8d…
 
 That last row is the most security-relevant decision in the API surface, so it is documented as a
 consequence rather than buried: this is a single-tenant-per-instance product (ADR-0013), and a
-runtime key is scoped to the instance, not to a customer of the instance's owner.
+runtime key is scoped to the instance, not to a customer of the instance's owner's.
+
+### 5.1 How the contract states security
+
+`bearerAuth` is declared once, globally. The per-operation `security` array is the whole statement
+of what an operation accepts, and it takes these forms:
+
+| Operation | `security` | `x-required-scope` | Why |
+| --- | --- | --- | --- |
+| Data plane, `/v1/*` | `[ { bearerAuth: [] } ]` | `runtime` | An `admin` key also works here, so the scope is a minimum, not an equality |
+| Control plane, `/v1/admin/*` | `[ { bearerAuth: [] } ]` | `admin` | An `admin` action, and the scope is what the router checks before the handler |
+| Operational, probes and `/openapi.json` and `/docs` | `[]` | absent | Unauthenticated by design, because a liveness probe that needs a credential is a liveness probe that fails when credentials break (NFR-S9) |
+
+Three things about that table are deliberate:
+
+- **The requirement arrays are empty.** A scope in the array would mean the token must carry
+  exactly that scope, which excludes an `admin` key from the data plane — the opposite of the row
+  above in section 5. `[]` means "bearer, any scope"; `x-required-scope` names the minimum the
+  implementation enforces.
+- **`x-required-scope` is a vendor extension, not OpenAPI.** OpenAPI 3.1 has no vocabulary for "this
+  operation needs at least this scope", and inventing one inside the standard would make the
+  document non-conformant. A named extension is discoverable by a reader and ignored by a tool that
+  does not know it, which is the correct failure: an unknown tool is not wrong, it is just not
+  enforcing this yet.
+- **Operational routes state `security: []` explicitly** rather than relying on the global
+  declaration. Inheriting a global requirement and then opting out is how an operational route
+  accidentally requires a credential in one release and not the next.
+
+`TestSecurityRequirementsCarryNoScopes` asserts the empty arrays, and
+`TestEveryOperationDeclaresItsRequiredScope` asserts that every operation outside
+`/v1/admin/*` and the operational set declares `runtime` and that every `/v1/admin/*` operation
+declares `admin`. A route added without thinking about its scope fails the build.
 
 ## 6. Idempotency
 
@@ -217,6 +248,40 @@ plan's entitlement count (NFR-T5), so the unbounded case does not exist. Always 
 whether the endpoint returns every feature for a tenant or requires a feature key. `feature_key` is
 optional.
 
+### 7.4 Nullable-but-required control-plane fields
+
+A control-plane request body may carry a field that is **required and nullable**, where `null` means
+"not specified by this request" as opposed to the field being absent. A nullable field states an
+intent the caller has formed; an absent one states nothing, and those are different facts.
+
+`POST /v1/admin/tenants/{id}/overrides` is the case in point. UC-13 sets "a limit, a reset
+interval, or both", so `limit_value` and `interval` are both required, both nullable, and at least
+one is non-null:
+
+```json
+{
+  "feature_key": "llm.tokens.output",
+  "limit_value": 10000000,
+  "interval": null,
+  "apply_at": "next_boundary"
+}
+```
+
+`null` on `interval` inherits the plan's cadence. Omitting `interval` entirely is a
+`400 validation_failed`, and requiring the key rather than allowing absence is the point: absence
+would have two readings, that the aspect is inherited and that the operator left it out, and a
+quota system should not have a wire format with two readings for the same omission.
+
+**The both-null case is enforced by the data store, not by the schema.** It is
+`400 validation_failed` when it happens, and the constraint that catches it is
+`tenant_overrides_not_empty`. This is stated here rather than left implicit because the schema
+genuinely cannot express it: the JSON Schema for "at least one of two properties is non-null" is an
+`anyOf` over object branches, and the generator named in
+[ADR-0010](../decisions/0010-go-chi-spec-first-openapi.md)
+cannot generate one. A schema that appeared to enforce this and did not would be worse than one
+that says it does not, so the division of labour is stated: the schema enforces presence, type and
+range; the store enforces non-nullness.
+
 ## 8. Error handling
 
 Full catalogue in [error-catalog.md](../product/error-catalog.md). Conventions:
@@ -278,13 +343,24 @@ rather than by operator intent (DR-046). The threshold is
 {
   "error": {
     "code": "confirmation_required",
-    "affected_tenants": 1840,
-    "earliest_cycle_end": "2026-10-01T00:00:00+02:00",
-    "confirmation_token": "cnf_01J...",
-    "details": { "threshold": 50, "expires_in_s": 900 }
+    "request_id": "01J8Z6M2QK9V3X7B4C0N5TDEFA",
+    "details": {
+      "affected_tenants": 1840,
+      "earliest_cycle_end": "2026-10-01T00:00:00+02:00",
+      "confirmation_token": "cnf_01J...",
+      "threshold": 50,
+      "expires_in_s": 900
+    }
   }
 }
 ```
+
+Every code-specific field lives inside `details`, and `details` is where a client looks for
+whatever the particular `code` means. The envelope's own fields are fixed: `code`, `message`,
+`request_id`, and `details`. That is a deliberate cost. A client that switches on `code` and
+reads `details` is the only shape that lets a new code carry new information without a new
+envelope version, and it means a code can never be added that quietly overflows the envelope
+shape, because the envelope has no room to overflow.
 
 The operator re-issues the identical request with `confirmation_token` in the body, and it applies.
 Three properties make the handshake safe rather than merely awkward:
@@ -399,6 +475,52 @@ Enforced in CI, so this document and the specification cannot drift apart:
 4. The error envelope shape is validated for every documented non-2xx response.
 5. `additionalProperties` is `false` on request bodies, so a typo in a field name is a `400`
    rather than a silently ignored field. This is the difference between a typo being found in
-   testing and found in production by a customer.
-6. The generated Go and TypeScript types are rebuilt from the specification, so the served
-   validation and the reference cannot describe different shapes.
+   testing and found in production by a customer. Asserted per schema, not on a sample, so a
+   body added without the constraint fails the build.
+6. The generated Go types are rebuilt from the specification, so the served validation and the
+   reference cannot describe different shapes. TypeScript types are not generated in this phase;
+   see [ADR-0010](../decisions/0010-go-chi-spec-first-openapi.md).
+7. No `$ref` in the document is unresolved, and no component is defined and left unreferenced. A
+   dead schema is either a draft or a mistake, and neither should survive review.
+8. A constraint the schema cannot express is stated as such in the schema, with the mechanism
+   that does enforce it. See [section 7.4](#74-nullable-but-required-control-plane-fields) for
+   the one such constraint today; the rule is that a silent gap fails the contract test rather
+   than passing as enforcement.
+
+Item 3 is enforced slightly more strictly than it reads. The test requires a description on every
+*schema* as well as on every field, and it accepts a description that a field inherits through a
+`$ref` or an `allOf`, so a field that is a bare `$ref` to a documented component is not asked to
+repeat the component's prose. The stricter form is deliberate: a schema with no description is a
+shape nobody has explained, and field-level inheritance only works if the component is documented in
+the first place.
+
+## 14. The served contract
+
+The contract is one file, `api/openapi.yaml`, and it is served. Three things follow from that, and
+each is a rule rather than an implementation note.
+
+| Route | Serves | Cache |
+| --- | --- | --- |
+| `GET /openapi.json` | The embedded contract, converted from YAML to JSON at start-up | `no-store` |
+| `GET /docs` | A committed HTML page, `api/docs.html`, generated from the same file | `no-store` |
+| `GET /healthz`, `GET /readyz` | The probe bodies | `no-store` |
+
+- **`/openapi.json` is JSON, and it is generated from the YAML at build time** rather than parsed
+  per request. A request path that parses a 5,000-line document is a request path that spends time
+  on something that cannot change while the process runs, and the conversion is done once and
+  cached. Object key order is preserved, so the served bytes are stable and diffable; a converter
+  that sorted keys would make the output look reordered on every change.
+- **Both are unauthenticated**, for the reason in [section 5.1](#51-how-the-contract-states-security).
+  A contract that needs a credential cannot be fetched by the tool that documents the credential.
+- **`/docs` is a committed artefact, not a runtime template.** Generating the page per request would
+  mean the reference is only as correct as the code path that renders it; committing it means the
+  page is reviewed in a diff like any other deliverable. It is self-contained — inline CSS, no
+  JavaScript, no CDN, no external font, nothing fetched — because a documentation page that needs
+  the network is a documentation page that is blank on an air-gapped deployment, and this product is
+  designed to run on one.
+- **The page and the generated Go types are both derived from the same file**, and both are checked
+  for drift: `make generate-check` regenerates them and fails if the working tree changed. A
+  contract that has drifted from its artefacts is worse than no contract, because it looks
+  authoritative.
+- **`/docs` and `/openapi.json` are `GET` only.** A `HEAD` or `POST` is `405`, not a silent success
+  and not a redirect; the contract documents one method and the router serves that method.
