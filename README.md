@@ -52,7 +52,7 @@ permanent, not a roadmap item.
 
 ## Status
 
-**Specification complete. No code yet, and that is still correct.** 63 documents, 17 accepted
+**Specification complete; implementation started.** 63 documents, 17 accepted
 decisions, 49 domain rules, 34 error codes, 15 named correctness tests. Every blocking question is
 answered — the four former blockers plus
 [Q-21](docs/product/assumptions-and-open-questions.md#2-open-questions), the eviction question that
@@ -60,6 +60,11 @@ turned out to be a trade-off between two of the three claims. What remains open 
 [the register](docs/product/assumptions-and-open-questions.md#2-open-questions) and none of it blocks;
 one of them, the market bet behind the whole product, is a dated owner-accepted release risk. The
 order of the work is [28 phases in `docs/roadmaps/`](docs/roadmaps/roadmap-index.md).
+[`IP-01`](docs/roadmaps/v0-1-enforcement-path.md#ip-01--repository-toolchain-and-ci-foundation) built
+the repository, the toolchain and the CI foundation and closed on 2026-09-27: the module graph
+pinned, the two health probes, embedded up-only migrations, a service that starts and reports
+not-ready, a licence gate and an SBOM. It contains no product behaviour, which a test asserts rather
+than claims. The contract is `IP-02`, which is unblocked and `NOT STARTED`.
 
 Start with [PROJECT.md](PROJECT.md), then follow the reading order it gives you.
 

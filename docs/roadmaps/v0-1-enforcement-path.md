@@ -14,7 +14,7 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | ID | Phase | Depends on | Status |
 | --- | --- | --- | --- |
 | `IP-00` | Close the blocking questions | — | `COMPLETE`, closed 2026-09-27 |
-| `IP-01` | Repository, toolchain and CI foundation | `IP-00` | `NOT STARTED`, unblocked 2026-09-27 |
+| `IP-01` | Repository, toolchain and CI foundation | `IP-00` | `COMPLETE`, closed 2026-09-27 |
 | `IP-02` | The OpenAPI contract | `IP-01` | `BLOCKED` |
 | `IP-03` | Cycle engine and boundary matrix | `IP-01` | `BLOCKED` |
 | `IP-04` | Data-plane skeleton, keyspace and snapshot cache | `IP-02`, `IP-03` | `BLOCKED` |
@@ -94,8 +94,12 @@ human, because every question it depended on has been answered in writing.
 
 ## IP-01 — Repository, toolchain and CI foundation
 
-**Status** `NOT STARTED`. Unblocked since 2026-09-27. Set it `IN PROGRESS` before writing any file it
-owns; [AGENTS.md](../../AGENTS.md) forbids code outside a phase in that state.
+**Status** `COMPLETE` as of 2026-09-27, with all six Definition-of-Done items met, one of them
+amended on the owner's decision before it was met. Unblocked since 2026-09-27; set `IN PROGRESS`
+before writing any file it owns, which is what [AGENTS.md](../../AGENTS.md) requires. The amendment is
+item 4, whose base-image half moved to `IP-15` because no work in this phase could produce it, and
+that item is written as an amendment rather than tidied away: an SBOM obligation that disappears
+without a successor is an obligation that was quietly dropped.
 
 **Objective.** A repository that builds, tests and runs its dependencies from a clean checkout,
 with no product behaviour in it yet.
@@ -121,19 +125,166 @@ with no product behaviour in it yet.
 
 **Dependencies.** `IP-00`, which is `COMPLETE`. Blocks `IP-02`, `IP-03`, and therefore everything.
 
+**Build steps.** Item 1 requires that no step is undocumented, so the steps this phase adds are
+enumerated here and nowhere else. Every one is a `make` target, and every recipe is a single
+command whose exit code is the target's exit code.
+
+| Target | Command | Fails when |
+| --- | --- | --- |
+| `build` | `go build ./...` | A package does not compile |
+| `binary` | `CGO_ENABLED=0 go build -o bin/quotacore ./cmd/quotacore` | The binary does not link |
+| `test` | `go test ./...` | A test fails |
+| `race` | `CGO_ENABLED=1 go test -race ./...` | A test fails, or the race detector reports one. Separate from `test` because `-race` needs cgo, and a machine with no C compiler can still run every other gate |
+| `vet` | `go vet ./...` | `vet` reports a finding |
+| `lint` | `gofmt -l .`, then `go vet ./...` | A file is unformatted, or `vet` reports a finding |
+| `check-docs` | `tools/check-docs.ps1 -Strict`, under `pwsh` or `powershell` | The specification is inconsistent, or neither shell is installed |
+| `license-check` | `tools/license-scan.ps1`, under `pwsh` or `powershell` | The runtime path holds a copyleft dependency with no decision record, or a licence that cannot be classified |
+| `sbom` | `tools/license-scan.ps1 -SbomPath dist/sbom.cdx.json` | As `license-check`, and the SBOM is not written |
+| `ci` | `check-docs`, `lint`, `test`, `license-check` | Any of the four fails |
+
+`make` is not installed on every host, and the reference platform is Linux
+([deployment.md](../architecture/deployment.md) §9), so each target's command is also the way to run
+it by hand. Nothing above is a step a contributor has to discover.
+
+`test` reaches the database when `QUOTACORE_DATABASE_URL` names a reachable instance, and the
+integration test in `internal/db` **fails rather than skips when `QUOTACORE_REQUIRE_INTEGRATION` is
+set without one**, so a green pipeline cannot be a pipeline that quietly never talked to Postgres.
+The gate is that variable and not `CI`, and the reason is worth recording because the first version
+had it wrong: every hosted CI runner sets `CI` for its own reasons, including the build job that has
+no database and must not be failed by a test it cannot run. A gate keyed on `CI` would have turned
+every pull request red for a reason that has nothing to do with the change under review. The
+integration job sets the variable explicitly, so the property that matters is unchanged.
+
 **Definition of Done.**
 
-1. A clean clone builds and the unit tests pass on the reference platform, with no step that is not
-   in a document.
-2. `docker compose up` on a clean checkout reaches a healthy state for the data store and Postgres,
-   with no account, no signup and no egress ([mvp-scope.md](../product/mvp-scope.md) §1).
-3. The CI job runs `tools/check-docs.ps1` and fails the build if it does not exit 0.
-4. The build produces an SBOM covering the Go module graph and the base image, and a licence scan
-   fails the build on a new copyleft dependency in the runtime path without a decision record.
-5. The service starts, reports not-ready because no tenant exists, and refuses to start rather than
-   accepting a default bootstrap key.
-6. No package contains product behaviour: no cycle arithmetic, no balance arithmetic, no route
-   handler beyond a health probe.
+1. ~~A clean clone builds and the unit tests pass on the reference platform, with no step that is not
+   in a document.~~ Done on 2026-09-27. `go build ./...`, `go vet ./...` and `go test ./...` all
+   exit 0 from a clean checkout, and `gofmt -l .` is empty, against the module
+   `github.com/quotacore/quotacore` on Go 1.27.1. The only package is `internal/api`, holding the
+   two health probes and nothing else, because the layout is fixed by
+   [ARCHITECTURE.md](../../ARCHITECTURE.md) §3 and a health probe is the one route handler this
+   phase is allowed. The steps are the table above.
+2. ~~`docker compose up` on a clean checkout reaches a healthy state for the data store and Postgres,
+   with no account, no signup and no egress ([mvp-scope.md](../product/mvp-scope.md) §1).~~ Done on
+   2026-09-27. `docker compose up -d --wait` exits 0 from a checkout with no volume present, and
+   both services report `Healthy`: Valkey 8.1.10 answering `PONG`, PostgreSQL 16.15 answering
+   `pg_isready`. `CONFIG GET maxmemory-policy` returns `noeviction`, so the decided policy is in the
+   file rather than in a comment, and `password_encryption` is `scram-sha-256`. The file starts two
+   containers and nothing else, and no step precedes it.
+3. ~~The CI job runs `tools/check-docs.ps1` and fails the build if it does not exit 0.~~ Done on
+   2026-09-27. `.github/workflows/ci.yml` has a `docs` job whose only step after the checkout is
+   `make check-docs`, which is the `Makefile` target that runs the script, so the command has one
+   definition. No step sets `continue-on-error`, and nothing in the file can turn a non-zero exit
+   into a zero one, so the exit code reaches the build. Every action is pinned to a commit SHA
+   with the tag beside it. The claim was falsified rather than asserted: on a throwaway copy of the
+   repository the unmodified tree exits 0, and with one undefined rule identifier appended to
+   [observability.md](../architecture/observability.md) the same command exits 1 and names the
+   identifier it could not resolve. The identifier is not written out here, because a reference to
+   a rule that does not exist is itself a failure and this repository does not make exceptions for
+   prose. Two limits, stated because a green tick would hide them. The workflow has never run,
+   because nothing has been committed or pushed, so its behaviour on a GitHub runner is unverified;
+   and `make` is absent on the machine this was written on, so the script was invoked directly
+   rather than through the target the runner uses.
+4. ~~The build produces an SBOM covering the Go module graph and the base image, and a licence scan
+   fails the build on a new copyleft dependency in the runtime path without a decision record.~~
+   **Amended on 2026-09-27, on the owner's decision, and the amendment is part of the record.** As
+   written this item asked for two things, one of which no work inside `IP-01` could produce: an
+   SBOM cannot cover a base image that does not exist here, because the scope above does not include
+   an image and `IP-15` owns "the multi-stage image, the Compose file, and the quickstart". The
+   base-image half was moved to `IP-15`'s item 11, which now carries NFR-C3 and NFR-C4 by name, and
+   the item as it stands here is the Go module graph and the runtime path — the two things this phase
+   actually owns. The item was not closed by deleting the half that was inconvenient: the
+   obligation still exists, it sits with the phase that can meet it, and an SBOM that omits the base
+   image describes a binary the operator cannot run, which is the one thing an SBOM is for.
+   **Done.** `make sbom` writes a CycloneDX 1.6 document listing all 11 modules linked into the
+   binary, each with a resolved SPDX licence identifier and the licence file it was resolved from, and
+   `make license-check` gates the build on NFR-C4. The runtime path is read from `go version -m` on
+   the built binary rather than from the module graph, because that is exactly the set of modules
+   linked into the product: a module that is only a test dependency of a dependency is not in the
+   product, and a scan that read the graph instead would gate on code that never ships. The gate was
+   falsified in all three directions on a throwaway copy of the repository with a local
+   copyleft-licensed module wired into the real binary: it exits 1 and names the dependency when
+   there is no decision record, exits 0 when `tools/license-allowlist.txt` cites an `ADR-nnnn` for
+   it, and exits 1 when an allowlist entry cites anything that is not a decision record. The
+   classifier matches on the text of the grant rather than the SPDX name, because Go's BSD-3 text
+   never says "BSD 3-Clause", and an unclassifiable licence fails closed rather than passing as
+   unknown.
+5. ~~The service starts, reports not-ready because no tenant exists, and refuses to start rather than
+   accepting a default bootstrap key.~~ Done on 2026-09-27. The binary was built `CGO_ENABLED=0`
+   and run on the compose network, because that is the only way to reach Postgres by the service
+   name the documented connection strings use. It starts, applies the embedded migrations, and
+   answers: `GET /healthz` is `200` with an empty body, `GET /readyz` is `503` with an empty body,
+   and `GET /v1/balance` is `404` because no product route exists. The not-ready reason is logged
+   and names `at least one tenant is known` alongside the two conditions this phase has not wired,
+   so the 503 is a statement about state rather than a hard-coded answer. The refusal was
+   demonstrated by running the same binary with
+   `QUOTACORE_BOOTSTRAP_ADMIN_KEY=qc_admin_abc.def` and no acknowledgement: the process exits 1 and
+   names the acknowledgement variable. The same run with the acknowledgement set starts, and
+   `QUOTACORE_SHUTDOWN_GRACE` drains and stops it cleanly with exit 0, confirmed from the container's
+   own `State.ExitCode` rather than inferred from a successful `docker stop`, which is a weaker claim
+   than it looks. The idempotency-window refusal in
+   [deployment.md](../architecture/deployment.md) §4.4 was demonstrated the same way, because it is
+   the neighbouring refusal and shipping one without the other would leave DR-029's pin unenforced.
+   **Running the service found two defects that reading it did not.** The readiness log closure
+   mutated its remembered set on every probe with no lock, so two concurrent `/readyz` requests raced
+   on it, and it also never logged the first observation, which is the transition an operator actually
+   needs. Both are fixed, and `TestReadyFuncLoggingIsSafeForConcurrentProbes` asserts the log callback
+   is never entered twice at once; with the lock removed it fails in 9 runs out of 10. The first
+   version of that test passed 16 of 20 times and was worthless, because it asserted that the probe
+   goroutines had been scheduled before the test told them to stop.
+6. ~~No package contains product behaviour: no cycle arithmetic, no balance arithmetic, no route
+   handler beyond a health probe.~~ Done on 2026-09-27, and asserted rather than asserted-about.
+   Two tests, both of which fail. `TestRouterServesOnlyTheTwoHealthProbes` walks nine method-and-path
+   combinations in both readiness states and requires `200`, `503` or `404`/`405` exactly: the two
+   probes answer and every product path is absent. `TestNoProductBehaviour` is the source-level
+   check [testing-strategy.md](../architecture/testing-strategy.md) §4 blesses for a property with no
+   other observable: the module's packages are exactly `cmd/quotacore`, `internal/api` and
+   `internal/db`, and no file in the module mentions the cycle, balance, deduction or script
+   arithmetic the product exists to perform. Both were falsified on throwaway copies: an
+   `internal/cycle` package fails the first, and a function named `AdvanceCycle` fails the second.
+   `X-Request-Id` is deliberately absent and is `IP-02`'s, because NFR-S10 requires every response
+   to carry one and the header's format is a contract decision this phase may not make; leaving it
+   out is stated here rather than left as a silent contradiction.
+
+**What is in the module, and the one thing that is not.** The three requirements the scope names
+are in, each pinned to an exact version with `go.sum` committed (NFR-S7): `chi` v5.3.2
+([ADR-0010](../decisions/0010-go-chi-spec-first-openapi.md)), and `pgx` v5.11.0 with `goose` v3.28.0
+([ADR-0011](../decisions/0011-postgres-only-control-plane.md)). An earlier revision of this note
+also claimed `go-redis` was named by this scope. It is not, and the claim was wrong: the scope names
+`chi` and the embedded migrations, and the data-store client belongs to the data-plane phases, so
+depending on it now would add a requirement the build does not use. The module has three direct
+requirements and eight indirect ones, and `go mod tidy` agrees.
+
+`go mod tidy` completes and is idempotent on this graph: run twice, `go.mod` and `go.sum` come back
+byte-identical, so the committed pair is what tidy produces. An earlier revision of this note
+recorded the opposite, that tidy could not complete because the module proxy could not serve
+`modernc.org/sqlite`, which `goose`'s own tests require. That was a transient proxy outage on the
+author's machine, not a property of the graph, and the note was wrong; the second failure of that
+kind in this phase, the first being the same outage behind an earlier "proxy unreachable" claim,
+which is why the CI step below is the authority rather than either note.
+
+**The migration set is empty on purpose, and the empty version is still recorded.**
+`internal/db/migrations` holds one file, `00001_reserved.sql`, which creates no object. The
+control-plane schema is `IP-08`'s and [data-model.md](../architecture/data-model.md) owns every
+table, so this phase supplies the runner, the advisory lock, the checksum record and the
+current-version check, and nothing else. A version is still recorded, which is what makes "migrations
+are current" in `/readyz` a real condition rather than a constant. The runner is up-only
+structurally: it calls `goose.UpContext` and there is no down path to call, so ADR-0011's production
+rule cannot be bypassed by configuration. `TestUpOnlyIsStructural` asserts that by reading this
+package's own source and failing if a down, reset or redo call appears.
+
+**Two things the development Compose file deliberately does not do.** Both were measured on
+2026-09-27 against the running stack rather than assumed, and both are the reference deployment's
+job rather than development's. The Postgres image writes a `pg_hba.conf` whose local and loopback
+lines are `trust`; `password_encryption` is `scram-sha-256` and every non-loopback connection
+requires it, and because the file publishes no port those lines are unreachable from the host.
+Setting `POSTGRES_HOST_AUTH_METHOD=scram-sha-256` was tried and changed nothing — the variable is
+present in the container environment and the `trust` lines are still written — so it is not in the
+file, because a setting that does nothing is a defect. And the two images are pinned to the tags
+[deployment.md](../architecture/deployment.md) names rather than to digests, because a digest has
+to be resolved against a registry to be written down. The no-`trust` requirement in
+[deployment.md](../architecture/deployment.md) §7 binds the reference compose file, which is
+`IP-15`'s.
 
 **Exit criteria.** `git clone && docker compose up && make test` works on a machine that has never
 seen the project.
@@ -862,6 +1013,14 @@ procedure that has actually been performed.
 9. An upgrade path from the previous release is documented and exercised, and rollback is a restore
    (NFR-OPS7).
 10. The image runs unprivileged, on a non-root port, with a read-only root filesystem (NFR-S6).
+11. The build produces an SBOM covering the base image and the Go module graph, and the licence scan
+    that gates it covers the whole shipped runtime rather than the module graph alone. This item was
+    moved here from `IP-01` on 2026-09-27, and the reason is recorded rather than quietly dropped:
+    `IP-01`'s own DoD asked for an SBOM over "the Go module graph and the base image", but `IP-01`
+    does not own an image and never will, because the scope above does not include one. The
+    module-graph half of that item is met in `IP-01` and this is the half that could not be. An SBOM
+    that omits the base image describes a binary the operator cannot run, which is the one thing an
+    SBOM is for, so the obligation belongs with the phase that builds the thing (NFR-C3, NFR-C4).
 
 **Exit criteria.** The third claim is demonstrated, and a restore has been performed by someone
 following a document rather than by someone who remembered the commands.

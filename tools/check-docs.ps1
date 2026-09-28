@@ -245,6 +245,29 @@ foreach ($fam in $families) {
 # ---------------------------------------------------- 4. inventory
 # Every number the specification states about itself, measured the same way every
 # time. The inventory table in docs/README.md is compared against these.
+
+# Build output is not a repository file. `.gitignore` already declares `/bin/`
+# and `/dist/`, which matters only once something in the repository actually
+# produces artefacts, and "Files in the repository" counting a compiled binary
+# would be a number nobody could reproduce. Only anchored directory patterns are
+# honoured, and only for this count: a Markdown document cannot be hidden from
+# the link, identifier or inventory-document checks by adding a line here.
+$ignoredDirs = @()
+$gitignorePath = Join-Path $Root '.gitignore'
+if (Test-Path -LiteralPath $gitignorePath) {
+    foreach ($line in (Get-Content -LiteralPath $gitignorePath)) {
+        if ($line -match '^\s*/(?<dir>[A-Za-z0-9._-]+/)') { $ignoredDirs += $Matches['dir'] }
+    }
+}
+$isIgnored = {
+    param([string] $full)
+    $rel = $full.Substring($Root.Length).TrimStart('\', '/') -replace '\\', '/'
+    foreach ($d in $ignoredDirs) {
+        if ($rel.StartsWith($d)) { return $true }
+    }
+    return $false
+}
+
 $inventoryPath = 'docs/README.md'
 $counts = [ordered]@{
     'Rules'                     = { ($defined['DR'] | Measure-Object).Count }
@@ -259,7 +282,7 @@ $counts = [ordered]@{
     'Named tests'               = { ($defined['T'] | Measure-Object).Count }
     'Decisions'                 = { ($defined['ADR'] | Measure-Object).Count }
     'Markdown documents'        = { $fileCount }
-    'Files in the repository'   = { (Get-ChildItem -Path $Root -Recurse -File | Where-Object { $_.FullName -notmatch '\\\.git\\' -and $_.FullName -notmatch '\\\.opencode\\' }).Count }
+    'Files in the repository'   = { (Get-ChildItem -Path $Root -Recurse -File | Where-Object { $_.FullName -notmatch '\\\.git\\' -and $_.FullName -notmatch '\\\.opencode\\' -and -not (& $isIgnored $_.FullName) }).Count }
 }
 
 $measured = [ordered]@{}

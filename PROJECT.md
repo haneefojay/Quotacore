@@ -10,7 +10,7 @@
 
 | Field | Value |
 | --- | --- |
-| Stage | Specification complete, implementation not started |
+| Stage | Specification complete, `IP-01` closed, `IP-02` unblocked |
 | Version target | v0.1.0 (MVP) |
 | Canonical name | Quotacore. "Threshold" is a deprecated alias and must not appear in code, docs or marketing |
 | Licence | Apache-2.0 — [LICENSE](LICENSE), decided in [ADR-0014](docs/decisions/0014-apache-2-0-license.md) |
@@ -22,9 +22,12 @@
 
 **Current phase.** The specification is complete and internally consistent, and every blocking
 question is now answered: [Q-01, Q-02, Q-04, Q-14](docs/product/assumptions-and-open-questions.md#2-open-questions)
-and [Q-21](docs/product/assumptions-and-open-questions.md#2-open-questions). There is still no
-application code, which is correct for one more step: the first implementation task is the API
-contract, not the data plane. A market assumption is carried as a dated, owner-accepted release risk
+and [Q-21](docs/product/assumptions-and-open-questions.md#2-open-questions). Implementation has
+started, and deliberately at the bottom rather than the top:
+[`IP-01`](docs/roadmaps/v0-1-enforcement-path.md#ip-01--repository-toolchain-and-ci-foundation) built
+the repository, the toolchain and the pipeline, contains no product behaviour, and closed on
+2026-09-27. The contract is `IP-02`, which is unblocked and `NOT STARTED`, and the data plane comes
+after it. A market assumption is carried as a dated, owner-accepted release risk
 ([A-01](docs/product/assumptions-and-open-questions.md#accepted-risks)) rather than a code-start
 blocker, because no amount of further specification work would settle it.
 
@@ -101,16 +104,22 @@ Three conventions hold throughout, and violating them is a defect:
 
 ## Getting started
 
-There is no code to run yet. The first four tasks, in order, each one a phase in
+The first four tasks, in order, each one a phase in
 [roadmap-index.md](docs/roadmaps/roadmap-index.md#4-phase-map):
 
 1. ~~Close the four blocking open questions in
    [the register](docs/product/assumptions-and-open-questions.md#2-open-questions).~~ Done on
    2026-09-27, along with the eviction question that sat beside them. `IP-00` is `COMPLETE`.
-2. `IP-01`: the repository, the toolchain and the CI pipeline. `go.mod`, the embedded up-only
-   migrations, the development Compose file, and a pipeline that runs the checks in this file.
-   There is no product behaviour in it.
-3. `IP-02`: `api/openapi.yaml`, generated from the contract rather than written ahead of it, and
+2. ~~`IP-01`: the repository, the toolchain and the CI pipeline.~~ Closed on 2026-09-27 with all six
+   Definition-of-Done items met, after item 4 was amended by its owner so that the base-image half
+   of the SBOM obligation moved to `IP-15`, which owns the image. `go.mod` with the module graph
+   pinned, the `Makefile` whose targets are the documented steps, the two health probes in
+   `internal/api`, embedded up-only migrations in `internal/db`, the service entry point, the licence
+   gate and SBOM, and a pipeline that runs the checks in this file. There is no product behaviour in
+   it, which a test asserts rather than claims. The steps and the evidence are in
+   [the phase section](docs/roadmaps/v0-1-enforcement-path.md#ip-01--repository-toolchain-and-ci-foundation).
+3. `IP-02`, unblocked and `NOT STARTED`: `api/openapi.yaml`, generated from the contract rather than
+   written ahead of it, and
    the validation and the reference it produces —
    [ADR-0010](docs/decisions/0010-go-chi-spec-first-openapi.md).
 4. `IP-03`: the cycle engine and its boundary test table, which is the component most likely to
