@@ -1,0 +1,12 @@
+# Copyleft dependencies in the runtime path, each with the decision record that accepts it.
+#
+# Format: <module path> <ADR-nnnn>
+#
+# The scan in tools/license-scan.ps1 reads the modules linked into the built
+# binary, not the whole module graph, and fails the build on any copyleft
+# dependency that is not listed here. NFR-C4 allows a copyleft dependency in
+# the runtime path only with an explicit decision record, so a line without an
+# ADR number is a configuration error and the scan refuses to start.
+#
+# Empty, and deliberately so: every module in the runtime path as of 2026-09-27
+# is MIT, Apache-2.0 or BSD-3-Clause.

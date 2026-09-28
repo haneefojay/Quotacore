@@ -1,7 +1,10 @@
 # Documentation
 
-Every document in this repository, what it settles, and who should read it. 67 files: 12 at the
-root, 9 product, 12 architecture, 17 decisions, 8 research, 6 roadmaps, and this index. One tool,
+Every document in this repository, what it settles, and who should read it. 88 files: 63 Markdown
+documents — 10 root, 9 product, 12 architecture, 17 decisions, 8 research, 6 roadmaps and this
+index — plus 25 that are not documents: `LICENSE`, the two checkers and one allowlist under
+`tools/`, `.gitignore`, `.gitattributes`, two files under `.github/`, and the eighteen Go, SQL,
+Compose, Makefile and module files `IP-01` owns. One tool,
 [`tools/check-docs.ps1`](../tools/check-docs.ps1), holds the specification to its own rules.
 
 Not sure where to start? [PROJECT.md](../PROJECT.md#reading-order) has four reading orders. This
@@ -106,8 +109,8 @@ Evidence, with dates and sources, so a future reader can tell a re-check from a 
 Execution plan, in [roadmaps/](roadmaps/). [ROADMAP.md](../ROADMAP.md) decides what ships in which
 release and [mvp-scope.md](product/mvp-scope.md) decides what a release contains; these decide the
 order of the work and what proves a piece of it finished. [Gate 0](../ROADMAP.md#gate-0--unblock-the-specification)
-is closed: `IP-00` is `COMPLETE`, `IP-01` is the only unblocked phase, and the other 26 wait on
-their dependencies.
+is closed: `IP-00` is `COMPLETE`, `IP-01` is `IN PROGRESS` and the only unblocked phase, and the
+other 26 wait on their dependencies.
 
 | Document | What it settles | Read it if |
 | --- | --- | --- |
@@ -137,7 +140,7 @@ documents themselves and fails if this table disagrees, so a stale count cannot 
 | Named tests | 15 | [architecture/testing-strategy.md](architecture/testing-strategy.md) |
 | Decisions | 17 | [decisions/](decisions/) |
 | Markdown documents | 63 | repository root |
-| Files in the repository | 67 | repository root |
+| Files in the repository | 88 | repository root, excluding the paths `.gitignore` marks as build output |
 
 ## Identifier namespaces
 

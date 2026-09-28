@@ -1,0 +1,128 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Specification check
+        run: make check-docs
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+      - name: Build
+        run: make build
+      - name: go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Lint
+        run: make lint
+      - name: Unit tests
+        run: make test
+      - name: Race detector
+        run: make race
+      - name: No copyleft in the runtime path
+        run: make license-check
+
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+      - name: SBOM at build time
+        run: make sbom
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom
+          path: dist/sbom.cdx.json
+          if-no-files-found: error
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Development backing services reach a healthy state
+        run: docker compose up -d --wait
+      - name: The fast store refuses to evict
+        run: |
+          test "$(docker compose exec -T valkey valkey-cli config get maxmemory-policy | tail -n 1)" = "noeviction"
+      - name: Report
+        if: always()
+        run: docker compose ps
+
+  service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+      - name: Backing services
+        run: docker compose -f docker-compose.yml -f .github/compose.ci.yml up -d --wait
+      - name: Build the binary
+        run: go build -o bin/quotacore ./cmd/quotacore
+      - name: Start the service on the compose network
+        run: |
+          docker run -d --name quotacore-under-test --network quotacore_default -p 8080:8080 \
+            -e QUOTACORE_DATABASE_URL='postgresql://quotacore:quotacore_dev_only@postgres:5432/quotacore?sslmode=disable' \
+            -e QUOTACORE_REDIS_URL='redis://valkey:6379/0' \
+            -v "$PWD/bin/quotacore:/app/quotacore:ro" --entrypoint /app/quotacore postgres:16
+      - name: Liveness answers, readiness reports not ready
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8080/healthz; then break; fi
+            sleep 1
+          done
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz)" = "200"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/readyz)" = "503"
+      - name: No product route exists yet
+        run: test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/v1/balance)" = "404"
+      - name: Refuses to start on an unacknowledged bootstrap key
+        run: |
+          if docker run --rm --network quotacore_default \
+            -e QUOTACORE_DATABASE_URL='postgresql://quotacore:quotacore_dev_only@postgres:5432/quotacore?sslmode=disable' \
+            -e QUOTACORE_REDIS_URL='redis://valkey:6379/0' \
+            -e QUOTACORE_BOOTSTRAP_ADMIN_KEY=qc_admin_abc.def \
+            -v "$PWD/bin/quotacore:/app/quotacore:ro" --entrypoint /app/quotacore postgres:16; then
+            echo 'the service started with an unacknowledged bootstrap key, which NFR-S9 forbids' >&2
+            exit 1
+          fi
+      - name: Refuses to start on a shortened idempotency window
+        run: |
+          if docker run --rm --network quotacore_default \
+            -e QUOTACORE_DATABASE_URL='postgresql://quotacore:quotacore_dev_only@postgres:5432/quotacore?sslmode=disable' \
+            -e QUOTACORE_REDIS_URL='redis://valkey:6379/0' \
+            -e QUOTACORE_IDEMPOTENCY_TTL=1h \
+            -v "$PWD/bin/quotacore:/app/quotacore:ro" --entrypoint /app/quotacore postgres:16; then
+            echo 'the service started with a shortened idempotency window, which DR-029 pins' >&2
+            exit 1
+          fi
+      - name: Integration tests against real Postgres
+        run: go test -count=1 ./...
+        env:
+          QUOTACORE_REQUIRE_INTEGRATION: '1'
+          QUOTACORE_DATABASE_URL: 'postgresql://quotacore:quotacore_dev_only@127.0.0.1:15432/quotacore?sslmode=disable'
+      - name: Report
+        if: always()
+        run: |
+          docker logs quotacore-under-test || true
+          docker compose -f docker-compose.yml -f .github/compose.ci.yml ps

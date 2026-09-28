@@ -1,0 +1,60 @@
+# Development backing services for Quotacore.
+#
+# Two containers, and nothing else: the fast data store and the control-plane database
+# (deployment.md §1). The service itself is not here, because IP-01 owns no product
+# behaviour; the reference deployment that runs all three is IP-15's.
+#
+# No account, no signup, no egress. Both services are pinned to the versions
+# deployment.md names, and both are configured the way the specification requires rather than
+# the way a default would be: the fast store runs `noeviction`, because a policy that may
+# discard an idempotency record inside the 24-hour window is a lost replay (DR-048).
+#
+# The Postgres credential below is a development placeholder. Connection strings come from the
+# environment and are never baked into an image (SECURITY.md §4.2), so this file reads one from
+# the environment with a default that exists only to make `docker compose up` work with no
+# manual step. The image's bootstrap superuser is used for the same reason; the non-superuser
+# application role belongs to the reference deployment.
+#
+# Two things this file does not fix, both because they belong to the reference deployment rather
+# than to development. The image writes a `pg_hba.conf` whose local and loopback lines are `trust`;
+# `password_encryption` is `scram-sha-256` and every non-loopback connection is `scram-sha-256`,
+# and because no port is published those lines are unreachable from the host. And the data-store
+# and database tags are the versions deployment.md names rather than digests, because a digest has
+# to be resolved against a registry to be written down. Both are stated rather than left for a
+# reader to discover.
+#
+# No port is published to the host. The service reaches both stores by service name, which is
+# what the default connection strings already say, so a published port would be a conflict
+# waiting to happen and an unnecessary listener. Attach a client with
+# `docker compose exec postgres psql -U quotacore` or `docker compose exec valkey valkey-cli`.
+
+services:
+  valkey:
+    image: valkey/valkey:8
+    command:
+      - --maxmemory-policy
+      - noeviction
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: quotacore
+      POSTGRES_DB: quotacore
+      POSTGRES_PASSWORD: ${QUOTACORE_DEV_POSTGRES_PASSWORD:-quotacore_dev_only}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  pgdata:

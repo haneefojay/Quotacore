@@ -100,6 +100,9 @@ reading the source.
 | `QUOTACORE_TLS_CERT`, `QUOTACORE_TLS_KEY` | *(none)* | Unset means plaintext, which logs a `warn` |
 | `QUOTACORE_TRUSTED_PROXIES` | *(none)* | CIDR list. Without it, `X-Forwarded-For` is ignored, so a rate limiter behind a proxy sees the proxy |
 | `QUOTACORE_STARTUP_MODE` | `normal` | `readonly` is used by the data-store recovery runbook and blocks every write to the fast store |
+| `QUOTACORE_MIGRATE` | `true` | `false` runs no migration at start-up, for operators who gate deploys and run migrations separately (ADR-0011) |
+| `QUOTACORE_BOOTSTRAP_ADMIN_KEY` | *(none)* | Used only when the `api_keys` table is empty (ADR-0012). Ignored, with a warning, once a key exists |
+| `QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK` | *(none)* | NFR-S9. The service **refuses to start** if a bootstrap key is set without a non-empty acknowledgement. Any non-empty value acknowledges; the variable exists so that starting with a key is something the operator did on purpose rather than something a deployment inherited |
 
 ### 4.2 Limits and timeouts
 
