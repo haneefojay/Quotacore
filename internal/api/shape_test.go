@@ -48,6 +48,18 @@ import (
 // IP-13 mounts a route for. None of the three may mention a balancing symbol,
 // and the source checks in `internal/store` extend the same property to the
 // datastore cursor and control-plane import rules.
+//
+// `internal/script` is here because IP-05 owns it, and it is the one package
+// that is allowed to contain product behaviour: the three Lua scripts that decide
+// and apply a balance change in one execution, and the Go code that loads and runs
+// them. It is allowed to contain exactly that and nothing else, which is what
+// scriptScopedSymbols asserts - the vocabulary of running a script may appear
+// inside `internal/script` and nowhere else. The rule this package is built to
+// keep is the narrower one: the calendar has exactly one implementation. The
+// cycle symbols stay forbidden everywhere, including in here, because a second
+// boundary calculation inside a script would be a second authority over when a
+// tenant's allowance resets, and the scripts instead take the window the caller
+// already computed and are handed it.
 func TestNoProductBehaviour(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -63,6 +75,7 @@ func TestNoProductBehaviour(t *testing.T) {
 		"internal/db":            true,
 		"internal/observability": true,
 		"internal/snapshot":      true,
+		"internal/script":        true,
 		"internal/store":         true,
 		"tools/gendocs":          true,
 	}
@@ -111,10 +124,14 @@ func TestNoProductBehaviour(t *testing.T) {
 		}
 	}
 
+	// The calendar has one implementation and that is this package's, so these
+	// four are forbidden in every file including internal/cycle, because a
+	// second boundary calculation anywhere would be a second authority over when
+	// a tenant's allowance resets (cycle-engine.md §4).
 	productSymbols := []string{
 		"cycleIndex", "CycleAnchor", "RollCycle", "AdvanceCycle",
 		"balanceRemaining", "DeductBalance", "CheckAndDeduct",
-		"idempotencyKey", "EVALSHA", "EvalSha", "ScriptSha",
+		"idempotencyKey",
 	}
 	// The engine's own arithmetic vocabulary, which may live only in
 	// internal/cycle. A second implementation of boundary arithmetic anywhere
@@ -122,6 +139,20 @@ func TestNoProductBehaviour(t *testing.T) {
 	// thing this phase exists to keep single (cycle-engine.md §4).
 	cycleScopedSymbols := []string{
 		"currentIndex", "addMonths", "addDays", "addYears",
+	}
+	// The vocabulary of running an embedded script, which may live only in
+	// internal/script. Running a script is not product behaviour on its own - the
+	// behaviour is in the Lua, which this scan does not read because it is not Go
+	// - so the Go half of the package is the half this list constrains. Two
+	// symbols are deliberately absent from it: the names a balance operation
+	// could be given, `DeductBalance` and `CheckAndDeduct`, stay forbidden
+	// everywhere, because the operations are called Consume, Refund and Check and
+	// a second spelling of one of them is a second name for the same decision.
+	// `ScriptSha` was moved here from the everywhere-forbidden list for the same
+	// reason - addressing a script by its digest is script vocabulary, not a
+	// second balance decision - and it is kept so the name cannot appear outside.
+	scriptScopedSymbols := []string{
+		"EVALSHA", "EvalSha", "ScriptSha",
 	}
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -162,6 +193,13 @@ func TestNoProductBehaviour(t *testing.T) {
 			for _, symbol := range cycleScopedSymbols {
 				if strings.Contains(string(body), symbol) {
 					t.Errorf("%s mentions %s, which may only appear inside internal/cycle", rel, symbol)
+				}
+			}
+		}
+		if !strings.HasPrefix(rel, "internal/script") {
+			for _, symbol := range scriptScopedSymbols {
+				if strings.Contains(string(body), symbol) {
+					t.Errorf("%s mentions %s, which may only appear inside internal/script", rel, symbol)
 				}
 			}
 		}

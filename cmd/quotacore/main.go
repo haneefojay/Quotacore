@@ -18,6 +18,7 @@ import (
 	"github.com/quotacore/quotacore/internal/api"
 	"github.com/quotacore/quotacore/internal/db"
 	"github.com/quotacore/quotacore/internal/observability"
+	"github.com/quotacore/quotacore/internal/script"
 	"github.com/quotacore/quotacore/internal/snapshot"
 	"github.com/quotacore/quotacore/internal/store"
 )
@@ -108,6 +109,22 @@ func run() error {
 	snap.Start(ctx)
 	defer snap.Close()
 
+	// The three scripts are loaded once at startup so the first request does not
+	// pay for it (ADR-0002, NFR-S8). A failure here is a warning rather than a
+	// refusal to start: the runner reloads all three and retries a call exactly
+	// once whenever the store answers NOSCRIPT, so a store that was unreachable
+	// at startup heals itself on the first request that reaches it. Refusing to
+	// start would turn a transient store outage into an outage of the process,
+	// which is the opposite of what fail-closed means.
+	runner, err := script.New(script.Options{Client: data.Client(), Timeout: cfg.DataScriptTimeout})
+	if err != nil {
+		return err
+	}
+	loadCtx, cancelLoad := context.WithTimeout(ctx, cfg.ControlPlaneTimeout)
+	if err := script.Load(loadCtx, runner.Client()); err != nil {
+		log.Warn("scripts were not in the store at startup; the first request will put them back", "error", err)
+	}
+	cancelLoad()
 	// The pool wait is the mechanism by which a control-plane problem could
 	// reach the data plane, so it is watched from the first second
 	// (observability.md section 1.4).

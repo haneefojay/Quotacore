@@ -18,7 +18,7 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-02` | The OpenAPI contract | `IP-01` | `COMPLETE`, started and closed 2026-09-28 |
 | `IP-03` | Cycle engine and boundary matrix | `IP-01` | `COMPLETE` |
 | `IP-04` | Data-plane skeleton, keyspace and snapshot cache | `IP-02`, `IP-03` | `COMPLETE`, started and closed 2026-09-28 |
-| `IP-05` | The four atomic scripts | `IP-03`, `IP-04` | `BLOCKED` |
+| `IP-05` | The atomic scripts | `IP-03`, `IP-04` | `COMPLETE` |
 | `IP-06` | Idempotency prevention in the data plane | `IP-05` | `BLOCKED` |
 | `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `BLOCKED` |
 | `IP-08` | Control-plane schema and migrations | `IP-02` | `BLOCKED` |
@@ -578,19 +578,33 @@ owns the ledger worker; the rollover worker arrives with the transition in `IP-0
 
 ---
 
-## IP-05 — The four atomic scripts
+## IP-05 — The atomic scripts
 
-**Status** `BLOCKED`, gated on `IP-03` and `IP-04`.
+**Status** `COMPLETE`, started and closed 2026-09-29. `IP-03` and `IP-04` were `COMPLETE` and both
+gating decisions were accepted on 2026-09-27, so nothing gated this phase; the status was set to
+`IN PROGRESS` before any file the phase owned existed, which is what [AGENTS.md](../../AGENTS.md)
+requires, and was closed once all ten items were met.
 
-**Objective.** Four Lua scripts, shipped in the binary, that make a balance decision and a mutation
-one indivisible step in one round trip.
+**Objective.** Lua scripts, shipped in the binary, that make a balance decision and a mutation one
+indivisible step in one round trip.
 
 **Scope.**
-- `balance`, `check`, `consume` and `refund`.
-- The cycle transition inside `consume` and `refund`, so a rollover is never a separate operation a
-  caller can forget.
+- `check`, `consume` and `refund`.
+- The cycle transition inside all three, so a rollover is never a separate operation a caller can
+  forget.
 - Key expiry at `window_end + 24h`, which is strictly later than any rollover could need it.
 - The ceiling check, and the refusal to initialise a balance that does not exist.
+
+> **Amended 2026-09-29 — the fourth script.** This section previously read "four atomic scripts" and
+> listed `balance` alongside the other three. There are three. [request-lifecycle.md](../architecture/request-lifecycle.md)
+> §2 states that `GET /v1/balance` is "a single `HMGET` of the balance hash. No script, no mutation,
+> no rollover", and [performance.md](../architecture/performance.md) §3 rejects the read-then-decide
+> shape, so a balance script would contradict both of the documents that own the request path, and
+> [api/openapi.yaml](../../api/openapi.yaml) defines the route as `GET`. The capability is
+> unchanged: the balance is still read from the fast store in one round trip, and the read is
+> `IP-07`'s. The same rewording appears in [ROADMAP.md](../../ROADMAP.md) §v0.1,
+> [roadmap-index.md](roadmap-index.md) and [PROJECT.md](../../PROJECT.md). The phase identifier
+> `IP-05` is unchanged and is never renumbered.
 
 **Specification references.**
 - [ADR-0002](../decisions/0002-lua-scripts-for-atomicity.md) and
@@ -607,31 +621,134 @@ one indivisible step in one round trip.
 - [performance.md](../architecture/performance.md) §3, one round trip
 - NFR-S8, static scripts shipped in the binary
 
-**Dependencies.** Blocked by `IP-03` and `IP-04`. Blocks `IP-06`, `IP-07`, `IP-19`.
+**Dependencies.** `IP-03` and `IP-04`, both `COMPLETE`. Blocks `IP-06`, `IP-07`, `IP-19`.
 
 **Definition of Done.**
 
 1. `T-01` passes under `-race`: 100 concurrent decrements of a balance of 100 succeed exactly 100
    times, and the balance is zero, never negative (DR-017).
+   > **Amended 2026-09-29 — the ledger half of `T-01`.** The full text of `T-01` in
+   > [testing-strategy.md](../architecture/testing-strategy.md) also asserts the count of
+   > `usage_events` rows. No ledger exists until `IP-12` owns it, so this item proves the
+   > in-store half — the number of successes, the number of denials and the final balance — and the
+   > event rows are `IP-12`'s, named there so the obligation has a successor rather than a
+   > deletion. The amendment follows the precedent of `IP-01` item 4 and `IP-04` item 1.
 2. `T-04` passes: `balance <= limit + bonus` at every instant, and an attempt to exceed it is
    `409 grant_exceeds_ceiling` or `409 refund_exceeds_grant`, never a negative ceiling.
 3. `T-08` passes: a denial changes no balance, no cycle state and no ledger record (DR-025).
+   > **Amended 2026-09-29 — the ledger half of `T-08`.** The same amendment, for the same reason:
+   > `IP-05` asserts the balance, the bonus, the cycle index and the window, and the ledger record
+   > is asserted with `IP-12`, which is the phase that writes one. The error codes the scripts can
+   > return are asserted here; the catalogue-wide sweep of every code is `IP-07`'s, because `IP-07`
+   > is the phase where each code becomes reachable over HTTP.
 4. `T-09` passes: a store failure leaves either a complete deduction or none, and never a partial
    one.
+   > **Amended 2026-09-29 — the wire is the half this phase can reach.** `T-09` in
+   > [testing-strategy.md](../architecture/testing-strategy.md) is a process-level claim: kill a
+   > client and show the store is consistent. This phase has no process to kill, so it proves the
+   > part the scripts own, which is that the store applies a command or discards it whole — a
+   > command sent in full over a raw socket is applied in full, and the same command sent in part is
+   > not applied at all, across ten alternating attempts, with the hash never half-written. The
+   > process-level form is `IP-07`'s, where the data-plane handlers exist to be killed.
 5. `T-10` passes: a restart re-reads state and re-derives the window, and grants nothing.
+   > **Amended 2026-09-29 — the process-level form is `IP-07`'s.** The half proved here is that a
+   > runner that has never seen a key behaves like a process that has just started: it reads the
+   > stored state, re-derives the window from what the caller passed, and grants nothing. Comparing
+   > a `SIGKILL` under traffic against a snapshot needs the server, and is `IP-07`'s.
 6. A balance hash that does not exist is `503 service_unavailable` and is never initialised from
    request arguments. This is the fail-closed rule (DR-045), and the single most important line in
    the phase.
+   > **Amended 2026-09-29 — the scripts answer `state_missing`, and `IP-07` raises the `503`.** The
+   > `503` belongs to [request-lifecycle.md](../architecture/request-lifecycle.md) step 2, which
+   > names this exact condition, and no HTTP route exists until `IP-07`. The scripts answer the
+   > condition as a decision rather than by guessing a value, and the increment of
+   > `quotacore_balance_key_missing_total` is `IP-07`'s. The obligation has a successor rather than a
+   > deletion.
 7. `PTTL` on a cycle key is `window_end + 24h`; `PTTL` on a `never` entitlement's balance is `-1`.
+   > **Amended 2026-09-29 — the expiry is set on every call, including a stale one.** The scripts
+   > write the expiry from the window the key *holds*, not from the window the caller asked for, so
+   > a caller answered `stale` still leaves the key expiring when its own window closes. The first
+   > implementation returned early on the stale path and skipped the write, which meant a key
+   > materialised without an expiry stayed without one as long as every caller was behind it.
 8. The scripts are static Go-embedded files, and a test asserts that no request field is ever
    assembled into script text.
 9. The round-trip count for one `consume` is one, asserted in the client, not assumed.
+10. The reply reports the state the key holds *after* the write. A `consume` that spends the last
+    unit answers `0`, not the `1` it started from. Reading it back would be a second round trip, so
+    the value the write computed is kept in step inside the script and the second command is never
+    sent.
+    > **Added 2026-09-29.** The first implementation answered with the balance read at the top of
+    > the script, so every `applied` reply was one unit behind the key. The scripts' own tests
+    > caught it against a real store; `IP-07` is where a caller would have seen it as a
+    > `429` after a spend that had actually succeeded.
 
-**Exit criteria.** A `consume` is one `EVALSHA`, and the balance, the cycle window and the
-idempotency record move together or not at all.
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The scripts
+are the three embedded Lua bodies and the runner is the only Go caller; the source checks read the
+`.lua` files, so they hold the script surface rather than one call site. The rows marked
+`(integration)` need the real valkey and run in CI against it.
 
-**Deferred.** Rolling windows, which will add keys and a fifth script without changing these four
-(DR-006, [ADR-0008](../decisions/0008-cadence-model-anchored-and-rolling.md)).
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestT01AtomicDecrementUnderContention` (integration) | 200 concurrent decrements of a balance of 100 not landing exactly 100 times, or a balance left negative (T-01, DR-017) |
+| 2 | `TestT04TheCeilingHolds` (integration) | `balance` above `limit + bonus`, an over-ceiling refund clamped instead of refused, or a ceiling left negative (T-04, DR-020) |
+| 3 | `TestT08ADenialChangesNothing` (integration) | A denied or refused call moving a balance, a bonus, a cycle index, a window or an expiry (T-08, DR-025) |
+| 4 | `TestT09AFailedRequestLeavesNothingBehind` (integration) | A command applied whole and the same command truncated being applied in part — ten alternating attempts over a raw socket, the hash never half-written (T-09, as amended) |
+| 5 | `TestT10ARestartReReadsAndGrantsNothing` (integration) | A runner that has never seen a key granting anything, or re-deriving a window the store does not hold (T-10, as amended) |
+| 6 | `TestDefinitionOfDoneItemSixABalanceThatIsNotThereIsNeverCreated` (integration) | A missing or unusable hash answered with a value — the scripts answer `state_missing` and no field of the request becomes a balance (DR-045) |
+| 7 | `TestDefinitionOfDoneItemSevenTheKeyOutlivesItsWindow` (integration) | A `PTTL` other than window end plus 24 hours, a `never` key given a TTL, or a stale caller leaving the key without an expiry (INV-X6) |
+| 8 | `TestDefinitionOfDoneItemEightNoRequestFieldIsEverScriptText`, `TestAFeatureKeyThatWouldBreakTheHashTagNeverReachesTheStore` | A request field concatenated into script text, and a key that would break the hash tag reaching the store |
+| 9 | `TestDefinitionOfDoneItemNineOneRequestIsOneCommand`, `TestOneConsumeIsOneCall` | A second round trip per request, or a balance read to describe a decision the script already made |
+| 10 | `TestTheReplyIsTheStateTheStoreHolds` (integration) | A reply describing the state before the write — a consume that spends the last unit answering the number it started from |
+| — | `TestTheThreeScriptsShareOneTransitionBlock` | A second implementation of the cycle transition that drifts from the first (INV-C2), read from the three files rather than from a Go constant |
+| — | `TestTheStoreHoldsTheBytesThisBinaryEmbeds`, `TestLoadNamesEveryScriptAndNothingElse` | A body edited on disk and not in the binary, a digest that does not match the bytes, or a script the load loop has forgotten (NFR-S8, ADR-0002) |
+| — | `TestTheRunnerAddressesTheScriptByItsDigest`, `TestAFlushedScriptCacheIsRecoveredFromWithoutARestart`, `TestTheStoreThatForgotTheScriptsIsRecoveredFrom` (integration) | An `EVAL` on the request path, a flushed script cache needing a restart, or a retry that is not bounded to one (NFR-S8) |
+| — | `TestARecoveredCallIsRetriedOnceAndNoMore`, `TestAFailedReloadIsReportedRatherThanRetried` | A retry loop, or a second `SCRIPT LOAD` behind one `NOSCRIPT` |
+| — | `TestTheBudgetIsTheCallersBudget` | A request budget that is not the caller's context deadline, or a `NOSCRIPT` reload that starts a second budget |
+| — | `TestTheScriptsCallOnlyTheCommandsTheyNeed`, `TestScriptsIterateOverNothing` | A command outside `HMGET`, `HSET`, `HINCRBY`, `EXPIREAT` and `PERSIST`, and any loop, so the work stays constant per key |
+| — | `TestTheScriptsWorkIsNotProportionalToTheTenant` (integration) | A per-request operation over the tenant's other feature keys — 200 sibling hashes leave the work unchanged |
+| — | `TestTheScriptsAndTheRunnerAgreeOnTheBound`, `TestTheScriptsReadTheArgumentsTheRunnerSends`, `TestTheRunnerSendsOneKeyAndSixValues` | The scripts and the runner disagreeing about the bound, the argument order, or the key, which is the failure a silent `ARGV` shift produces |
+| — | `TestT05TheTransitionIsMonotonic`, `TestOnlyOneOfManyConcurrentCallersRollsTheCycle` (integration) | A caller behind the store rolling the cycle, or 50 callers that all discover a closed boundary re-granting it 50 times (DR-045, T-05) |
+| — | `TestT06MissedBoundariesSkippedIsNotMissed`, `TestAnEntitlementThatNeverResetsSendsAnEmptyEnd` | A skipped boundary re-granted, or a `never` entitlement sent a sentinel timestamp that a caller could collide with |
+| — | `TestDecodeReadsEveryShapeAScriptCanAnswerWith`, `TestDecodeRefusesAnythingItDoesNotUnderstand`, `TestTheTwoNamedRefusalsAreRecognisable` | A reply of the wrong arity or an unknown decision accepted as if it were a real one |
+| — | `TestARequestThatCannotBeHonouredNeverReachesTheStore`, `TestNewRefusesToEnforceNothing` | A request that cannot be enforced reaching the store, or a runner with no scripts and no error |
+
+Four things are recorded here because the phase surfaced them.
+
+- **Three defects that only a real store could have found.** The scripts referenced `KEY` as a Lua
+  global rather than reading `KEYS[1]`, which is a global lookup that is `nil` at run time and an
+  error the moment it is used — a fake that returned canned replies never reaches it. The reply
+  carried the balance read at the top of the script, so every `applied` answer was one unit behind
+  the key, and reading it back correctly would have cost the second round trip DoD item 9 forbids.
+  And a caller answered `stale` returned before the expiry write, so a key materialised without an
+  expiry kept none for as long as every caller was behind it. Each is fixed, and each now has the
+  test in the table above.
+- **A test fixture that asserted the wrong thing looked like a product bug.** The first concurrent
+  rollover test expected every caller that discovered a closed boundary to grant the new one, which
+  is the correct behaviour of a *single* caller and the wrong expectation for fifty of them. Fifty
+  callers, one grant. Likewise the T-01 contention test asserted a balance it had already set to
+  zero, and had to be given a 30-second context: 200 callers serialised on one connection cannot
+  finish inside a 250 ms budget, so the test was measuring queueing rather than atomicity. Both
+  fixtures now state what the property is, which is the same trap
+  [IP-03](#ip-03--cycle-engine-and-boundary-matrix) and `IP-04` each recorded.
+- **`observability.md` described a metric that contradicted DR-045.** The description of
+  `quotacore_balance_key_missing_total` said a missing hash "had to be initialised", which is the
+  opposite of [DR-045](../product/domain-rules.md) and was never true of the design. The scripts
+  make it visible: the counter now reads as a hash that was absent and a request failed closed with
+  `503` rather than initialised. The name and the P0 severity are unchanged, and the increment is
+  `IP-07`'s, because `IP-07` is where the condition becomes an HTTP status.
+- **The `never` encoding had to be written down for the control plane to write a key at all.**
+  [data-model.md](../architecture/data-model.md) section 3.1 said what the six fields hold but not
+  what an entitlement that never resets stores, and the scripts had to choose. It is the empty
+  string, because `HMGET` answers an absent field and an empty one with the same value, so a
+  missing `window_end` is indistinguishable from a `never` one that was never written — a sentinel
+  timestamp would have been an easier-looking choice that a caller could collide with.
+
+**Exit criteria.** A `consume` is one `EVALSHA`, and the balance and the cycle window move together
+or not at all. The idempotency record joins them in `IP-06`, in these same scripts.
+
+**Deferred.** The idempotency record, which is written inside these scripts and is `IP-06`'s, and
+rolling windows, which will add keys and a fourth script without changing these three (DR-006,
+[ADR-0008](../decisions/0008-cadence-model-anchored-and-rolling.md)).
 
 ---
 

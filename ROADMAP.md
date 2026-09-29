@@ -67,7 +67,8 @@ else ships.
 - [ ] `api/openapi.yaml`, spec-first, with validation generated from it
 - [ ] Cycle engine and its boundary test matrix — the component most likely to hide a silent,
       permanent defect
-- [ ] Four atomic scripts: `consume`, `refund`, `check`, `balance`
+- [ ] Atomic enforcement scripts: `consume`, `refund` and `check` in the binary, with the balance
+      read served from the fast store in one round trip
 - [ ] Snapshot cache with generation-versioned invalidation
 - [ ] Control plane: tenants, features, plans, entitlements, API keys, audit
 - [ ] Plan `apply` with the `409 confirmation_required` handshake above the configured threshold, and
