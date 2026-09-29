@@ -219,7 +219,7 @@ which is rarer, detected, and rehearsed. The rule is unchanged and the exposure 
 | --- | --- |
 | Default image | `valkey/valkey:8`, BSD-3-Clause |
 | Redis support | Any engine implementing the Redis protocol, verified against a test matrix: Redis 7.4+, Valkey 7.2+, KeyDB where the client library is verified |
-| Required commands | `EVALSHA`, `EVAL`, `SCRIPT LOAD`, `HGET`, `HSET`, `HINCRBY`, `HMGET`, `GET`, `SET … NX EX`, `EXPIREAT`, `PTTL`, `PUBLISH`, `SUBSCRIBE`, `PING`, `INFO`, `DBSIZE`, `SCAN` |
+| Required commands | `EVALSHA`, `EVAL`, `SCRIPT LOAD`, `HGET`, `HSET`, `HINCRBY`, `HMGET`, `GET`, `SET … EX`, `EXPIREAT`, `PTTL`, `PUBLISH`, `SUBSCRIBE`, `PING`, `INFO`, `DBSIZE`, `SCAN` |
 | Forbidden | `KEYS` anywhere in the product. A `KEYS` call on a large key space is an outage, and the temptation appears precisely when someone wants to debug |
 | Persistence | **None required.** The store is rebuildable and is not backed up (NFR-OPS4). Persistence is optional and only reduces recovery time after an unclean restart. It is deliberately *not* the mechanism protecting the idempotency window: an append on every `consume` would put NFR-L1 and NFR-T1 at risk, and the window is protected by sizing plus reversal instead (DR-048, DR-049) |
 | Eviction | `noeviction` on the fast store, per section 5. A write that cannot fit is refused `503 service_unavailable` (FS-21). The compose file ships this policy, and the startup check refuses to run against a store configured otherwise, because a silently downgraded policy turns a capacity limit into an uncorrectable double charge |

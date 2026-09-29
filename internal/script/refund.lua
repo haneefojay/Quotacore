@@ -1,15 +1,17 @@
 -- refund.lua: crediting a cycle back, as one indivisible step.
 --
 -- KEYS[1]  qc:{t:<tenant_id>}:bal:<feature_key>
+-- KEYS[2]  qc:{t:<tenant_id>}:idem:<idempotency_key>
 -- ARGV[1]  amount           decimal integer, 0 <= amount <= 2^53-1 (DR-022, DR-023)
 -- ARGV[2]  target_index     the index the cycle engine gave the caller (DR-004)
 -- ARGV[3]  window_start_ms  the start of that window (DR-005)
 -- ARGV[4]  window_end_ms    the end of that window, or '' for never (DR-006)
 -- ARGV[5]  effective_limit  the limit for that window, after any reduction (DR-018)
 -- ARGV[6]  now_ms           the instant the caller chose its window with (DR-004)
+-- ARGV[7]  fingerprint      the operation, tenant, feature and amount, hashed (DR-027)
 --
--- The key arrives as KEYS[1] and every value as ARGV, so nothing a caller
--- sends is ever parsed as Lua (ADR-0002, testing-strategy section 4).
+-- The keys arrive as KEYS and every value as ARGV, so nothing a caller sends is
+-- ever parsed as Lua (ADR-0002, testing-strategy section 4).
 --
 -- Replies with eight strings, always eight, in this order: decision,
 -- transition, balance, limit, bonus, cycle_index, window_start_ms,
@@ -17,7 +19,8 @@
 -- refused whole and never clamped, because a clamped refund is a partial
 -- refund and there is no event to describe the difference (DR-020, ADR-0005).
 -- A balance that is absent or unusable is the state-missing marker of
--- request-lifecycle.md step 2, and it writes nothing.
+-- request-lifecycle.md step 2, and it writes nothing. A repeat of an applied
+-- refund is a replay and carries the state that was recorded then (DR-027).
 
 -- BEGIN transition
 -- This block is byte-for-byte identical in consume.lua, refund.lua and
@@ -145,6 +148,53 @@ end
 
 -- A bad amount is refused before the transition runs, so a request that cannot
 -- be honoured rolls no cycle and refreshes no expiry (DR-025).
+-- BEGIN idempotency
+-- This block is byte-for-byte identical in consume.lua and refund.lua, and
+-- source_test.go fails if the two ever differ. A check has no copy: it changes
+-- nothing, so it has nothing to replay and nothing to record (DR-026). The
+-- lookup is deliberately before transition(), because a retry must return the
+-- answer the first attempt recorded, and letting a rollover run first would
+-- let a replay report a balance this request never touched.
+local FINGERPRINT = ARGV[7]
+local existing = redis.call('GET', KEYS[2])
+if existing then
+  local split = string.find(existing, '\t', 1, true)
+  if split and string.sub(existing, 1, split - 1) == FINGERPRINT then
+    -- The same logical operation. Return what was recorded and write nothing:
+    -- the decision is replayed and its seven values are the stored ones, so a
+    -- retrying client is charged once and told the truth about the charge that
+    -- already happened (DR-027, T-02). No expiry is refreshed here, so a repeat
+    -- cannot extend the window (DR-029).
+    local verdict, balance, limit, bonus, index, start, finish = string.match(
+      string.sub(existing, split + 1),
+      '([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)')
+    if verdict then
+      return { 'replayed', verdict, balance, limit, bonus, index, start, finish }
+    end
+  end
+  -- A key already used for a different operation, or a record this script
+  -- cannot read back. Refuse, and touch nothing, so the record that is already
+  -- there still answers the operation it belongs to (DR-028, INV-I2).
+  return { 'reused', '', '', '', '', '', '', '' }
+end
+
+-- Record the outcome of a mutation that was applied, so a repeat of it is a
+-- replay rather than a second charge. Only an applied mutation is recorded: a
+-- denial, a refused ceiling or a stale state are answers, not changes, and a
+-- record of one would let a later retry replay a charge that never happened
+-- (ADR-0004). The separator is a tab, which cannot occur in the fingerprint,
+-- the verdict or the six decimal numbers. The window is EX DAY from first
+-- write, and this function is only reached on a fresh application, so a repeat
+-- finds the record and returns before this line rather than extending it.
+local function remember(state)
+  redis.call('SET', KEYS[2],
+             FINGERPRINT .. '\t' .. state.verdict .. '\t' .. num(state.balance) .. '\t' ..
+             num(state.limit) .. '\t' .. num(state.bonus) .. '\t' .. num(state.index) .. '\t' ..
+             num(state.start) .. '\t' .. (state.finish and num(state.finish) or ''),
+             'EX', DAY)
+end
+-- END idempotency
+
 local state, why = transition()
 if state == nil then
   return answer(why, nil)
@@ -169,4 +219,8 @@ redis.call('HINCRBY', KEY, 'balance', amount)
 -- The value is what HINCRBY computed, kept in step here rather than read back,
 -- so the answer costs no second round trip.
 state.balance = state.balance + amount
+-- The record is written in the same execution as the write it describes, so
+-- the store can never hold a credit with no record of it or a record with no
+-- credit (ADR-0002, INV-I1).
+remember(state)
 return answer('applied', state)

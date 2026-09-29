@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/quotacore/quotacore/internal/script"
 )
 
 func env(pairs map[string]string) Getenv {
@@ -123,6 +125,18 @@ func TestLoadPinsTheIdempotencyWindow(t *testing.T) {
 	e["QUOTACORE_IDEMPOTENCY_TTL"] = "24h"
 	if _, err := Load(env(e)); err != nil {
 		t.Errorf("Load refused the documented 24h window: %v", err)
+	}
+}
+
+// The window is pinned in three places and none of them reads the others: this
+// package refuses a deployment that disagrees, internal/script stamps the TTL on
+// every record, and the Lua compares a caller's replay against the same span. If
+// the first two ever drifted, a deployment would start clean and then write
+// records with a different lifetime than the one it validated, so the equality is
+// asserted rather than assumed (DR-029).
+func TestThePinnedWindowMatchesTheScriptPackage(t *testing.T) {
+	if IdempotencyWindow != script.IdempotencyWindow {
+		t.Errorf("cmd/quotacore pins %s, internal/script records for %s", IdempotencyWindow, script.IdempotencyWindow)
 	}
 }
 

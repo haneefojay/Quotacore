@@ -38,7 +38,7 @@ daylight-saving change.
 | Claim | Enforced by | Proven by |
 | --- | --- | --- |
 | Check and deduct are one indivisible operation | One Lua script execution | 200 concurrent requests against a balance of 100, exactly 100 allowed |
-| A retrying client is charged once; a double charge caused by store loss is reversed | Idempotency recorded in the same atomic execution, and a no-eviction store sized for the window | 50 concurrent retries, one deduction, byte-identical replies — then the T-14 store-loss case, one reversal |
+| A retrying client is charged once; a double charge caused by store loss is reversed | Idempotency recorded in the same atomic execution, and a no-eviction store sized for the window | 50 concurrent retries, one deduction, 49 replays that answer the recorded state — then the T-14 store-loss case, one reversal |
 | A missed cycle boundary cannot deny or over-grant | Lazy, monotonic, atomic rollover | Idle across three boundaries: one allowance, one event |
 
 Full test list: [testing-strategy.md](docs/architecture/testing-strategy.md).

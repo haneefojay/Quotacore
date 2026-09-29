@@ -234,7 +234,7 @@ refetched directly.
 | Shape | What happens | Why it is correct |
 | --- | --- | --- |
 | Two requests, one balance | One succeeds, one is denied with the post-deduction balance | One script execution (NFR-T3) |
-| The same key, 50 times at once | One deduction; 49 replays of the identical response | The record is written in the same execution as the mutation (INV-I1) |
+| The same key, 50 times at once | One deduction; 49 replays, each answering the recorded state with `replayed: true` | The record is written in the same execution as the mutation (INV-I1) |
 | A request and the worker at a boundary | Both compute the same target; one applies, the other is `STALE` | Monotonic transition, one implementation (INV-C2) |
 | An admin apply-now and a `consume` | The `consume` sees the pre- or post-change limit, never a partial one | The limit is one field read in one script execution |
 | A suspension and a `consume` | The `consume` may complete if it entered the script first | Suspension is not retroactive; both actions are audited |

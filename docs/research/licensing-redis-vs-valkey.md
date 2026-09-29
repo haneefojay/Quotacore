@@ -40,12 +40,17 @@ deliberately to stay inside the common subset.
 | --- | --- | --- |
 | `EVALSHA`, `EVAL`, `SCRIPT LOAD` | The atomic transition | Yes. Core to the protocol and the reason this design is portable at all |
 | `HGET`, `HSET`, `HMGET`, `HINCRBY` | The balance hash | Yes. Long-standing, no module dependency |
-| `GET`, `SET` with `NX` and `EX` | The idempotency record | Yes |
+| `GET`, `SET` with `EX` | The idempotency record | Yes |
 | `EXPIREAT`, `PTTL` | Cycle garbage collection | Yes |
 | `PUBLISH`, `SUBSCRIBE` | Configuration invalidation | Yes |
 | `PING`, `INFO`, `DBSIZE` | Health and status | Yes |
 | `SCAN` | Keyspace inspection, CLI only | Yes |
 | `CLUSTER KEYSLOT` | Cluster key-tag verification in tests | Engine-specific enough that it is used only in a test helper, never in the product |
+
+**Update, 2026-09-30 — the record write is `SET` with `EX` and no `NX`.** `IP-06` implemented the
+record inside the atomic script, where the fingerprint check and the write are one execution, so
+there is nothing left for `NX` to guard ([data-model](../architecture/data-model.md) §3.3). `EX`
+alone is portable in exactly the same way, so the conclusion is unchanged.
 
 **Commands deliberately not used anywhere in the product**, each because it is either
 non-portable or a known operational hazard:

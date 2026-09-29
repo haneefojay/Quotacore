@@ -200,11 +200,12 @@ Response:
 ```
 
 `balance` is after the deduction. `consumed` is the amount the *original* call applied, and it is
-returned unchanged on a replay, because the replayed response is byte-identical to the original
-(DR-026). A client that needs to know whether this particular call moved anything reads `replayed`
-or the `Idempotent-Replay` header, and it is a one-field test rather than an inference from
-arithmetic. `balance` minus `consumed` is the balance before the original deduction, which is why
-both are returned.
+returned unchanged on a replay, because it is read from the record rather than recomputed
+(DR-026, DR-027). A retry is not byte-identical to the original — the first response carries
+`"replayed": false` and the retry `"replayed": true` — but the seven state values are, so a client
+that needs to know whether this particular call moved anything reads `replayed` or the
+`Idempotent-Replay` header, a one-field test rather than an inference from arithmetic. `balance`
+minus `consumed` is the balance before the original deduction, which is why both are returned.
 
 ### 7.2 `check`
 

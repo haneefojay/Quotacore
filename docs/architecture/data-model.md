@@ -342,7 +342,7 @@ multi-key script is single-slot (ADR-0002, A-11).
 | Key | Type | Contents | TTL |
 | --- | --- | --- | --- |
 | `qc:{t:<tenant_id>}:bal:<feature_key>` | hash | `balance`, `limit`, `bonus`, `cycle_index`, `window_start`, `window_end` | `window_end + 24h`, none if `never` |
-| `qc:{t:<tenant_id>}:idem:<key>` | string | serialised stored response | 24 h |
+| `qc:{t:<tenant_id>}:idem:<key>` | string | the recorded decision state: the fingerprint, the transition verdict and the six balance fields (§3.3) | 24 h |
 | `qc:{t:<tenant_id>}:f:<feature_key>` | hash | rolling-window bucket counters (v0.2) | `window_end + 24h` |
 | `qc:{t:<tenant_id>}:w:<feature_key>` | string | rolling-window bucket boundary marker (v0.2) | `window_end + 24h` |
 | `qc:cfg:tenants` | hash | tenant → snapshot version, for invalidation diffing | none |
@@ -390,22 +390,29 @@ caller could collide with.
 A missing hash is a fault, never an initialisation opportunity. The hash is materialised when the
 tenant is provisioned or its plan assignment changes, and is then maintained by the scripts; nothing
 else creates it (DR-045). This is what makes a lost hash survivable without being exploitable:
-whether it goes to memory pressure or to total store loss, the consequence is a `503` plus a metric
-plus a rebuild, never a restored full allowance.
+whether it is removed by an operator's mistake or lost to total store loss, the consequence is a
+`503` plus a metric plus a rebuild, never a restored full allowance.
 
 ### 3.3 The idempotency record
 
-A single string holding a compact serialised form of: the operation fingerprint, the HTTP status,
-and the response body.
+A single string holding the operation fingerprint followed by the seven values that answer the
+operation: the transition verdict and the six balance-hash fields, as they stood after the
+mutation. The fields are separated by tabs, which cannot occur in a fingerprint (hex), a verdict
+(`current`, `rolled`, `stale`) or a decimal integer, so the boundary between them is unambiguous.
 
 ```
-SET qc:{t:T}:idem:01JCV3… '{"fp":"a3f1…","status":429,"body":{…}}' EX 86400 NX
+SET qc:{t:T}:idem:01JCV3… 'a3f1…<TAB>current<TAB>70<TAB>100<TAB>0<TAB>5<TAB>1759200000000<TAB>1761792000000' EX 86400
 ```
 
-The record is written by the same script execution that applies the mutation, using `NX` semantics
-inside Lua so the check and the write are one step. The fingerprint is a hash of
-`operation | tenant | feature | amount`, and a mismatch is `409 idempotency_key_reuse`
-(DR-027, DR-028).
+The record is written by the same script execution that applies the mutation, and only when the
+mutation is applied: a denial, a refused ceiling and a stale state are answers rather than changes,
+and a record of one would let a later retry replay a charge that never happened (ADR-0004, DR-025).
+The write needs no `NX`, because the check and the write are the same execution, which is the whole
+of the atomicity argument (ADR-0002). A repeat whose fingerprint matches returns the recorded seven
+values without reading the balance; a repeat whose fingerprint differs is `409 idempotency_key_reuse`
+and touches nothing (DR-027, DR-028). The fingerprint is a hash of `operation | tenant | feature |
+amount`; the tenant is also the key's scope, so a key chosen by one tenant can never collide with
+another's.
 
 ### 3.4 Invalidation channel
 

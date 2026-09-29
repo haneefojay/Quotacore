@@ -754,7 +754,13 @@ rolling windows, which will add keys and a fourth script without changing these 
 
 ## IP-06 — Idempotency prevention in the data plane
 
-**Status** `BLOCKED`, gated on `IP-05`, and on the `Q-21` answer from `IP-00`.
+**Status** `COMPLETE`, started and closed 2026-09-30. `IP-05` closed on 2026-09-29, and the `Q-21`
+gate was closed by [ADR-0017](../decisions/0017-noeviction-and-duplicate-reversal.md) at `IP-00`, so
+nothing gated this phase. The status was set to `IN PROGRESS` before any file the phase owned
+existed, which is what [AGENTS.md](../../AGENTS.md) requires, and was closed the same day once all
+seven Definition-of-Done items were met, four of them amended with a dated note. The row in
+[roadmap-index.md](roadmap-index.md) read `BLOCKED` until the opening change: it was stale, and the
+prose in that document's §2 already named this phase as the next permitted one.
 
 **Objective.** A retrying client is charged once, decided in the data store rather than in the
 application, so two instances cannot both charge.
@@ -780,9 +786,29 @@ record is written by the script, and a partially migrated keyspace is a correctn
 
 1. `T-02` passes: 50 concurrent requests with one `Idempotency-Key` produce one deduction and one
    stored response, and the 49 others replay it byte for byte (DR-027).
+   > **Amended 2026-09-30 — the retries are not byte-identical, and that is the rule, not a defect.**
+   > `T-02` in [testing-strategy.md](../architecture/testing-strategy.md) was corrected the same day:
+   > a first delivery answers the decision `applied` and each retry answers `replayed`, so the bodies
+   > differ by exactly that word, while the seven state values behind it are identical. Forcing
+   > byte-identity would either hide the replay or put the same nonce in every body, and
+   > [api-conventions.md](../architecture/api-conventions.md) §6 and §7.1 put `replayed` in the body
+   > and `Idempotent-Replay` in the header on purpose. The `usage_events` row half belongs to `IP-12`,
+   > which writes the ledger; what this phase proves is the in-store half — one deduction, one record,
+   > and 49 answers read back from it.
 2. `T-03` passes: the same key with a different operation, amount or tenant is
    `409 idempotency_key_reuse` and changes no state (DR-028).
+   > **Amended 2026-09-30 — a different tenant is separated by the key, not by the fingerprint.** The
+   > record key carries the tenant's hash tag (`qc:{t:<tenant>}:idem:<key>`, data-model.md §3.1), so
+   > the same client key under two tenants is two records and never a reuse; the fingerprint's tenant
+   > component is defence against a key built by any other path, and
+   > `TestTheFingerprintChangesWithEveryPartOfTheOperation` asserts it. The case proved end to end
+   > here is the one that reaches the same record: a different operation, amount or feature. The `409`
+   > status is `IP-07`'s; at this layer the refusal is `ErrIdempotencyKeyReuse`.
 3. A `consume` or `refund` without the header is `400 missing_idempotency_key` (DR-026).
+   > **Amended 2026-09-30 — the `400` is `IP-07`'s.** No route exists to send a header to until
+   > `IP-07`. The runner refuses the call before it reaches the store as `ErrMissingIdempotencyKey`,
+   > and `IP-07` maps that to `400 missing_idempotency_key` when it reads the header. The obligation
+   > has a successor rather than a deletion.
 4. A property test holds that replaying a key any number of times, from any number of instances,
    applies the mutation at most once.
 5. The window is 24 hours, the expiry on the record is derived from that window, and
@@ -790,8 +816,48 @@ record is written by the script, and a partially migrated keyspace is a correctn
 6. The fast store runs `maxmemory-policy noeviction` for the whole key space, sized for the window
    per the `Q-21` decision (DR-048, ADR-0017); and the sizing is asserted against the projection in
    [deployment.md](../architecture/deployment.md) §5.
+   > **Amended 2026-09-30 — the policy is `IP-01`'s and the sizing is `IP-15`'s.** `docker-compose.yml`
+   > sets `--maxmemory-policy noeviction`, and CI's `compose` job asserts that the running store
+   > answers `noeviction`; this phase owns the record and its window, and proves the window and the
+   > expiry that enforce it. The 24 GiB floor is a projection that
+   > [deployment.md](../architecture/deployment.md) §5 explicitly says is **Measured by `IP-15`**, and
+   > this phase does not own the soak. The obligation has a successor rather than a deletion.
 7. Detection is **not** implemented here. Nothing in the control plane knows about replay yet; that
    is `IP-11`, and the phase asserts that a replay is invisible from outside the data store.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The record
+lives inside the two mutation scripts, and the runner is the only Go caller; the source checks read
+the `.lua` files, so they hold the script surface rather than one call site. The rows marked
+`(integration)` need the real valkey and run in CI against it.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestT02FiftyDuplicateDeliveriesAreChargedOnce` (integration) | 50 concurrent deliveries of one key charging more than once, or a retry answered from the live balance rather than the record (T-02, DR-027) |
+| 2 | `TestT03AReusedKeyIsRefusedAndTheRecordSurvives` (integration), `TestAReusedKeyIsItsOwnRefusal` | A key reused for a different amount, feature or operation being applied a second time, or a refusal that damages the record already there (T-03, DR-028, INV-I2) |
+| 3 | `TestAMutationWithoutAnIdempotencyKeyNeverReachesTheStore` | A `consume` or `refund` with no key reaching the store, or a `check` being made to require one (DR-026) |
+| 4 | `TestThePropertyAReplayAppliesAtMostOnce` (integration) | Any amount, delivered any number of times across two runner instances, applied more than once — the guarantee is the store's, not a process's (DR-030) |
+| 5 | `TestTheRecordIsBoundedByTheTwentyFourHourWindow` (integration), `TestTheWindowIsTwentyFourHoursAndTheScriptsSaySo`, `TestThePinnedWindowMatchesTheScriptPackage` | A record whose TTL is not the pinned 24 hours, or a replay that extends the window it was first written under (DR-029) |
+| 6 | the `compose` CI job (`docker compose exec valkey valkey-cli config get maxmemory-policy`), as amended | A store that may discard a record inside the window (DR-048, ADR-0017; sizing measured by `IP-15`) |
+| 7 | `TestT02AReplayReportsTheRecordedStateNotTheLiveOne` (integration) | A replay reading the balance instead of the record, so a retry is visible to, or lies to, a caller (detection is `IP-11`'s) |
+| — | `TestTheFingerprintIsHexOfTheRightLength`, `TestTheFingerprintIsStable`, `TestTheFingerprintChangesWithEveryPartOfTheOperation`, `TestTheFingerprintCannotBeShiftedByTheContentsOfAField`, `TestTheFingerprintExcludesTheRequestId` | A fingerprint that is not stable, does not change with the operation, or can be shifted by the contents of a field — the injection the length prefix closes |
+| — | `TestTheMutationScriptsShareOneIdempotencyBlock`, `TestTheMutationScriptsLookUpTheRecordBeforeTheyRoll`, `TestCheckSendsOneKeyAndAnEmptyFingerprint` | Two mutation scripts that drift apart, a lookup that runs after a rollover, or a `check` given a record key it has no use for |
+| — | `TestTheRunnerSendsTwoKeysAndSevenValues`, `TestTheScriptsReadTheArgumentsTheRunnerSends`, `TestTheScriptsCallOnlyTheCommandsTheyNeed` | The scripts and the runner disagreeing about the keys, the argument order or the new `GET`/`SET`, which is the failure a silent `ARGV` shift produces |
+| — | `TestDecodeReadsEveryShapeAScriptCanAnswerWith`, `TestDecodeRefusesAnythingItDoesNotUnderstand`, `TestTheTwoNamedRefusalsAreRecognisable` | A `replayed` or `reused` reply read as a real one, or of the wrong arity, accepted as if it were state |
+
+Two things are recorded here because the phase surfaced them.
+
+- **The window is pinned in three places, and now asserted across all three.** The Go constant
+  `script.IdempotencyWindow`, the Lua `local DAY = 86400`, and `cmd/quotacore`'s hard refusal of a
+  different `QUOTACORE_IDEMPOTENCY_TTL`. A test links the first two, and the loader test plus
+  `TestThePinnedWindowMatchesTheScriptPackage` link the third, because a deployment that started
+  clean and then wrote records with a different lifetime than the one it validated would be a silent
+  wrong answer to a money question (DR-029).
+- **A test that reused a key across runs looked like a product bug.** The integration tests build
+  client keys from the test's name, and the record lives for 24 hours, so a second `go test` against
+  the same store replayed the first run's records and every charge-once assertion measured the wrong
+  run. The keys now carry a per-process nonce. The product was correct; the fixture was not, which is
+  the same trap [IP-03](#ip-03--cycle-engine-and-boundary-matrix), `IP-04` and
+  [IP-05](#ip-05--the-atomic-scripts) each recorded.
 
 **Exit criteria.** Duplicate delivery from any client, in any order, at any concurrency, charges
 once — and that is a property of the store, not of a process.

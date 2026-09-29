@@ -50,13 +50,15 @@ decision recorded in [the register](../../docs/product/assumptions-and-open-ques
 | --- | --- |
 | Specification | 63 documents, 49 rules, 17 accepted decisions, 15 named correctness tests |
 | Questions blocking v0.1 | None. 8 open and 3 deferred, none of them gating; the five that needed an answer before the contract was frozen are answered |
-| Phases | 28, `IP-00`–`IP-27`. `IP-00`–`IP-05` are `COMPLETE`, and the other 22 are `BLOCKED` on an earlier phase |
+| Phases | 28, `IP-00`–`IP-27`. `IP-00`–`IP-06` are `COMPLETE`, and the other 21 are `BLOCKED` on an earlier phase |
 | Code written | `IP-01`: 19 Go, Compose, Makefile, module and CI files. No product behaviour, asserted by a test rather than claimed. `IP-00` closed the contract and wrote none; `IP-01` was the first phase to own files in the repository. `IP-02` added `api/openapi.yaml` — 39 operations, 67 schemas, 34 error codes — plus the types and validation generated from it, the served `/openapi.json` and `/docs`, and the generator that keeps the two in step. It adds no product behaviour either: an enforcement call still returns `404`, because `IP-07` owns the routes, and `TestNoProductBehaviour` fails if that ever stops being true. `IP-03` added `internal/cycle`: the engine and the suite that proves it — boundary matrix, DST pair, `never`, monotonicity, property, tzdata, benchmark and shape-scope tests, 8 files — plus the embedded time-zone database. It is a pure library: no route, no store, no clock; a caller feeds an instant and gets a window, and `TestNoProductBehaviour` now also pins the engine's arithmetic vocabulary inside `internal/cycle`. `IP-04` added `internal/store` (the key builders for every key [data-model.md](../architecture/data-model.md) section 3.1 names, the config-version reads, the invalidation publish/subscribe, the expiry rule, and the two source checks that hold the data plane off the control plane and off cursor scans), `internal/snapshot` (the bounded LRU with byte budget and interned plans, the token-bucketed miss path, and the subscriber and reconcile loops that keep the previous snapshot while a refresh fails), and `internal/observability` (seven collectors, exactly the seven observability.md names). The phase owns seven Go files plus seven test files, an integration pair and a datastore round trip
-that CI runs against the real valkey. It is still not product behaviour: the data plane has no route (`TestNoProductBehaviour`), and the snapshot's `Loader` is an interface whose Postgres implementation is `IP-08`'s. `IP-05` added `internal/script`: three embedded Lua bodies and the Go runner that addresses them by digest. It is the first phase in this repository to contain the arithmetic the product exists to perform, and it is still not product behaviour, because `TestNoProductBehaviour` still holds — a consume is one `EVALSHA` and no route reaches it until `IP-07` |
+that CI runs against the real valkey. It is still not product behaviour: the data plane has no route (`TestNoProductBehaviour`), and the snapshot's `Loader` is an interface whose Postgres implementation is `IP-08`'s. `IP-05` added `internal/script`: three embedded Lua bodies and the Go runner that addresses them by digest. It is the first phase in this repository to contain the arithmetic the product exists to perform, and it is still not product behaviour, because `TestNoProductBehaviour` still holds — a consume is one `EVALSHA` and no route reaches it until `IP-07`. `IP-06` added the idempotency record inside those same scripts and `internal/script/idempotency.go` (the fingerprint and the pinned window), so a retried consume is still one `EVALSHA` and `TestNoProductBehaviour` still holds |
 | `IP-01` open DoD items | None. Item 4 was amended before it was met: the Go module graph stays here and the base image moved to `IP-15` item 11, so the obligation has a successor rather than a deletion |
 | `IP-02` open DoD items | None. All 7 met on 2026-09-28, each closed by a named test recorded in the phase's own section. Item 7 was added by its owner on 2026-09-28 because `mvp-scope.md` and ADR-0010 both required a generated `/docs` page and no phase owned it |
 | `IP-03` open DoD items | None. All 7 met on 2026-09-28. Verification found and fixed two defects, both recorded in the phase section and in CHANGELOG: rows 4–7 of the boundary table itself were wrong, and the committed `go.mod`/`go.sum` were never tidy |
 | `IP-04` open DoD items | None. All 6 met on 2026-09-28; item 1 was amended by a dated note to defer the end-to-end chaos row to `IP-07`, where the `503 control_plane_unavailable` verdict becomes observable. Verification resolved two conflicts inside the specification and found one defect in the phase's own fixtures, all recorded in the phase section and in CHANGELOG |
+| `IP-05` open DoD items | None. All 10 met on 2026-09-29; items 4, 5 and 6 were amended by dated notes so the process-level `T-09`/`T-10` and HTTP halves belong to `IP-07`, and item 10 was added for the caller answered `stale` that returned before the expiry write. Verification found three defects, all recorded in the phase section and in CHANGELOG |
+| `IP-06` open DoD items | None. All 7 met on 2026-09-30; items 1, 2, 3 and 6 carry dated amendments — the ledger's `usage_events` row half belongs to `IP-12`, the `409` and `400` statuses to `IP-07`, and the `noeviction` policy to `IP-01` with the sizing measured by `IP-15`. Verification found one defect in the phase's own fixtures (deterministic client keys replayed a previous run's records) and corrected two specification statements, all recorded in the phase section and in CHANGELOG |
 
 ## 3. How to use this roadmap
 
@@ -88,7 +90,7 @@ from a decision record, an issue or a commit message stays valid for the life of
 | `IN REVIEW` | DoD claimed complete and under review against its own items |
 | `COMPLETE` | Every DoD item satisfied and evidenced, and the phase's exit criteria met |
 
-**`IP-00`, `IP-01`, `IP-02`, `IP-03` and `IP-04` are `COMPLETE`.**
+**`IP-00`, `IP-01`, `IP-02`, `IP-03`, `IP-04`, `IP-05` and `IP-06` are `COMPLETE`.**
 `IP-00` was the phase that closed the contract questions, and it closed them on 2026-09-27. `IP-01`
 was the first phase allowed to own code files, and it closed on 2026-09-27 with all six DoD items
 met. `IP-02`, the OpenAPI contract, started and closed on 2026-09-28 with all seven DoD items met,
@@ -100,9 +102,9 @@ because [mvp-scope.md](../product/mvp-scope.md) and
 DoD items met. Its only dependency, `IP-01`, was `COMPLETE`, and its gating decisions were accepted;
 verification then found and fixed two defects, both recorded in the phase's own section: four rows
 of the boundary table were wrong, and the committed `go.mod`/`go.sum` were never tidy. Every later
-phase is `BLOCKED` on an earlier phase, not on a question. `IP-04` is the next phase permitted: its
-dependencies, `IP-02` and `IP-03`, are both closed, and the status was set to `IN PROGRESS` on
-2026-09-28 before any file it owns was written, which is what [AGENTS.md](../../AGENTS.md) requires.
+phase is `BLOCKED` on an earlier phase, not on a question. `IP-04` followed: its dependencies,
+`IP-02` and `IP-03`, were both closed, and its status was set to `IN PROGRESS` on 2026-09-28 before
+any file it owns was written, which is what [AGENTS.md](../../AGENTS.md) requires.
 
 `IP-04`, the keyspace and the snapshot cache, started and closed on 2026-09-28 with all six DoD items
 met; item 1 was amended by a dated note so the end-to-end chaos row belongs to `IP-07`, and the
@@ -118,8 +120,10 @@ Exactly one phase may be `IN PROGRESS` at a time, and the status is recorded as 
 work — nothing is marked in progress while it is not. `IP-05`, the atomic scripts, was opened
 `IN PROGRESS` on 2026-09-29, its gating decisions being accepted and its dependency `IP-04` closed,
 which is what [AGENTS.md](../../AGENTS.md) requires before a file the phase owns exists, and was
-closed the same day. `IP-06`, idempotency prevention, is the next phase permitted: it is written
-inside the scripts `IP-05` left, so the two must not be split across teams.
+closed the same day. `IP-06`, idempotency prevention, was opened `IN PROGRESS` on 2026-09-30, its
+gating decision accepted and its dependency `IP-05` closed, and was closed the same day. `IP-07`, the
+data-plane endpoints, is the next phase permitted: its dependencies, `IP-05` and `IP-06`, are both
+closed.
 
 ### Phase-complete checkpoint
 
@@ -151,8 +155,8 @@ answer.
 | `IP-02` | The OpenAPI contract | ADR-0010 | `COMPLETE` — started and closed 2026-09-28, 7 of 7 DoD items met, item 7 added by its owner on 2026-09-28 |
 | `IP-03` | Cycle engine and boundary matrix | ADR-0003, ADR-0007, ADR-0008 | `COMPLETE` — started and closed 2026-09-28, 7 of 7 DoD items met |
 | `IP-04` | Data-plane skeleton, keyspace and snapshot cache | ADR-0001, ADR-0011 | `COMPLETE` — started and closed 2026-09-28, 6 of 6 DoD items met, item 1 amended to defer the chaos row to `IP-07` |
-| `IP-05` | The atomic scripts | ADR-0002, ADR-0005 | `COMPLETE` — started and closed 2026-09-29, 9 of 9 DoD items met with items 4, 5 and 6 amended to defer the process-level and HTTP halves to `IP-07`, and item 10 added |
-| `IP-06` | Idempotency prevention in the data plane | ADR-0004 | `BLOCKED` on `IP-05` |
+| `IP-05` | The atomic scripts | ADR-0002, ADR-0005 | `COMPLETE` — started and closed 2026-09-29, 10 of 10 DoD items met with items 4, 5 and 6 amended to defer the process-level and HTTP halves to `IP-07`, and item 10 added |
+| `IP-06` | Idempotency prevention in the data plane | ADR-0004 | `COMPLETE` — started and closed 2026-09-30, 7 of 7 DoD items met with items 1, 2, 3 and 6 amended to defer the byte-identity, HTTP-status, ledger and sizing halves to `IP-07`, `IP-12` and `IP-15` |
 | `IP-07` | Data-plane endpoints | ADR-0001, ADR-0012 | `BLOCKED` on `IP-05`, `IP-06` |
 | `IP-08` | Control-plane schema and migrations | ADR-0011, ADR-0013 | `BLOCKED` on `IP-02` |
 | `IP-09` | Control-plane API and API keys | ADR-0012, ADR-0013 | `BLOCKED` on `IP-08` |

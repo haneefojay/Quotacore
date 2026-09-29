@@ -140,12 +140,13 @@ var testWindow = cycle.Window{
 
 func testRequest() Request {
 	return Request{
-		TenantID:   testTenant,
-		FeatureKey: "searches",
-		Amount:     30,
-		Window:     testWindow,
-		Limit:      100,
-		At:         testWindow.Start.Add(12 * time.Hour),
+		TenantID:       testTenant,
+		FeatureKey:     "searches",
+		IdempotencyKey: "test-client-key",
+		Amount:         30,
+		Window:         testWindow,
+		Limit:          100,
+		At:             testWindow.Start.Add(12 * time.Hour),
 	}
 }
 
@@ -222,15 +223,17 @@ func TestTheRunnerAddressesTheScriptByItsDigest(t *testing.T) {
 	}
 }
 
-func TestTheRunnerSendsOneKeyAndSixValues(t *testing.T) {
+func TestTheRunnerSendsTwoKeysAndSevenValues(t *testing.T) {
 	fake := &fakeStore{reply: appliedReply(70)}
 	r := newRunner(t, fake, 250*time.Millisecond)
 	if _, err := r.Consume(context.Background(), testRequest()); err != nil {
 		t.Fatalf("Consume: %v", err)
 	}
 	wantKey := "qc:{t:" + testTenant + "}:bal:searches"
-	if len(fake.keys) != 1 || fake.keys[0] != wantKey {
-		t.Errorf("keys = %v, want exactly [%s], which is what internal/store builds (data-model.md §3.1)", fake.keys, wantKey)
+	wantIdem := "qc:{t:" + testTenant + "}:idem:test-client-key"
+	if len(fake.keys) != 2 || fake.keys[0] != wantKey || fake.keys[1] != wantIdem {
+		t.Errorf("keys = %v, want [%s %s]: the balance and the record, both built by internal/store and both in the tenant's slot (data-model.md §3.1)",
+			fake.keys, wantKey, wantIdem)
 	}
 	want := []string{
 		"30",
@@ -239,6 +242,7 @@ func TestTheRunnerSendsOneKeyAndSixValues(t *testing.T) {
 		strconv.FormatInt(testWindow.End.UnixMilli(), 10),
 		"100",
 		strconv.FormatInt(testRequest().At.UnixMilli(), 10),
+		Fingerprint(Consume, testTenant, "searches", 30),
 	}
 	if len(fake.args) != len(want) {
 		t.Fatalf("ARGV = %v, want %v", fake.args, want)
@@ -247,6 +251,54 @@ func TestTheRunnerSendsOneKeyAndSixValues(t *testing.T) {
 		if got, ok := fake.args[i].(string); !ok || got != w {
 			t.Errorf("ARGV[%d] = %v, want %q", i+1, fake.args[i], w)
 		}
+	}
+}
+
+func TestCheckSendsOneKeyAndAnEmptyFingerprint(t *testing.T) {
+	// A check changes nothing, so it writes no record and has none to compare a
+	// fingerprint against. It is sent the same arity as the other two - one
+	// arity is easier to assert than three - with an empty seventh value, and it
+	// must not name a second key: naming one would be a check that could replay.
+	fake := &fakeStore{reply: appliedReply(70)}
+	r := newRunner(t, fake, 250*time.Millisecond)
+	if _, err := r.Check(context.Background(), testRequest()); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(fake.keys) != 1 {
+		t.Errorf("a check sent %d keys, %v; a check has no record to read or write (DR-026)", len(fake.keys), fake.keys)
+	}
+	if len(fake.args) != argCount {
+		t.Fatalf("a check sent %d arguments, want %d", len(fake.args), argCount)
+	}
+	if last, ok := fake.args[argCount-1].(string); !ok || last != "" {
+		t.Errorf("a check sent ARGV[%d] = %v, and a check has no fingerprint", argCount, fake.args[argCount-1])
+	}
+}
+
+func TestAMutationWithoutAnIdempotencyKeyNeverReachesTheStore(t *testing.T) {
+	// DR-026 makes the key required. A server that generated one per attempt
+	// would protect nothing, so the missing header is refused before a byte is
+	// sent, with the code that says the header is missing rather than the one
+	// that says the key is malformed.
+	for name, call := range map[string]func(*Runner, context.Context, Request) (Outcome, error){
+		"consume": (*Runner).Consume,
+		"refund":  (*Runner).Refund,
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := testRequest()
+			req.IdempotencyKey = ""
+			fake := &fakeStore{reply: appliedReply(70)}
+			r := newRunner(t, fake, 250*time.Millisecond)
+			if _, err := call(r, context.Background(), req); !errors.Is(err, ErrMissingIdempotencyKey) {
+				t.Errorf("%s with no key returned %v, want the missing-key marker", name, err)
+			}
+			if evals, _, _ := fake.counts(); evals != 0 {
+				t.Errorf("%s with no key still made %d evaluations", name, evals)
+			}
+			if _, err := r.Check(context.Background(), req); err != nil {
+				t.Errorf("Check with no key returned %v, and a check needs none", err)
+			}
+		})
 	}
 }
 
