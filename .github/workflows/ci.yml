@@ -132,11 +132,12 @@ jobs:
             echo 'the service started with a shortened idempotency window, which DR-029 pins' >&2
             exit 1
           fi
-      - name: Integration tests against real Postgres
+      - name: Integration tests against real backing services
         run: go test -count=1 ./...
         env:
           QUOTACORE_REQUIRE_INTEGRATION: '1'
           QUOTACORE_DATABASE_URL: 'postgresql://quotacore:quotacore_dev_only@127.0.0.1:15432/quotacore?sslmode=disable'
+          QUOTACORE_REDIS_URL: 'redis://127.0.0.1:16379/0'
       - name: Report
         if: always()
         run: |

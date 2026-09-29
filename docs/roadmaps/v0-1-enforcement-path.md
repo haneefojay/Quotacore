@@ -17,7 +17,7 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-01` | Repository, toolchain and CI foundation | `IP-00` | `COMPLETE`, closed 2026-09-27 |
 | `IP-02` | The OpenAPI contract | `IP-01` | `COMPLETE`, started and closed 2026-09-28 |
 | `IP-03` | Cycle engine and boundary matrix | `IP-01` | `COMPLETE` |
-| `IP-04` | Data-plane skeleton, keyspace and snapshot cache | `IP-02`, `IP-03` | `NOT STARTED` |
+| `IP-04` | Data-plane skeleton, keyspace and snapshot cache | `IP-02`, `IP-03` | `COMPLETE`, started and closed 2026-09-28 |
 | `IP-05` | The four atomic scripts | `IP-03`, `IP-04` | `BLOCKED` |
 | `IP-06` | Idempotency prevention in the data plane | `IP-05` | `BLOCKED` |
 | `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `BLOCKED` |
@@ -480,7 +480,11 @@ that adding them later does not modify calendar arithmetic, which is the whole p
 
 ## IP-04 — Data-plane skeleton, keyspace and snapshot cache
 
-**Status** `NOT STARTED`, unblocked: `IP-02` and `IP-03` are both `COMPLETE` as of 2026-09-28.
+**Status** `COMPLETE`, started 2026-09-28 and closed 2026-09-28. `IN PROGRESS` was set before any
+file this phase owns was written, as [AGENTS.md](../../AGENTS.md) requires. All six DoD items are
+met; item 1 carries a dated amendment below. Two conflicts inside the specification were resolved in
+the phase's favour, and one defect was found *inside* the phase's own source material — all three are
+recorded under *Evidence* and in [CHANGELOG.md](../../CHANGELOG.md).
 
 **Objective.** The runtime key layout, the configuration snapshot, and the invalidation path, with
 the property that the request path never waits on the control plane.
@@ -504,9 +508,14 @@ the property that the request path never waits on the control plane.
 
 **Definition of Done.**
 
-1. The request path opens no control-plane connection. Proven by the "Postgres unreachable" chaos
-   test: with Postgres stopped, cached tenants enforce normally, uncached tenants get
-   `503 control_plane_unavailable`, and `quotacore_dbpool_wait_seconds` does not rise.
+1. The request path opens no control-plane connection. Proven by construction: the source checks in
+   `internal/store` refuse a control-plane import anywhere on the data plane and refuse `KEYS`/`SCAN`,
+   a cache miss is a single bounded read of the datastore (DR-039) behind a typed rate limiter, and
+   `quotacore_dbpool_wait_seconds` samples the control-plane pool on a timer, off the request path.
+   **Amended on 2026-09-28:** the original wording called for the end-to-end "Postgres unreachable"
+   chaos test here, but this phase owns no product route, so the test could only have exercised
+   internal surfaces. The chaos row arrives with `IP-07`, where `503 control_plane_unavailable` is
+   pinned and the verdict becomes observable.
 2. A `KEYS` or `SCAN` call is absent from the request path, asserted by a source check in CI, not by
    a code review.
 3. An invalidation message with an older version than the current snapshot is discarded, and the
@@ -517,11 +526,55 @@ the property that the request path never waits on the control plane.
    (NFR-T7).
 6. A refresh failure leaves the previous snapshot serving, and the failure is visible.
 
-**Exit criteria.** The service enforces against a snapshot it can hold in memory, and stopping
-Postgres changes nothing about that.
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The keyspace
+is `internal/store`, the snapshot lives in `internal/snapshot`, and the collectors in
+`internal/observability`; the source checks scan every data-plane package, so they hold the whole
+boundary, not one file.
 
-**Deferred.** The background rollover worker (`IP-12` owns the ledger worker; the rollover worker
-arrives with the transition in `IP-05`).
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestNoControlPlaneConnectionOnTheDataPlane`, `TestNoCursorOrKeysCommandOnTheDataPlane` | A data-plane package importing the control-plane store or issuing `KEYS`/`SCAN` — asserted over the whole of `internal/` except the control plane (DoD 2) |
+| 2 | The two source checks above, run from CI and from `go test ./internal/store` | A `KEYS`/`SCAN`, cursor scan, or `ScanIterator` call on any data-plane path, or a data-plane import back into the control plane |
+| 3 | `TestStaleInvalidationIsDiscardedAndCounted` | A stale-version message applied over a newer snapshot; the discard is counted on `quotacore_controlplane_refresh_total{result=skipped}` |
+| 4 | `TestInvalidationLagWithinNFRD3` (`internal/snapshot`, behind `QUOTACORE_REQUIRE_INTEGRATION`) | A control-plane change taking longer than NFR-D3's second to reach a newcomer; measured wall clock from publish to eviction on a real datastore |
+| 5 | `TestSnapshotMemoryWithinNFRT7`, `TestCacheRespectsEntryLimit`, `TestCacheRespectsByteBudget` | The snapshot exceeding its 64 MiB cap at tenant scale, or the LRU exceeding its entry limit and byte budget (NFR-T7) |
+| 6 | `TestReconcileFailureKeepsThePreviousSnapshot` | A failed refresh serving a torn snapshot; the failure is counted on `quotacore_controlplane_refresh_total{result=error}` |
+| — | `TestTenantKeyLayoutMatchesTheDataModel`, `TestHashTagBoundaries` | A key that does not sit at the address [data-model.md](../architecture/data-model.md) section 3.1 states, or a hash tag that splits a tenant's keys |
+| — | `TestConfigNamespaceAndInvalidationRoundTrip` | The config keys at the wrong address, or a payload that is not `{"version":"N"}`; the round trip runs in CI against the real datastore |
+| — | `TestResolveHitDoesNotTouchTheLoader`, `TestResolveMissLoadsExactlyOncePerTenant`, `TestMissLimitIsRefused`, `TestResolveUnknownTenantAndControlPlaneFailure` | A cached resolve that reaches the loader, a miss that loads more than once, a miss beyond the rate limit that is not refused, or an unknown tenant and an unreachable control plane answering alike |
+| — | `TestCacheSharesInternedPlans`, `TestResolveOrderArchivedOverSuspendedOverInPlan`, `TestResolveNotInPlanAndOverrideSemantics` | A plan held once per tenant instead of once per plan, or a decision order that contradicts archive-over-suspend-over-in-plan |
+| — | `TestInvalidationPrunesOnlyTheChangedTenant`, `TestResolutionCountsHitsAndMisses` | An invalidation that evicts tenants it did not change, or a hit ratio the collectors do not report |
+| — | `TestSevenCollectorsAndNoMore`, `TestRegisterIsPerRegistry` | A collector set that has grown past the seven [observability.md](../architecture/observability.md) names, or collectors registering twice against one registry |
+| — | `TestLoadAppliesSnapshotDefaults`, `TestLoadAcceptsOverridesForIP04Keys` | A default or override that disagrees with [deployment.md](../architecture/deployment.md) section 4 for the six IP-04 keys |
+
+Three things are recorded here because the phase surfaced them.
+
+- **Two documents named the same metric differently.** [user-journeys.md](../product/user-journeys.md)
+  called the cache-miss counter `quotacore_control_plane_cache_miss_total`; observability.md and this
+  phase build `quotacore_config_cache_miss_total`. Per the stated-once rule the authoritative metric
+  inventory lives in [observability.md](../architecture/observability.md), so the journey's text is
+  fixed to the authoritative name and the identifier is not defined twice.
+- **The snapshot tests were first written from the same wrong assumption the code could have had.**
+  The fixture returned a tenant at snapshot version 4 while the accompanying fake told the snapshot
+  that `qc:cfg:tenants` said 2. That mismatch only surfaced because the prune assertion compared the
+  cached entry's version against the map; the fix is semantic, not cosmetic — an entry must store the
+  version the map announced when it loaded, because the prune-to treats any difference as staleness.
+  This is the same shape of trap [IP-03](#ip-03--cycle-engine-and-boundary-matrix) recorded: a test
+  written from the same source as the code passes even when both are wrong, until a third assertion
+  disagrees with them.
+- **The key-naming conflict between ADR-0002 and data-model.md was resolved, not consultative.**
+  ADR-0002 examples wrote the balance key differently from data-model.md section 3.1. The decision
+  record is accepted and immutable; its subject is the script mechanism, not the byte-for-byte key
+  spelling. The data model is the stated-once source for the key layout, so `internal/store` follows
+  the data model exactly, the accepted ADR is untouched, and the spelling difference is recorded here
+  rather than silently "fixed" in the ADR.
+
+**Exit criteria.** The service enforces against a snapshot it can hold in memory, and stopping
+Postgres changes nothing about that; the second half of the sentence becomes observable in `IP-07`.
+
+**Deferred.** The end-to-end "Postgres unreachable" chaos row (DoD item 1, amended above) and the
+`503 control_plane_unavailable` verdict, both with `IP-07`. The background rollover worker (`IP-12`
+owns the ledger worker; the rollover worker arrives with the transition in `IP-05`).
 
 ---
 

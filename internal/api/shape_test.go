@@ -37,6 +37,17 @@ import (
 // the engine's vocabulary is allowed inside `internal/cycle` and nowhere else —
 // while balance, idempotency and script symbols remain forbidden everywhere,
 // including inside the engine.
+//
+// `internal/store`, `internal/snapshot` and `internal/observability` are here
+// because IP-04 owns them. `internal/store` is the keyspace (the key layout that
+// data-model.md section 3.1 fixes) and its connection pools, nothing that
+// decides a request. `internal/snapshot` is the bounded projection of
+// configuration the data plane resolves against (DR-039), which decides nothing
+// about a balance. `internal/observability` is the seven metric collectors of
+// observability.md section 1.4, which is bookkeeping, not behaviour, and which
+// IP-13 mounts a route for. None of the three may mention a balancing symbol,
+// and the source checks in `internal/store` extend the same property to the
+// datastore cursor and control-plane import rules.
 func TestNoProductBehaviour(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -45,12 +56,15 @@ func TestNoProductBehaviour(t *testing.T) {
 	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
 
 	wantPackages := map[string]bool{
-		"api":            true,
-		"cmd/quotacore":  true,
-		"internal/api":   true,
-		"internal/cycle": true,
-		"internal/db":    true,
-		"tools/gendocs":  true,
+		"api":                    true,
+		"cmd/quotacore":          true,
+		"internal/api":           true,
+		"internal/cycle":         true,
+		"internal/db":            true,
+		"internal/observability": true,
+		"internal/snapshot":      true,
+		"internal/store":         true,
+		"tools/gendocs":          true,
 	}
 	gotPackages := map[string]bool{}
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {

@@ -10,7 +10,7 @@
 
 | Field | Value |
 | --- | --- |
-| Stage | Specification complete; `IP-01`, `IP-02` and `IP-03` closed |
+| Stage | Specification complete; `IP-01`, `IP-02`, `IP-03` and `IP-04` closed |
 | Version target | v0.1.0 (MVP) |
 | Canonical name | Quotacore. "Threshold" is a deprecated alias and must not appear in code, docs or marketing |
 | Licence | Apache-2.0 — [LICENSE](LICENSE), decided in [ADR-0014](docs/decisions/0014-apache-2-0-license.md) |
@@ -30,9 +30,13 @@ the repository, the toolchain and the pipeline, contains no product behaviour, a
 the contract the code is written against — 39 operations, 67 schemas, 34 error codes, served at
 `/openapi.json` with a generated reference at `/docs` — and closed on 2026-09-28.
 [`IP-03`](docs/roadmaps/v0-1-enforcement-path.md#ip-03--cycle-engine-and-boundary-matrix), the cycle
-engine and its boundary matrix, started and closed on 2026-09-28, and the data plane (`IP-04`, the
-keyspace and the snapshot cache) comes after that. A
-market assumption is carried as a dated, owner-accepted release risk
+engine and its boundary matrix, started and closed on 2026-09-28.
+[`IP-04`](docs/roadmaps/v0-1-enforcement-path.md#ip-04--data-plane-skeleton-keyspace-and-snapshot-cache),
+the data-plane skeleton, the keyspace and the snapshot cache, started and closed on 2026-09-28 with
+all six Definition-of-Done items met; it owns `internal/store`, `internal/snapshot` and
+`internal/observability`, and the integration pair that proves NFR-D3 against the real datastore.
+The four atomic scripts (`IP-05`) come next. A market assumption is carried as a dated,
+owner-accepted release risk
 ([A-01](docs/product/assumptions-and-open-questions.md#accepted-risks)) rather than a code-start
 blocker, because no amount of further specification work would settle it.
 
@@ -133,11 +137,23 @@ The first four tasks, in order, each one a phase in
    tests. It contains no product behaviour either, and `TestNoProductBehaviour` fails if that ever
    stops being true. The steps and the evidence are in
    [the phase section](docs/roadmaps/v0-1-enforcement-path.md#ip-02--the-openapi-contract).
-4. `IP-03`, `COMPLETE` (closed 2026-09-28): the cycle engine and its boundary
+4. ~~`IP-03`, `COMPLETE` (closed 2026-09-28): the cycle engine and its boundary
    test table — the component most likely to contain a silent permanent defect, which verification
    proved it did: rows 4–7 of the table were wrong and are corrected —
    [cycle-engine.md](docs/architecture/cycle-engine.md). The atomic script and T-01, T-02 and T-09
-   follow it; if those three pass, the central argument of the product holds.
+   follow it; if those three pass, the central argument of the product holds.~~
+5. ~~`IP-04`, `COMPLETE` (closed 2026-09-28): the data-plane skeleton, the keyspace and the snapshot
+   cache — `internal/store` for every key [data-model.md](docs/architecture/data-model.md) section 3.1
+   names, `internal/snapshot` for the bounded cache that enforces against a snapshot, and
+   `internal/observability` for the seven collectors. NFR-D3 (a control-plane change visible within
+   a second) is proven in CI against a real datastore, NFR-T7 (the snapshot within its memory cap) is
+   proven by a runtime measurement, and the two source checks pin the data plane off the control
+   plane and off `KEYS`/`SCAN`. The phase contains no product behaviour and no routes; the chaos
+   verdicts that make it observable arrive with `IP-07`.~~
+6. `IP-05`, `NOT STARTED`: the four atomic scripts (`balance`, `check`, `consume`, `refund`) that
+   make a decision and a mutation one indivisible step, embedding the IP-03 cycle transition inside
+   the keyspace `IP-04` defined. T-01, T-02 and T-09 sit here, and with them the central argument of
+   the product.
 
 Run the specification's own consistency checks at any time. One command verifies every link and
 anchor, every identifier reference, that nothing is defined twice, that the inventory in

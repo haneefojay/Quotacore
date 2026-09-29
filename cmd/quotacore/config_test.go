@@ -39,6 +39,44 @@ func TestLoadAppliesDocumentedDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadAppliesSnapshotDefaults(t *testing.T) {
+	c, err := Load(env(baseEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.ConfigCacheEntries != 50000 || c.ConfigCacheMB != 64 {
+		t.Errorf("config cache defaults = %d entries / %d MB, want 50000 / 64", c.ConfigCacheEntries, c.ConfigCacheMB)
+	}
+	if c.ConfigRefreshInterval != 30*time.Second || c.ConfigRefreshMissRate != 20 {
+		t.Errorf("refresh defaults = %s at %.0f/s, want 30s at 20/s", c.ConfigRefreshInterval, c.ConfigRefreshMissRate)
+	}
+	if c.DataScriptTimeout != 250*time.Millisecond {
+		t.Errorf("DataScriptTimeout = %s, want 250ms", c.DataScriptTimeout)
+	}
+	if c.ControlPlaneTimeout != 3*time.Second {
+		t.Errorf("ControlPlaneTimeout = %s, want 3s", c.ControlPlaneTimeout)
+	}
+}
+
+func TestLoadAcceptsOverridesForIP04Keys(t *testing.T) {
+	e := baseEnv()
+	e["QUOTACORE_CONFIG_CACHE_ENTRIES"] = "1234"
+	e["QUOTACORE_CONFIG_CACHE_MB"] = "8"
+	e["QUOTACORE_CONFIG_REFRESH_INTERVAL"] = "5s"
+	e["QUOTACORE_CONFIG_REFRESH_MISS_RATE_LIMIT"] = "2.5"
+	e["QUOTACORE_DATASCRIPT_TIMEOUT"] = "100ms"
+	e["QUOTACORE_CONTROLPLANE_TIMEOUT"] = "7s"
+	c, err := Load(env(e))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.ConfigCacheEntries != 1234 || c.ConfigCacheMB != 8 ||
+		c.ConfigRefreshInterval != 5*time.Second || c.ConfigRefreshMissRate != 2.5 ||
+		c.DataScriptTimeout != 100*time.Millisecond || c.ControlPlaneTimeout != 7*time.Second {
+		t.Errorf("override values not carried through: %+v", c)
+	}
+}
+
 func TestLoadRefusesAnUnacknowledgedBootstrapKey(t *testing.T) {
 	e := baseEnv()
 	e["QUOTACORE_BOOTSTRAP_ADMIN_KEY"] = "qc_admin_abc.def"
@@ -100,9 +138,15 @@ func TestLoadRequiresBothConnectionStrings(t *testing.T) {
 
 func TestLoadRejectsUnreadableValues(t *testing.T) {
 	cases := map[string]string{
-		"QUOTACORE_SHUTDOWN_GRACE":  "thirty seconds",
-		"QUOTACORE_IDEMPOTENCY_TTL": "a day",
-		"QUOTACORE_MIGRATE":         "sometimes",
+		"QUOTACORE_SHUTDOWN_GRACE":                 "thirty seconds",
+		"QUOTACORE_IDEMPOTENCY_TTL":                "a day",
+		"QUOTACORE_MIGRATE":                        "sometimes",
+		"QUOTACORE_CONFIG_CACHE_ENTRIES":           "lots",
+		"QUOTACORE_CONFIG_CACHE_MB":                "0",
+		"QUOTACORE_CONFIG_REFRESH_INTERVAL":        "every minute",
+		"QUOTACORE_CONFIG_REFRESH_MISS_RATE_LIMIT": "fast",
+		"QUOTACORE_DATASCRIPT_TIMEOUT":             "soon",
+		"QUOTACORE_CONTROLPLANE_TIMEOUT":           "now",
 	}
 	for key, value := range cases {
 		e := baseEnv()

@@ -10,34 +10,88 @@ import (
 const IdempotencyWindow = 24 * time.Hour
 
 type Config struct {
-	ListenAddr          string
-	DatabaseURL         string
-	RedisURL            string
-	LogLevel            string
-	LogFormat           string
-	ShutdownGrace       time.Duration
-	IdempotencyTTL      time.Duration
-	Migrate             bool
-	BootstrapAdminKey   string
-	BootstrapKeyIsAcked bool
+	ListenAddr            string
+	DatabaseURL           string
+	RedisURL              string
+	ConfigCacheEntries    int
+	ConfigCacheMB         int
+	ConfigRefreshInterval time.Duration
+	ConfigRefreshMissRate float64
+	DataScriptTimeout     time.Duration
+	ControlPlaneTimeout   time.Duration
+	LogLevel              string
+	LogFormat             string
+	ShutdownGrace         time.Duration
+	IdempotencyTTL        time.Duration
+	Migrate               bool
+	BootstrapAdminKey     string
+	BootstrapKeyIsAcked   bool
 }
 
 type Getenv func(string) string
 
 func Load(getenv Getenv) (Config, error) {
 	c := Config{
-		ListenAddr:  valueOr(getenv, "QUOTACORE_LISTEN_ADDR", ":8080"),
-		DatabaseURL: getenv("QUOTACORE_DATABASE_URL"),
-		RedisURL:    getenv("QUOTACORE_REDIS_URL"),
-		LogLevel:    valueOr(getenv, "QUOTACORE_LOG_LEVEL", "info"),
-		LogFormat:   valueOr(getenv, "QUOTACORE_LOG_FORMAT", "json"),
-		Migrate:     true,
+		ListenAddr:            valueOr(getenv, "QUOTACORE_LISTEN_ADDR", ":8080"),
+		DatabaseURL:           getenv("QUOTACORE_DATABASE_URL"),
+		RedisURL:              getenv("QUOTACORE_REDIS_URL"),
+		ConfigCacheEntries:    50000,
+		ConfigCacheMB:         64,
+		ConfigRefreshInterval: 30 * time.Second,
+		ConfigRefreshMissRate: 20,
+		DataScriptTimeout:     250 * time.Millisecond,
+		ControlPlaneTimeout:   3 * time.Second,
+		LogLevel:              valueOr(getenv, "QUOTACORE_LOG_LEVEL", "info"),
+		LogFormat:             valueOr(getenv, "QUOTACORE_LOG_FORMAT", "json"),
+		Migrate:               true,
 	}
 	if c.DatabaseURL == "" {
 		return c, fmt.Errorf("QUOTACORE_DATABASE_URL is required and is not set")
 	}
 	if c.RedisURL == "" {
 		return c, fmt.Errorf("QUOTACORE_REDIS_URL is required and is not set")
+	}
+	if raw := getenv("QUOTACORE_CONFIG_CACHE_ENTRIES"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			return c, fmt.Errorf("QUOTACORE_CONFIG_CACHE_ENTRIES is %q, which is not a positive integer", raw)
+		}
+		c.ConfigCacheEntries = n
+	}
+	if raw := getenv("QUOTACORE_CONFIG_CACHE_MB"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			return c, fmt.Errorf("QUOTACORE_CONFIG_CACHE_MB is %q, which is not a positive integer", raw)
+		}
+		c.ConfigCacheMB = n
+	}
+	if raw := getenv("QUOTACORE_CONFIG_REFRESH_INTERVAL"); raw != "" {
+		d, err := parseDuration(raw, "QUOTACORE_CONFIG_REFRESH_INTERVAL")
+		if err != nil {
+			return c, err
+		}
+		c.ConfigRefreshInterval = d
+	}
+	if raw := getenv("QUOTACORE_CONFIG_REFRESH_MISS_RATE_LIMIT"); raw != "" {
+		r, err := strconv.ParseFloat(raw, 64)
+		if err != nil || r < 0 {
+			return c, fmt.Errorf("QUOTACORE_CONFIG_REFRESH_MISS_RATE_LIMIT is %q, which is not a non-negative rate per second", raw)
+		}
+		c.ConfigRefreshMissRate = r
+	}
+	if raw := getenv("QUOTACORE_DATASCRIPT_TIMEOUT"); raw != "" {
+		d, err := parseDuration(raw, "QUOTACORE_DATASCRIPT_TIMEOUT")
+		if err != nil {
+			return c, err
+		}
+		c.DataScriptTimeout = d
+	}
+	if raw := getenv("QUOTACORE_CONTROLPLANE_TIMEOUT"); raw != "" {
+		d, err := parseDuration(raw, "QUOTACORE_CONTROLPLANE_TIMEOUT")
+		if err != nil {
+			return c, err
+		}
+		c.ControlPlaneTimeout = d
 	}
 	if raw := getenv("QUOTACORE_SHUTDOWN_GRACE"); raw != "" {
 		d, err := parseDuration(raw, "QUOTACORE_SHUTDOWN_GRACE")

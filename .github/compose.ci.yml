@@ -2,3 +2,11 @@ services:
   postgres:
     ports:
       - "127.0.0.1:15432:5432"
+
+  # IP-04's integration tests talk to the real datastore, so CI publishes it to
+  # the host on a loopback port the same way it publishes Postgres. The published
+  # port exists for the test runner only; the reference deployment deliberately
+  # publishes neither (docker-compose.yml).
+  valkey:
+    ports:
+      - "127.0.0.1:16379:6379"

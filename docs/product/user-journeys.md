@@ -218,7 +218,7 @@ has a one-line answer.
    event (FS-05).
 
 **Failure mode to expect.** Partial rather than total outage: a subset of tenants affected
-because they were not in the snapshot cache. `quotacore_control_plane_cache_miss_total` rises
+because they were not in the snapshot cache. `quotacore_config_cache_miss_total` rises
 first, before any `503`. That is the leading indicator, and it is documented as one.
 
 **What we would measure.** Detection-to-mitigation time, and whether the customer's recovery
