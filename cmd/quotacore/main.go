@@ -17,6 +17,9 @@ import (
 
 	"github.com/quotacore/quotacore/internal/api"
 	"github.com/quotacore/quotacore/internal/db"
+	"github.com/quotacore/quotacore/internal/observability"
+	"github.com/quotacore/quotacore/internal/snapshot"
+	"github.com/quotacore/quotacore/internal/store"
 )
 
 const (
@@ -26,6 +29,16 @@ const (
 	termDraining    = "not draining"
 	termTenantsSeen = "at least one tenant is known"
 )
+
+// snapshotClient adapts *store.Store to snapshot.Client. The store returns its
+// concrete subscription type; the adapter is the one place the two closed
+// worlds meet, so snapshot keeps a test-double-facing interface and store keeps
+// a concrete method, and neither imports the other.
+type snapshotClient struct{ *store.Store }
+
+func (c snapshotClient) SubscribeInvalidations(ctx context.Context) (snapshot.InvalidationSource, error) {
+	return c.Store.SubscribeInvalidations(ctx)
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -62,6 +75,43 @@ func run() error {
 		return err
 	}
 	state.Set(termMigrations, current)
+
+	data, err := store.Open(store.Options{URL: cfg.RedisURL, DataScriptTimeout: cfg.DataScriptTimeout})
+	if err != nil {
+		return err
+	}
+	defer data.Close()
+
+	// The datastore is the fail-closed half of availability (NFR-A3): if it does
+	// not answer within the control-plane timeout at startup, the process still
+	// starts, /readyz reports the term unsatisfied, and every enforcement that
+	// reaches the pool fails closed with 503 rather than the service pretending
+	// it can enforce.
+	pingCtx, cancelPing := context.WithTimeout(ctx, cfg.ControlPlaneTimeout)
+	if err := data.Ping(pingCtx); err != nil {
+		log.Warn("data store did not answer at startup; readiness will report it", "error", err)
+	} else {
+		state.Set(termDataStore, true)
+	}
+	cancelPing()
+
+	snap := snapshot.New(snapshot.Options{
+		LimitEntries:        cfg.ConfigCacheEntries,
+		ByteCap:             int64(cfg.ConfigCacheMB) << 20,
+		MissRate:            cfg.ConfigRefreshMissRate,
+		RefreshInterval:     cfg.ConfigRefreshInterval,
+		ControlPlaneTimeout: cfg.ControlPlaneTimeout,
+		Client:              snapshotClient{data},
+	})
+	metrics := observability.New(observability.Options{HitRatio: snap.HitRatio})
+	snap.WithMetrics(metrics)
+	snap.Start(ctx)
+	defer snap.Close()
+
+	// The pool wait is the mechanism by which a control-plane problem could
+	// reach the data plane, so it is watched from the first second
+	// (observability.md section 1.4).
+	db.StartPoolObserver(ctx, dbConn, metrics, 10*time.Second)
 
 	handler := api.NewRouter(api.RouterOptions{Ready: state.ReadyFuncLogging(func(msg string, terms []string) {
 		if msg == "ready" {

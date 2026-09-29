@@ -74,7 +74,13 @@ function that every cycle boundary in the product rests on, with the Go time-zon
 in the binary and the 20-row boundary table, the daylight-saving pair, a property test and the
 index-monotonicity tests as its proof. Verification caught and fixed two defects, both recorded in
 the phase section: rows 4–7 of the boundary table were wrong, and the committed `go.mod`/`go.sum`
-were never tidy.
+were never tidy. [`IP-04`](docs/roadmaps/v0-1-enforcement-path.md#ip-04--data-plane-skeleton-keyspace-and-snapshot-cache),
+the data-plane skeleton, the keyspace and the snapshot cache, started and closed on 2026-09-28: the
+key layout from [data-model.md](docs/architecture/data-model.md) as tested builders, the bounded
+snapshot cache with a token-limited miss path, and the invalidation channel that makes a committed
+control-plane change visible within one second (NFR-D3, proven in CI against a real datastore).
+Still no product behaviour and no route: the data plane is the skeleton, and `IP-07` owns the
+enforcement calls.
 
 Start with [PROJECT.md](PROJECT.md), then follow the reading order it gives you.
 

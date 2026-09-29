@@ -4,9 +4,11 @@ Every document in this repository, what it settles, and who should read it. 111 
 documents — 10 root, 9 product, 12 architecture, 17 decisions, 8 research, 6 roadmaps and this
 index — plus 48 that are not documents: `LICENSE`, the two checkers, one allowlist and the
 documentation generator under `tools/`, `.gitignore`, `.gitattributes`, the two files under
-`.github/`, the module, Compose and Makefile files `IP-01` owns, and the twenty files `IP-02` owns
+`.github/`, the module, Compose and Makefile files `IP-01` owns, the twenty files `IP-02` owns
 under `api/` — the contract, its generator config, the generated types, codecs and validators, the
-JSON and HTML renderers, the committed reference page, and the tests that hold them to the document.
+JSON and HTML renderers, the committed reference page, and the tests that hold them to the document —
+and the fifteen files `IP-04` owns under `internal/` — the keyspace, the snapshot cache, the
+observability package and the pool observer, with their tests.
 Two tools hold the work to its own rules:
 [`tools/check-docs.ps1`](../tools/check-docs.ps1) for the specification and
 [`tools/gendocs`](../tools/gendocs/main.go) for the served contract.
@@ -113,8 +115,8 @@ Evidence, with dates and sources, so a future reader can tell a re-check from a 
 Execution plan, in [roadmaps/](roadmaps/). [ROADMAP.md](../ROADMAP.md) decides what ships in which
 release and [mvp-scope.md](product/mvp-scope.md) decides what a release contains; these decide the
 order of the work and what proves a piece of it finished. [Gate 0](../ROADMAP.md#gate-0--unblock-the-specification)
-is closed: `IP-00` to `IP-03` are `COMPLETE`; `IP-04` is unblocked and `NOT STARTED`; the other 23
-wait on their dependencies.
+is closed: `IP-00` to `IP-04` are `COMPLETE`; the other 23 wait on their dependencies, with `IP-05`
+(the four atomic scripts) the next permitted.
 
 | Document | What it settles | Read it if |
 | --- | --- | --- |
@@ -144,7 +146,7 @@ documents themselves and fails if this table disagrees, so a stale count cannot 
 | Named tests | 15 | [architecture/testing-strategy.md](architecture/testing-strategy.md) |
 | Decisions | 17 | [decisions/](decisions/) |
 | Markdown documents | 63 | repository root |
-| Files in the repository | 119 | repository root, excluding the paths `.gitignore` marks as build output (8 files added by `IP-03`: the cycle engine and its test suite) |
+| Files in the repository | 134 | repository root, excluding the paths `.gitignore` marks as build output (15 files added by `IP-04`: the keyspace, the snapshot cache, the observability package and the pool observer, with their tests) |
 
 ## Identifier namespaces
 

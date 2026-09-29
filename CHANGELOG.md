@@ -83,6 +83,23 @@ exists, because a future implementer needs to know which statements are new.
   daily 18.2 µs/op, weekly 15.1 µs/op, monthly 7.3 µs/op, yearly 4.4 µs/op; `Add` 7.2 ns/op, no
   allocations). `TestNoProductBehaviour` in `internal/api` now also pins the engine's arithmetic
   vocabulary — `currentIndex`, `addMonths`, `addDays`, `addYears` — inside `internal/cycle`.
+- `IP-04`, the data-plane skeleton, the keyspace and the snapshot cache, closed with its evidence
+  recorded in the phase section of
+  [v0-1-enforcement-path.md](docs/roadmaps/v0-1-enforcement-path.md). It owns `internal/store` (key
+  builders for every address [data-model.md](docs/architecture/data-model.md) section 3.1 names —
+  hash-tagged so a tenant's keys share a slot, an expiry rule of window end plus 24 hours, the
+  `qc:cfg` version reads, and the invalidation publish/subscribe with a `{"version":"N"}` payload —
+  plus two source checks that hold the data plane off control-plane imports and off `KEYS`/`SCAN`
+  anywhere in `internal/`), `internal/snapshot` (an LRU with a byte budget and interned plans, a
+  token-bucketed miss path that loads a tenant exactly once per miss, decision order
+  archived-over-suspended-over-in-plan per DR-015, and subscriber and reconcile loops that discard
+  stale-version messages, count the discard, and keep the previous snapshot when a refresh fails),
+  and `internal/observability` (seven collectors, exactly the seven named in observability.md,
+  registered per registry). `internal/db` gains the pool-wait sampler that feeds
+  `quotacore_dbpool_wait_seconds`, and `cmd/quotacore` wires pool, snapshot and metrics to the
+  readiness terms and the six new configuration keys of deployment.md section 4. A datastore round
+  trip and the NFR-D3 evidence run in CI against the real valkey; NFR-T7 is closed by
+  `TestSnapshotMemoryWithinNFRT7`.
 
 ### Changed
 
@@ -255,6 +272,23 @@ exists, because a future implementer needs to know which statements are new.
   Proven in both directions: a one-line description change in `api/openapi.yaml` fails the check
   with a unified diff pointing at the changed comment, and restoring the contract passes it.
   `make ci` is unchanged as a set of steps and now runs green on Windows as well as Linux.
+
+- **`IP-04` is `COMPLETE`, started and closed on 2026-09-28, with all six Definition-of-Done items
+  met.** The phase section of
+  [v0-1-enforcement-path.md](docs/roadmaps/v0-1-enforcement-path.md) carries the evidence table.
+  DoD item 1 carries a dated amendment: the end-to-end chaos row needs a product route to observe,
+  so it moves to `IP-07` (which pins `503 control_plane_unavailable`), while this phase proves the
+  mechanism by construction — source checks hold the data plane off the control plane and off
+  cursor scans, a miss is one bounded read behind a rate limiter, and
+  `quotacore_dbpool_wait_seconds` samples the pool off the request path. Two conflicts inside the
+  specification were resolved in favour of their authoritative documents: the cache-miss counter is
+  named once (`quotacore_config_cache_miss_total`, in observability.md), and the key layout follows
+  data-model.md exactly — ADR-0002's example spellings described the same addresses, and the
+  accepted decision record is untouched because its subject is the script mechanism, not the key
+  bytes. One defect was found in the phase's own test fixtures: the snapshot tests first loaded a
+  tenant at a version their own fake disagreed with — a test-written-from-the-same-source trap that
+  only the prune assertion exposed — and the fixture now stores the version `qc:cfg:tenants`
+  announced at load time, which is what the prune-to semantics require.
 
 ### Fixed
 
