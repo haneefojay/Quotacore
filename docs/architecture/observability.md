@@ -25,8 +25,15 @@ value (NFR-O6).
 | `quotacore_consume_amount_total` | counter | `feature_key` | Units consumed. Feeds the "should this match my own logs" question |
 | `quotacore_rolled_over_total` | counter | `interval` | Cycle transitions applied, by the request path or the worker |
 | `quotacore_rollover_stale_total` | counter | — | Transitions refused because the stored index was ahead. **Non-zero is a clock or data defect** (P1) |
-| `quotacore_balance_key_missing_total` | counter | — | A balance hash was absent and had to be initialised. Rising after a restart is P0 |
+| `quotacore_balance_key_missing_total` | counter | — | A balance hash was absent and a request was failed closed with `503` rather than initialising it (DR-045). Any occurrence is a P0 |
 | `quotacore_ceiling_violation_total` | counter | — | Observed `balance > limit + bonus`. **Always zero. Non-zero is P0** |
+
+> **Amended 2026-09-29 — "had to be initialised" was never true.** This description said a missing
+> hash was initialised, which contradicts [DR-045](../product/domain-rules.md): a missing balance is
+> a `503`, never a full allowance handed to whoever triggered the loss. `IP-05` proved that against a
+> real store, and its scripts answer `state_missing`. The increment is `IP-07`'s, which is where each
+> code becomes reachable over HTTP, and the collector is `IP-13`'s. The metric is not renamed, and
+> the identifier is unchanged.
 
 `outcome` is the label to alert on. `denied` is a business outcome and is expected to scale with
 usage; `rejected` is a failure and should be near zero. Keeping them in one counter with distinct

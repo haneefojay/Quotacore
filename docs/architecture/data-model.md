@@ -379,6 +379,14 @@ Windows are stored as epoch milliseconds and rendered as RFC 3339 with offset in
 (DR-001, and the API conventions). Storing a formatted string with a zone would make the script
 parse a timestamp on every call, which is both slower and a place for a subtle bug.
 
+All six fields are always present, and an entitlement that never resets stores `window_end` as the
+**empty string**, not as a missing field. `HMGET` answers an absent field and an empty one with the
+same value, `false`, so a missing `window_end` is indistinguishable from a `never` one that was
+never written: a hash missing any of the six fields is a fault and is answered `state_missing`, and
+`IP-05` proved that against a real store. The control-plane writer in `IP-09` therefore writes six
+fields or none, and a `never` entitlement is the empty string rather than a sentinel timestamp a
+caller could collide with.
+
 A missing hash is a fault, never an initialisation opportunity. The hash is materialised when the
 tenant is provisioned or its plan assignment changes, and is then maintained by the scripts; nothing
 else creates it (DR-045). This is what makes a lost hash survivable without being exploitable:

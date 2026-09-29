@@ -100,6 +100,41 @@ exists, because a future implementer needs to know which statements are new.
   readiness terms and the six new configuration keys of deployment.md section 4. A datastore round
   trip and the NFR-D3 evidence run in CI against the real valkey; NFR-T7 is closed by
   `TestSnapshotMemoryWithinNFRT7`.
+- `IP-05`, the atomic scripts, closed with its evidence recorded in the phase section of
+  [v0-1-enforcement-path.md](docs/roadmaps/v0-1-enforcement-path.md). It owns `internal/script`:
+  three embedded Lua bodies — `consume`, `refund`, `check` — and the Go runner that addresses them
+  by digest. The bodies are `//go:embed` constants, so the bytes the store executes are the bytes
+  the binary was built from (NFR-S8, ADR-0002); `Load` compares the store's digest with the one Go
+  computed, so a proxy that rewrote a body is a start-up error rather than a silent difference; the
+  runner sends `EVALSHA` and never `EVAL`, reloads all three and retries exactly once on
+  `NOSCRIPT`, and performs no cycle arithmetic at all — `internal/cycle` is the only calendar
+  authority (DR-004, INV-C2). All three answer with eight strings, and the reply is the state the key
+  holds *after* the write, so no second round trip is needed to describe a decision. A test asserts
+  the three shared transition blocks are byte-for-byte identical, so there is no second
+  implementation of rollover to drift (INV-C2), a second asserts the work is not proportional to
+  the tenant with 200 sibling hashes, and a third asserts that no request field is ever assembled
+  into script text.
+  **Proven against a real valkey, not a fake.** 200 concurrent decrements of a balance of 100
+  succeed exactly 100 times and leave the balance at 0, never negative (T-01, DR-017); 50 callers
+  that all discover a closed boundary re-grant it once between them rather than 50 times (DR-045);
+  a target behind the store is answered `stale` and rolls nothing (T-05); a denial changes no
+  balance, no cycle state and no expiry (T-08); the ceiling holds and a refund that would break it
+  is refused whole rather than clamped (T-04, DR-020); a missing or unusable hash is answered
+  `state_missing` and never initialised from request arguments (DR-045); `PTTL` is window end plus
+  24 hours for a finite window and `-1` for a `never` one (INV-X6); and a command sent over a raw
+  socket is applied whole or discarded whole across ten alternating attempts, with the hash never
+  half-written (T-09). Three defects were found by those tests and fixed: an undefined `KEY` global,
+  a reply one unit behind the key, and a stale caller skipping the expiry write.
+- `internal/api/shape_test.go` now permits `internal/script` and pins `EVALSHA`/`EvalSha` to it as
+  script-scoped vocabulary, while the calendar and ledger symbols stay forbidden everywhere and
+  `DeductBalance`, `CheckAndDeduct`, `balanceRemaining` and `idempotencyKey` stay forbidden outright.
+  `TestNoProductBehaviour` still holds: a consume is one `EVALSHA` and no route reaches it until
+  `IP-07`.
+- `Runner.Client`, so start-up loads the three scripts through the same connection the runner will
+  use, and `cmd/quotacore` loads them once at start-up (ADR-0002's "loaded at process start"). A
+  failed load is a warning rather than a refusal to start, because the runner self-heals on the
+  first `NOSCRIPT` and refusing to start would turn a transient store outage into an outage of the
+  process.
 
 ### Changed
 
@@ -289,6 +324,43 @@ exists, because a future implementer needs to know which statements are new.
   tenant at a version their own fake disagreed with — a test-written-from-the-same-source trap that
   only the prune assertion exposed — and the fixture now stores the version `qc:cfg:tenants`
   announced at load time, which is what the prune-to semantics require.
+
+- **`IP-05` is `COMPLETE`, started and closed on 2026-09-29, with all ten Definition-of-Done items
+  met, three of them amended.** The phase section of
+  [v0-1-enforcement-path.md](docs/roadmaps/v0-1-enforcement-path.md) carries the evidence table.
+  **The arithmetic now exists and is atomic.** Three embedded Lua bodies make the decision and the
+  mutation one indivisible step against a single hash, with the cycle transition shared byte-for-byte
+  across all three so there is no second rollover implementation to drift. 200 concurrent
+  decrements of a balance of 100 succeed exactly 100 times and leave the balance at 0 (T-01);
+  50 callers that all discover a closed boundary re-grant it once (DR-045); a caller behind the
+  store rolls nothing (T-05); a denial changes nothing (T-08); the ceiling holds and an over-ceiling
+  refund is refused whole rather than clamped (T-04, DR-020); a missing hash is `state_missing` and
+  never an initialisation (DR-045); and `PTTL` is window end plus 24 hours, or `-1` for `never`
+  (INV-X6). `T-09` is proven in the half this phase can reach — a command sent over a raw socket is
+  applied whole or discarded whole, never half-written — and `T-10` in the half that does not need a
+  process, a runner that has never seen a key behaving as one that has just started. The
+  process-level forms of both are `IP-07`'s, where there is a process to kill.
+  **Three amendments, each recorded in the phase section with its reason.** DoD item 4 and item 5
+  were narrowed to the store-level halves for the reason above, so the obligation has a named
+  successor rather than a deletion. DoD item 6 said a missing hash is `503 service_unavailable`; no
+  HTTP route exists until `IP-07`, so the scripts answer the condition as the decision
+  `state_missing` and the `503` and the counter increment are `IP-07`'s, with `IP-07` already
+  naming this exact condition in step 2 of the request lifecycle.
+  **Three defects the real store found, and a specification statement that was wrong.** The first
+  version of the scripts referenced `KEY` as a global rather than reading `KEYS[1]`, which is an
+  error only a real server reports; the reply carried the balance read at the top of the script, so
+  every `applied` answer was one unit behind the key; and a caller answered `stale` returned before
+  the expiry write, so a key materialised without an expiry kept none as long as every caller was
+  behind it. Each is fixed and each is now covered by a test, the last by a new item 10. Separately,
+  `observability.md` described `quotacore_balance_key_missing_total` as counting a hash that "had to
+  be initialised", which contradicted DR-045 and was never true of the design: the description now
+  says a request is failed closed with `503` rather than initialised. The metric keeps its name and
+  its P0 severity.
+  **The `never` encoding is now stated.** `data-model.md` section 3.1 records that all six hash
+  fields are always written, that a `never` entitlement stores `window_end` as the empty string
+  rather than a sentinel timestamp, and why: `HMGET` answers an absent field and an empty one
+  identically, so a missing `window_end` cannot be told from a `never` one that was never written.
+  The control-plane writer in `IP-09` therefore writes six fields or none.
 
 ### Fixed
 

@@ -35,7 +35,10 @@ engine and its boundary matrix, started and closed on 2026-09-28.
 the data-plane skeleton, the keyspace and the snapshot cache, started and closed on 2026-09-28 with
 all six Definition-of-Done items met; it owns `internal/store`, `internal/snapshot` and
 `internal/observability`, and the integration pair that proves NFR-D3 against the real datastore.
-The four atomic scripts (`IP-05`) come next. A market assumption is carried as a dated,
+The atomic scripts
+([`IP-05`](docs/roadmaps/v0-1-enforcement-path.md#ip-05--the-atomic-scripts)) were started and
+closed on 2026-09-29; it owns `internal/script` and holds the three embedded Lua bodies. A market
+assumption is carried as a dated,
 owner-accepted release risk
 ([A-01](docs/product/assumptions-and-open-questions.md#accepted-risks)) rather than a code-start
 blocker, because no amount of further specification work would settle it.
@@ -150,10 +153,15 @@ The first four tasks, in order, each one a phase in
    proven by a runtime measurement, and the two source checks pin the data plane off the control
    plane and off `KEYS`/`SCAN`. The phase contains no product behaviour and no routes; the chaos
    verdicts that make it observable arrive with `IP-07`.~~
-6. `IP-05`, `NOT STARTED`: the four atomic scripts (`balance`, `check`, `consume`, `refund`) that
-   make a decision and a mutation one indivisible step, embedding the IP-03 cycle transition inside
-   the keyspace `IP-04` defined. T-01, T-02 and T-09 sit here, and with them the central argument of
-   the product.
+6. `IP-05`, `COMPLETE` (2026-09-29): the atomic scripts (`check`, `consume`, `refund`) that make a
+   decision and a mutation one indivisible step, embedding the IP-03 cycle transition inside the
+   keyspace `IP-04` defined. T-01, T-04, T-05, T-08, T-09 and T-10 are proven against a real
+   valkey: 200 concurrent decrements of 100 succeed exactly 100 times and leave the balance at
+   zero, 50 callers that all discover a closed boundary re-grant it once, and a command sent over a
+   raw socket is applied whole or not at all. The scripts are embedded in the binary, addressed by
+   digest, and reload themselves after a flush. T-02 and T-03 are `IP-06`'s, because the
+   idempotency record is written inside these same scripts; the process-level forms of T-09 and
+   T-10 are `IP-07`'s, because that is where there is a process to kill.
 
 Run the specification's own consistency checks at any time. One command verifies every link and
 anchor, every identifier reference, that nothing is defined twice, that the inventory in
