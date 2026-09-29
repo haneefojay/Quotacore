@@ -29,6 +29,8 @@ import (
 var (
 	blockOpen  = "-- BEGIN transition"
 	blockClose = "-- END transition"
+	idemOpen   = "-- BEGIN idempotency"
+	idemClose  = "-- END idempotency"
 )
 
 // bodies returns the three embedded scripts with their operation, in the order
@@ -66,9 +68,12 @@ func TestTheThreeScriptsShareOneTransitionBlock(t *testing.T) {
 func TestScriptsCallOnlyTheCommandsTheyNeed(t *testing.T) {
 	// A command the scripts need to be atomic and nothing else. HMGET reads the
 	// hash, HSET and HINCRBY write it, EXPIREAT and PERSIST hold the key for the
-	// idempotency window.
+	// idempotency window, and GET and SET are the idempotency record: the lookup
+	// that turns a repeat into a replay or a reuse, and the write that makes a
+	// repeat recognisable at all (DR-027, DR-028).
 	allowed := map[string]bool{
 		"HMGET": true, "HSET": true, "HINCRBY": true, "EXPIREAT": true, "PERSIST": true,
+		"GET": true, "SET": true,
 	}
 	callSite := regexp.MustCompile(`redis\.(call|pcall)\(\s*'([A-Za-z]+)'`)
 	anyCall := regexp.MustCompile(`redis\.(call|pcall)\(`)
@@ -161,7 +166,7 @@ func stripLuaComments(src string) string {
 }
 
 func TestTheScriptsReadTheArgumentsTheRunnerSends(t *testing.T) {
-	// Six on this side and five in the Lua would not fail: the fifth would be
+	// Seven on this side and six in the Lua would not fail: the sixth would be
 	// nil, tonumber(nil) is nil, and the script would answer state_missing for
 	// every request. So the arity is asserted against the scripts themselves.
 	argvUse := regexp.MustCompile(`ARGV\[(\d+)\]`)
@@ -173,27 +178,113 @@ func TestTheScriptsReadTheArgumentsTheRunnerSends(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s.lua indexes ARGV with something that is not a number: %q", b.op, m[1])
 			}
+			// A check has no record to compare a fingerprint against, so reading
+			// ARGV[7] there would mean a check was trying to recognise a replay,
+			// which it cannot have and must not: it changes nothing (DR-026).
+			if b.op == Check && n > 6 {
+				t.Errorf("check.lua reads ARGV[%d]; a check changes nothing and has no fingerprint", n)
+			}
 			if n > highest {
 				highest = n
 			}
 		}
 		for _, m := range keysUse.FindAllStringSubmatch(b.text, -1) {
-			if m[1] != "1" {
-				t.Errorf("%s.lua reads KEYS[%s]; there is one key, and it is the balance hash", b.op, m[1])
+			switch m[1] {
+			case "1":
+			case "2":
+				// The second key is the idempotency record. Only a mutation
+				// reads it: a denial, a refusal and a check all have nothing to
+				// record (ADR-0004), so a check reading it would be a check that
+				// could replay, which is not a thing.
+				if b.op == Check {
+					t.Error("check.lua reads KEYS[2]; a check writes no record and has none to read")
+				}
+			default:
+				t.Errorf("%s.lua reads KEYS[%s]; there are at most two keys: the balance hash and, for a mutation, the idempotency record", b.op, m[1])
 			}
 		}
 	}
 	if highest != argCount {
 		t.Errorf("the scripts read ARGV up to %d and the runner sends %d", highest, argCount)
 	}
-	sent := args(Request{
-		Amount: 1,
-		Limit:  1,
-		Window: cycle.Window{Index: 1, Start: time.Unix(0, 0).UTC()},
-		At:     time.Unix(0, 0).UTC(),
+	for _, b := range bodies() {
+		wantSecond := b.op != Check
+		if got := strings.Contains(b.text, "KEYS[2]"); got != wantSecond {
+			t.Errorf("%s.lua reads a second key: %t, and a %s script should: %t", b.op, got, b.op, wantSecond)
+		}
+	}
+	sent := args(Consume, Request{
+		Amount:         1,
+		Limit:          1,
+		IdempotencyKey: "a-client-key",
+		Window:         cycle.Window{Index: 1, Start: time.Unix(0, 0).UTC()},
+		At:             time.Unix(0, 0).UTC(),
 	})
 	if len(sent) != argCount {
 		t.Errorf("the runner sends %d arguments and the constant says %d", len(sent), argCount)
+	}
+}
+
+func TestTheMutationScriptsShareOneIdempotencyBlock(t *testing.T) {
+	// The record is read back by a fixed pattern and written by a join with the
+	// same separator. Redis Lua has no include, so consume and refund each hold
+	// a copy, and the copies are byte-identical or one of them can write a
+	// record the other cannot read back - which fails closed into "reused" on a
+	// genuine retry, and is exactly the kind of silent divergence INV-C2 exists
+	// to prevent for the rollover. A check has no copy, and having one would
+	// give a check something to replay when it must have nothing (DR-026).
+	var first string
+	for _, b := range bodies() {
+		start := strings.Index(b.text, idemOpen)
+		end := strings.Index(b.text, idemClose)
+		if b.op == Check {
+			if start >= 0 || end >= 0 {
+				t.Error("check.lua has an idempotency block; a check changes nothing and records nothing (DR-026)")
+			}
+			continue
+		}
+		if strings.Count(b.text, idemOpen) != 1 || strings.Count(b.text, idemClose) != 1 {
+			t.Fatalf("%s.lua has %d open and %d close markers for the idempotency block; exactly one of each is required",
+				b.op, strings.Count(b.text, idemOpen), strings.Count(b.text, idemClose))
+		}
+		if start > end {
+			t.Fatalf("%s.lua closes the idempotency block before it opens it", b.op)
+		}
+		block := b.text[start : end+len(idemClose)]
+		if first == "" {
+			first = block
+			continue
+		}
+		if block != first {
+			t.Errorf("%s.lua has an idempotency block that differs from the other mutation script. The lookup and the record "+
+				"are one implementation written out twice, and this is the test that says so (DR-027, DR-028)", b.op)
+		}
+	}
+	if first == "" {
+		t.Error("no script has an idempotency block, so DR-027 and DR-028 are not implemented in the data plane")
+	}
+}
+
+func TestTheMutationScriptsLookUpTheRecordBeforeTheyRoll(t *testing.T) {
+	// The order inside the script is the mechanism. A replay must return the
+	// answer the first attempt recorded, so the lookup has to come before the
+	// transition: if a rollover ran first, a replay would refresh an expiry and
+	// could report a balance the original request never saw. This is asserted
+	// rather than described because the two are one line apart and swapping them
+	// compiles.
+	for _, b := range bodies() {
+		if b.op == Check {
+			continue
+		}
+		lookup := strings.Index(b.text, "redis.call('GET', KEYS[2])")
+		roll := strings.Index(b.text, "local state, why = transition()")
+		if lookup < 0 {
+			t.Errorf("%s.lua never looks up the idempotency record", b.op)
+			continue
+		}
+		if roll >= 0 && lookup > roll {
+			t.Errorf("%s.lua looks up the idempotency record after it may have rolled the cycle; a replay would then move state (DR-027)", b.op)
+		}
 	}
 }
 

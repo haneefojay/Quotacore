@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -87,6 +88,17 @@ func keyFor(t *testing.T, feature string) string {
 	return key
 }
 
+// idemKeyFor is the record key a client key names, built by the same function
+// the runner uses, for the tests that put a script call on the wire by hand.
+func idemKeyFor(t *testing.T, clientKey string) string {
+	t.Helper()
+	key, err := store.IdempotencyKey(testTenant, clientKey)
+	if err != nil {
+		t.Fatalf("IdempotencyKey: %v", err)
+	}
+	return key
+}
+
 // seed writes the balance hash the way the control plane will, and clears
 // anything left by an earlier run of this test.
 func seed(t *testing.T, s *store.Store, key string, want state) {
@@ -150,6 +162,28 @@ func fixedWindow(index int64, start time.Time, length time.Duration) cycle.Windo
 	return cycle.Window{Index: index, Start: start, End: &end}
 }
 
+// idemSeq numbers the idempotency keys this file hands out. A distinct key per
+// call keeps the tests that predate the record measuring what they were written
+// to measure: they are about distinct operations contending over one balance,
+// and a shared key would turn every call after the first into a replay, so the
+// decrement and the rollover would stop happening at all.
+var idemSeq int64
+
+// runNonce is part of every key this file hands out, so a record left in the
+// store by an earlier run of the same test - the records live for 24 hours and a
+// test's names do not change between runs - is never mistaken for a repeat of
+// this run's operation. Without it, a second `go test` against the same store
+// would replay the first run's records, and every charge-once assertion would be
+// measuring the wrong run.
+var runNonce = time.Now().UnixNano()
+
+// idemKey is a client key unique to one call, built from the test's name so a
+// leftover record points at one test and is inside the tenant's slot. It is safe
+// to call from several goroutines at once, which the contention tests do.
+func idemKey(t *testing.T) string {
+	return fmt.Sprintf("%s-idem-%d-%d", featureKey(t), runNonce, atomic.AddInt64(&idemSeq, 1))
+}
+
 // TestT01AtomicDecrementUnderContention is T-01 and Definition of Done item 1:
 // 200 concurrent decrements of a balance of 100 leave it at exactly zero, with
 // exactly 100 approvals. A store that let two requests pass a check that only one
@@ -164,7 +198,6 @@ func TestT01AtomicDecrementUnderContention(t *testing.T) {
 
 	const callers = 200
 	req := Request{TenantID: testTenant, FeatureKey: featureKey(t), Amount: 1, Window: fixedWindow(5, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at}
-
 	// The store's own budget is 250 ms, and this test fires 200 requests at one
 	// key at once, so the queue in front of the store is longer than one budget
 	// even though each request is served in microseconds. The budget here is
@@ -181,7 +214,9 @@ func TestT01AtomicDecrementUnderContention(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			out, err := runner.Consume(contention, req)
+			call := req
+			call.IdempotencyKey = idemKey(t)
+			out, err := runner.Consume(contention, call)
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
@@ -218,7 +253,7 @@ func TestT04TheCeilingHolds(t *testing.T) {
 	feature := featureKey(t)
 	key := keyFor(t, feature)
 	req := func(amount int64) Request {
-		return Request{TenantID: testTenant, FeatureKey: feature, Amount: amount,
+		return Request{TenantID: testTenant, FeatureKey: feature, Amount: amount, IdempotencyKey: idemKey(t),
 			Window: fixedWindow(5, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at}
 	}
 	assertCeiling := func(when string, limit, bonus int64) {
@@ -299,7 +334,7 @@ func TestT08ADenialChangesNothing(t *testing.T) {
 	end := at.Add(23 * time.Hour)
 	seeded := state{Balance: 10, Limit: 100, Index: 5, Start: at.Add(-time.Hour), End: &end}
 	req := func(amount int64) Request {
-		return Request{TenantID: testTenant, FeatureKey: feature, Amount: amount,
+		return Request{TenantID: testTenant, FeatureKey: feature, Amount: amount, IdempotencyKey: idemKey(t),
 			Window: fixedWindow(5, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at}
 	}
 
@@ -392,7 +427,7 @@ func TestT05TheTransitionIsMonotonic(t *testing.T) {
 
 	t.Run("a target behind the store", func(t *testing.T) {
 		before := fields(t, s, key)
-		out, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1,
+		out, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1, IdempotencyKey: idemKey(t),
 			Window: fixedWindow(4, at.Add(-49*time.Hour), 24*time.Hour), Limit: 100, At: at})
 		if err != nil {
 			t.Fatalf("Consume: %v", err)
@@ -420,7 +455,7 @@ func TestT05TheTransitionIsMonotonic(t *testing.T) {
 		// disagreeing while the instants agree is what a corrected anchor looks
 		// like from here (DR-013): the caller's index is ahead, so the hash
 		// follows it, and it follows it once.
-		out, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1,
+		out, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1, IdempotencyKey: idemKey(t),
 			Window: fixedWindow(7, at.Add(-25*time.Hour), 24*time.Hour), Limit: 100, At: at})
 		if err != nil {
 			t.Fatalf("Consume: %v", err)
@@ -459,7 +494,7 @@ func TestTheReplyIsTheStateTheStoreHolds(t *testing.T) {
 	seed(t, s, key, state{Balance: 1, Limit: 100, Index: 5, Start: at.Add(-time.Hour), End: &end})
 
 	t.Run("a deduction reports the balance after it", func(t *testing.T) {
-		out, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1,
+		out, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1, IdempotencyKey: idemKey(t),
 			Window: fixedWindow(5, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at})
 		if err != nil {
 			t.Fatalf("Consume: %v", err)
@@ -476,7 +511,7 @@ func TestTheReplyIsTheStateTheStoreHolds(t *testing.T) {
 	})
 
 	t.Run("a credit reports the balance after it", func(t *testing.T) {
-		out, err := runner.Refund(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 7,
+		out, err := runner.Refund(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 7, IdempotencyKey: idemKey(t),
 			Window: fixedWindow(5, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at})
 		if err != nil {
 			t.Fatalf("Refund: %v", err)
@@ -498,7 +533,7 @@ func TestTheReplyIsTheStateTheStoreHolds(t *testing.T) {
 		// window the key really holds, and a stale caller must not be the reason
 		// a key that was written without one stays without one.
 		_ = s.Client().Persist(ctx, key).Err()
-		out, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1,
+		out, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1, IdempotencyKey: idemKey(t),
 			Window: fixedWindow(9, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at})
 		if err != nil {
 			t.Fatalf("Consume: %v", err)
@@ -531,7 +566,7 @@ func TestT06MissedBoundariesSkippedIsNotMissed(t *testing.T) {
 	if window.Index < 3 {
 		t.Fatalf("the fixture is not idle enough: the engine says index %d", window.Index)
 	}
-	out, err := runner.Consume(context.Background(), Request{TenantID: testTenant, FeatureKey: feature, Amount: 1,
+	out, err := runner.Consume(context.Background(), Request{TenantID: testTenant, FeatureKey: feature, Amount: 1, IdempotencyKey: idemKey(t),
 		Window: window, Limit: 100, At: at})
 	if err != nil {
 		t.Fatalf("Consume: %v", err)
@@ -571,7 +606,9 @@ func TestOnlyOneOfManyConcurrentCallersRollsTheCycle(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			out, err := runner.Consume(ctx, req)
+			call := req
+			call.IdempotencyKey = idemKey(t)
+			out, err := runner.Consume(ctx, call)
 			if err != nil {
 				t.Errorf("Consume: %v", err)
 				return
@@ -616,7 +653,8 @@ func TestT10ARestartReReadsAndGrantsNothing(t *testing.T) {
 	feature := featureKey(t)
 	key := keyFor(t, feature)
 	seed(t, s, key, state{Balance: 40, Limit: 100, Index: 5, Start: at.Add(-time.Hour), End: ends(at.Add(23 * time.Hour))})
-	req := Request{TenantID: testTenant, FeatureKey: feature, Amount: 1, Window: fixedWindow(5, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at}
+	req := Request{TenantID: testTenant, FeatureKey: feature, Amount: 1, IdempotencyKey: idemKey(t),
+		Window: fixedWindow(5, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at}
 
 	if _, err := first.Consume(ctx, req); err != nil {
 		t.Fatalf("Consume: %v", err)
@@ -665,7 +703,7 @@ func TestDefinitionOfDoneItemSixABalanceThatIsNotThereIsNeverCreated(t *testing.
 			if err := s.Client().Del(ctx, key).Err(); err != nil {
 				t.Fatalf("clear: %v", err)
 			}
-			out, err := op(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1,
+			out, err := op(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1, IdempotencyKey: idemKey(t),
 				Window: fixedWindow(5, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at})
 			if !errors.Is(err, ErrStateMissing) {
 				t.Fatalf("%s against no balance = %+v, %v; want the state-missing marker, which is 503 (DR-045)", name, out, err)
@@ -697,7 +735,7 @@ func TestDefinitionOfDoneItemSevenTheKeyOutlivesItsWindow(t *testing.T) {
 		key := keyFor(t, feature)
 		end := at.Add(23 * time.Hour)
 		seed(t, s, key, state{Balance: 10, Limit: 100, Index: 5, Start: at.Add(-time.Hour), End: &end})
-		_, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1,
+		_, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1, IdempotencyKey: idemKey(t),
 			Window: fixedWindow(5, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at})
 		if err != nil {
 			t.Fatalf("Consume: %v", err)
@@ -734,7 +772,7 @@ func TestDefinitionOfDoneItemSevenTheKeyOutlivesItsWindow(t *testing.T) {
 		feature := featureKey(t) + "-never"
 		key := keyFor(t, feature)
 		seed(t, s, key, state{Balance: 10, Limit: 100, Index: 0, Start: at.Add(-time.Hour)})
-		_, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1,
+		_, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1, IdempotencyKey: idemKey(t),
 			Window: cycle.Window{Index: 0, Start: at.Add(-time.Hour)}, Limit: 100, At: at})
 		if err != nil {
 			t.Fatalf("Consume: %v", err)
@@ -764,7 +802,7 @@ func TestDefinitionOfDoneItemNineOneRequestIsOneCommand(t *testing.T) {
 	s.Client().AddHook(counter)
 
 	for i := 0; i < 3; i++ {
-		if _, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1,
+		if _, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1, IdempotencyKey: idemKey(t),
 			Window: fixedWindow(5, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at}); err != nil {
 			t.Fatalf("Consume: %v", err)
 		}
@@ -790,7 +828,7 @@ func TestAFlushedScriptCacheIsRecoveredFromWithoutARestart(t *testing.T) {
 	feature := featureKey(t)
 	key := keyFor(t, feature)
 	seed(t, s, key, state{Balance: 100, Limit: 100, Index: 5, Start: at.Add(-time.Hour), End: ends(at.Add(23 * time.Hour))})
-	req := Request{TenantID: testTenant, FeatureKey: feature, Amount: 1,
+	req := Request{TenantID: testTenant, FeatureKey: feature, Amount: 1, IdempotencyKey: idemKey(t),
 		Window: fixedWindow(5, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at}
 
 	if err := s.Client().ScriptFlush(ctx).Err(); err != nil {
@@ -798,7 +836,7 @@ func TestAFlushedScriptCacheIsRecoveredFromWithoutARestart(t *testing.T) {
 	}
 	// A raw EVALSHA first, so the assertion is about the runner and not about a
 	// script that happens to still be cached.
-	raw, err := s.Client().EvalSha(ctx, consumeBody.digest, []string{key}, args(req)...).Result()
+	raw, err := s.Client().EvalSha(ctx, consumeBody.digest, []string{key, idemKeyFor(t, req.IdempotencyKey)}, args(Consume, req)...).Result()
 	if !isNoScript(err) {
 		t.Fatalf("EvalSha after a flush returned %v, want NOSCRIPT", err)
 	}
@@ -847,12 +885,15 @@ func TestDefinitionOfDoneItemEightNoRequestFieldIsEverScriptText(t *testing.T) {
 	seed(t, s, key, state{Balance: 100, Limit: 100, Index: 5, Start: at.Add(-time.Hour), End: ends(at.Add(23 * time.Hour))})
 	before := fields(t, s, key)
 
-	window := args(Request{Amount: 1, Window: fixedWindow(5, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at})
+	window := args(Consume, Request{Amount: 1, Window: fixedWindow(5, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at})
+	// The record key is a second key the script reads. It is a real, empty one,
+	// so the hostile amount is refused by the amount check before the lookup and
+	// the assertion is about the amount rather than about a missing key.
 	hostile := []any{
 		`1) ; redis.call('SET','qc:pwned','1') --`,
-		window[1], window[2], window[3], window[4], window[5],
+		window[1], window[2], window[3], window[4], window[5], window[6],
 	}
-	raw, err := s.Client().EvalSha(ctx, consumeBody.digest, []string{key}, hostile...).Result()
+	raw, err := s.Client().EvalSha(ctx, consumeBody.digest, []string{key, idemKeyFor(t, idemKey(t))}, hostile...).Result()
 	if err != nil {
 		t.Fatalf("EvalSha: %v", err)
 	}
@@ -875,7 +916,7 @@ func TestDefinitionOfDoneItemEightNoRequestFieldIsEverScriptText(t *testing.T) {
 	}
 	for _, fragment := range fragments {
 		hostileKey := key + "-" + fragment
-		raw, err := s.Client().EvalSha(ctx, consumeBody.digest, []string{hostileKey}, window...).Result()
+		raw, err := s.Client().EvalSha(ctx, consumeBody.digest, []string{hostileKey, idemKeyFor(t, idemKey(t))}, window...).Result()
 		if err != nil {
 			t.Fatalf("EvalSha with a hostile key: %v", err)
 		}
@@ -903,7 +944,7 @@ func TestTheScriptsWorkIsNotProportionalToTheTenant(t *testing.T) {
 	feature := featureKey(t)
 	key := keyFor(t, feature)
 	seed(t, s, key, state{Balance: 100000, Limit: 100000, Index: 5, Start: at.Add(-time.Hour), End: &end})
-	req := Request{TenantID: testTenant, FeatureKey: feature, Amount: 1,
+	req := Request{TenantID: testTenant, FeatureKey: feature, Amount: 1, IdempotencyKey: idemKey(t),
 		Window: fixedWindow(5, at.Add(-time.Hour), 24*time.Hour), Limit: 100000, At: at}
 
 	alone := measureConsume(t, runner, req)
@@ -945,10 +986,15 @@ func seedSiblings(t *testing.T, s *store.Store, prefix string, count int) {
 // timing on a shared machine is a coin toss and a coin toss is not a test.
 func measureConsume(t *testing.T, runner *Runner, req Request) time.Duration {
 	t.Helper()
+	// Each sample is a distinct operation, so the samples measure a consume and
+	// not a replay: a repeat of one key would be served from the record and
+	// would be the one call this test is not about.
 	var samples []time.Duration
 	for i := 0; i < 11; i++ {
+		call := req
+		call.IdempotencyKey = idemKey(t)
 		start := time.Now()
-		if _, err := runner.Consume(context.Background(), req); err != nil {
+		if _, err := runner.Consume(context.Background(), call); err != nil {
 			t.Fatalf("Consume: %v", err)
 		}
 		samples = append(samples, time.Since(start))
@@ -977,18 +1023,26 @@ func TestT09AFailedRequestLeavesNothingBehind(t *testing.T) {
 	// as EVAL does. A test that leaves it out asks the server to read the key
 	// itself as a count, which fails with an integer error that has nothing to
 	// do with the script.
-	full := respCommand("EVALSHA", consumeBody.digest, "1", key,
-		"30", "5", strconv.FormatInt(at.Add(-time.Hour).UnixMilli(), 10),
-		strconv.FormatInt(at.Add(23*time.Hour).UnixMilli(), 10), "100", strconv.FormatInt(at.UnixMilli(), 10))
+	// The command is rebuilt for each attempt, because each attempt is a
+	// distinct operation under its own Idempotency-Key. A shared key would turn
+	// every attempt after the first into a replay, and the balance the test
+	// waits for would never move again.
+	full := func() []byte {
+		clientKey := idemKey(t)
+		return respCommand("EVALSHA", consumeBody.digest, "2", key, idemKeyFor(t, clientKey),
+			"30", "5", strconv.FormatInt(at.Add(-time.Hour).UnixMilli(), 10),
+			strconv.FormatInt(at.Add(23*time.Hour).UnixMilli(), 10), "100", strconv.FormatInt(at.UnixMilli(), 10),
+			Fingerprint(Consume, testTenant, feature, 30))
+	}
 
 	t.Run("a command that arrives in full is applied in full", func(t *testing.T) {
-		dropConnection(t, addr, full, false)
+		dropConnection(t, addr, full(), false)
 		waitFor(t, s, key, 70)
 		assertWholeHash(t, s, key)
 	})
 
 	t.Run("a command that arrives in part is not applied at all", func(t *testing.T) {
-		dropConnection(t, addr, full, true)
+		dropConnection(t, addr, full(), true)
 		// Nothing to wait for: the server had an incomplete command, so there is
 		// no state to catch up with. A short pause makes a failure legible
 		// instead of a race against the next line.
@@ -1008,7 +1062,7 @@ func TestT09AFailedRequestLeavesNothingBehind(t *testing.T) {
 			half := i%2 == 0
 			end := at.Add(23 * time.Hour)
 			seed(t, s, key, state{Balance: 100, Limit: 100, Index: 5, Start: at.Add(-time.Hour), End: &end})
-			dropConnection(t, addr, full, half)
+			dropConnection(t, addr, full(), half)
 			// A whole command is applied and lands at 70; an incomplete one is
 			// discarded and the balance stays at 100. Nothing between the two is
 			// a value this key may ever hold (T-09).

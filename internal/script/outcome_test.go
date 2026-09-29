@@ -64,6 +64,16 @@ func TestDecodeReadsEveryShapeAScriptCanAnswerWith(t *testing.T) {
 			decision: Applied, transition: Current, balance: 9007199254740991, limit: 9007199254740991, index: 5,
 			end: ptr(time.UnixMilli(end).UTC()),
 		},
+		"a replay, carrying the state that was recorded": {
+			reply:    fields("replayed", "current", "70", "100", "0", "5", strconv.FormatInt(end, 10)),
+			decision: Replayed, transition: Current, balance: 70, limit: 100, index: 5,
+			end: ptr(time.UnixMilli(end).UTC()),
+		},
+		"a replay of a call that itself rolled": {
+			reply:    fields("replayed", "rolled", "100", "100", "0", "6", strconv.FormatInt(end, 10)),
+			decision: Replayed, transition: Rolled, balance: 100, limit: 100, index: 6,
+			end: ptr(time.UnixMilli(end).UTC()),
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -88,8 +98,14 @@ func TestDecodeReadsEveryShapeAScriptCanAnswerWith(t *testing.T) {
 			} else if out.End == nil || !out.End.Equal(*tc.end) {
 				t.Errorf("End = %v, want %v", out.End, tc.end)
 			}
-			if out.Allowed() != (tc.decision == Applied) {
-				t.Errorf("Allowed() = %v for decision %q", out.Allowed(), tc.decision)
+			// A replay is allowed: the operation it stands for was applied, and
+			// reporting a successful call as a quota failure is the opposite of
+			// what a retry is for.
+			if wantAllowed := tc.decision == Applied || tc.decision == Replayed; out.Allowed() != wantAllowed {
+				t.Errorf("Allowed() = %v for decision %q, want %v", out.Allowed(), tc.decision, wantAllowed)
+			}
+			if out.Replayed() != (tc.decision == Replayed) {
+				t.Errorf("Replayed() = %v for decision %q", out.Replayed(), tc.decision)
 			}
 			if out.Rolled() != (tc.transition == Rolled) {
 				t.Errorf("Rolled() = %v for transition %q", out.Rolled(), tc.transition)
@@ -111,7 +127,7 @@ func TestDecodeRefusesAnythingItDoesNotUnderstand(t *testing.T) {
 		"a number where a string was promised": []any{
 			"applied", "current", int64(70), "100", "0", "5", "1759200000000", "1761792000000",
 		},
-		"a decision that is not one of the five":    full("granted", "current"),
+		"a decision that is not one of the seven":   full("granted", "current"),
 		"a transition that is not one of the three": full("applied", "rewound"),
 		"a negative balance":                        []any{"applied", "current", "-1", "100", "0", "5", "1759200000000", "1761792000000"},
 		"a balance above 2^53":                      []any{"applied", "current", "9007199254740992", "100", "0", "5", "1759200000000", "1761792000000"},
@@ -120,6 +136,8 @@ func TestDecodeRefusesAnythingItDoesNotUnderstand(t *testing.T) {
 		"an end that is not an instant":             []any{"applied", "current", "70", "100", "0", "5", "1759200000000", "tomorrow"},
 		"a missing state carried with the fault":    []any{"state_missing", "", "0", "0", "0", "0", "", ""},
 		"an invalid argument carried with a state":  []any{"invalid", "", "70", "100", "0", "5", "1759200000000", ""},
+		"a reused key":                              []any{"reused", "", "", "", "", "", "", ""},
+		"a reused key carrying a balance":           []any{"reused", "current", "70", "100", "0", "5", "1759200000000", ""},
 	}
 	for name, reply := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -148,6 +166,24 @@ func TestTheTwoNamedRefusalsAreRecognisable(t *testing.T) {
 	// or in the store's copy of a script, and naming it as one of the two
 	// recognised refusals would send a defect out as a 503 the client retries.
 	if _, err := decode(Check, []any{"unknown", "", "", "", "", "", "", ""}); errors.Is(err, ErrStateMissing) || errors.Is(err, ErrInvalidArgument) {
-		t.Error("a decision that is not one of the five was reported as a recognised refusal")
+		t.Error("a decision that is not one of the seven was reported as a recognised refusal")
+	}
+}
+
+// The third named refusal, and the one the whole mechanism exists for: a key
+// that was already used for a different operation is refused as a 409 whose
+// remedy is a new key, and it is never applied (DR-028).
+func TestAReusedKeyIsItsOwnRefusal(t *testing.T) {
+	if _, err := decode(Consume, []any{"reused", "", "", "", "", "", "", ""}); !errors.Is(err, ErrIdempotencyKeyReuse) {
+		t.Errorf("a reused reply gave %v, and the caller matches it with errors.Is", err)
+	}
+	if _, err := decode(Refund, []any{"reused", "", "", "", "", "", "", ""}); !errors.Is(err, ErrIdempotencyKeyReuse) {
+		t.Errorf("a reused refund gave %v, want the reuse marker", err)
+	}
+	// A missing key is the other half of the pair, and the two are different
+	// codes: one is a client that forgot the header, the other is a client that
+	// reused one.
+	if errors.Is(ErrMissingIdempotencyKey, ErrIdempotencyKeyReuse) {
+		t.Error("the missing-key and reused-key refusals are the same error, and they map to different codes")
 	}
 }

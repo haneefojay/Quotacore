@@ -7,10 +7,14 @@ import (
 	"time"
 )
 
-// Decision is what a script decided about a request. It is a closed set of five,
-// and the strings are the ones the scripts return, so a value that is not in
-// this set means the reply and this code disagree and is refused rather than
-// interpreted.
+// Decision is what a script decided about a request. It is a closed set of
+// seven, and the strings are the ones the scripts return, so a value that is
+// not in this set means the reply and this code disagree and is refused rather
+// than interpreted.
+//
+// Two of the seven say nothing about whether the request fit in the balance:
+// Replayed and Reused are what an idempotency key decides (DR-027, DR-028), and
+// both arrive before the script has looked at the balance at all.
 type Decision string
 
 const (
@@ -34,6 +38,16 @@ const (
 	// Invalid means the script would not accept the arguments it was given, so
 	// it refused before reading or writing anything.
 	Invalid Decision = "invalid"
+	// Replayed means this exact logical operation was already applied under this
+	// Idempotency-Key, and the state reported is the state that was recorded then
+	// rather than the state as it stands now. The script wrote nothing and
+	// evaluated nothing: a repeat is a read (DR-027).
+	Replayed Decision = "replayed"
+	// Reused means this Idempotency-Key was already used for a different
+	// operation - a different feature, amount or operation - and the request is
+	// refused as idempotency_key_reuse. The record that was there is untouched,
+	// so the original outcome is still retrievable (DR-028, INV-I2).
+	Reused Decision = "reused"
 )
 
 // Transition is what the script found when it compared the caller's window with
@@ -80,7 +94,20 @@ type Outcome struct {
 
 // Allowed reports whether the request fits in the balance, which is the question
 // Check exists to answer and a decision rather than a status code.
-func (o Outcome) Allowed() bool { return o.Decision == Applied }
+//
+// A Replayed outcome is allowed, because the operation it stands for was
+// allowed and applied: the customer is being told the truth about a charge that
+// already happened, not being refused. A client that treated a replay as a
+// denial would report a successful call as a quota failure, which is the
+// opposite of what a retry is for.
+func (o Outcome) Allowed() bool { return o.Decision == Applied || o.Decision == Replayed }
+
+// Replayed reports whether this execution applied anything, or returned the
+// answer an earlier execution of the same logical operation recorded (DR-027).
+// It is the field a caller reads instead of comparing balances, because a
+// balance it cannot see the history of is not evidence of anything. IP-07 maps
+// it to the `replayed` body field and the `Idempotent-Replay` header.
+func (o Outcome) Replayed() bool { return o.Decision == Replayed }
 
 // Rolled reports whether this execution crossed a boundary and re-granted the
 // allowance. IP-13 counts it, and a test asserts that it happens on a crossed
@@ -97,6 +124,22 @@ var ErrStateMissing = errors.New("the balance is not there to enforce against")
 // validation_failed.
 var ErrInvalidArgument = errors.New("the request would be refused as invalid")
 
+// ErrMissingIdempotencyKey is a Consume or a Refund with no Idempotency-Key.
+// DR-026 requires the key rather than making it optional, and a server that
+// generated one would generate a fresh key per attempt and protect nothing while
+// appearing to. The caller maps it to 400 missing_idempotency_key.
+var ErrMissingIdempotencyKey = errors.New("this operation requires an Idempotency-Key")
+
+// ErrIdempotencyKeyReuse is an Idempotency-Key that was already used for a
+// different operation, and it is never applied (DR-028). The caller maps it to
+// 409 idempotency_key_reuse, whose documented remedy is a new key rather than a
+// retry of this one.
+//
+// It is an error rather than an Outcome because it carries no state: the record
+// it collided with is untouched (INV-I2), and a caller that received a balance
+// with it might reasonably charge against that balance.
+var ErrIdempotencyKeyReuse = errors.New("this Idempotency-Key was used for a different operation")
+
 // replyFields is the arity of every reply, and it is fixed. A table with a
 // missing or an extra element would decode into the wrong field rather than
 // fail, so both are refused.
@@ -108,10 +151,12 @@ const replyFields = 8
 // representable range is an error, because a plausible wrong number is worse
 // than no number.
 //
-// A state_missing or invalid reply carries no values at all, and requiring that
-// emptiness is deliberate: a script that answered a fault with a zero balance
-// would let a caller that forgot to check the decision report a full
-// exhaustion.
+// A state_missing, invalid or reused reply carries no values at all, and
+// requiring that emptiness is deliberate: a script that answered a fault with a
+// zero balance would let a caller that forgot to check the decision report a
+// full exhaustion, and a reused key that returned the balance of the record it
+// collided with would let a caller charge against a balance this request never
+// touched.
 func decode(op Operation, raw any) (Outcome, error) {
 	table, ok := raw.([]any)
 	if !ok {
@@ -134,7 +179,7 @@ func decode(op Operation, raw any) (Outcome, error) {
 		Transition: Transition(fields[1]),
 	}
 	switch out.Decision {
-	case Applied, Denied, RefusedCeiling:
+	case Applied, Denied, RefusedCeiling, Replayed:
 	case StateMissing:
 		if err := requireEmpty(op, fields); err != nil {
 			return Outcome{}, err
@@ -145,8 +190,13 @@ func decode(op Operation, raw any) (Outcome, error) {
 			return Outcome{}, err
 		}
 		return Outcome{}, fmt.Errorf("the %s script: %w", op, ErrInvalidArgument)
+	case Reused:
+		if err := requireEmpty(op, fields); err != nil {
+			return Outcome{}, err
+		}
+		return Outcome{}, fmt.Errorf("the %s script: %w", op, ErrIdempotencyKeyReuse)
 	default:
-		return Outcome{}, fmt.Errorf("the %s script answered the decision %q, which is not one of the five", op, fields[0])
+		return Outcome{}, fmt.Errorf("the %s script answered the decision %q, which is not one of the seven", op, fields[0])
 	}
 
 	switch out.Transition {

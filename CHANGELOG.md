@@ -135,6 +135,25 @@ exists, because a future implementer needs to know which statements are new.
   failed load is a warning rather than a refusal to start, because the runner self-heals on the
   first `NOSCRIPT` and refusing to start would turn a transient store outage into an outage of the
   process.
+- `IP-06`, idempotency prevention in the data plane. `internal/script/idempotency.go` computes the
+  fingerprint — SHA-256 over the operation, tenant, feature and amount, each length-prefixed with a
+  big-endian `uint64` so a field's contents cannot shift the boundary between fields, hex-encoded
+  and truncated to 32 characters — and pins `IdempotencyWindow = 24 * time.Hour`. The runner sends a
+  second key (the record) and a seventh argument (the fingerprint) for `consume` and `refund` only,
+  and refuses a mutation with no key as `ErrMissingIdempotencyKey` before it reaches the store;
+  `check` is unchanged, because it mutates nothing, so it has nothing to replay and nothing to
+  record (DR-026, NFR-L5). A block, byte-identical in `consume.lua` and `refund.lua`, looks the
+  record up before the transition, replays the seven recorded values on a matching fingerprint
+  without writing, refuses a mismatched fingerprint as `reused`, and records an applied mutation
+  with `SET … EX 86400`. Two new `Decision` values, `replayed` and `reused`, carry the two outcomes;
+  `Allowed()` is true for `replayed`. **Proven against a real valkey:** 50 concurrent deliveries of
+  one key deduct once and replay 49 times, each answering the recorded state rather than the live
+  balance; a key reused for a different amount, feature or operation is refused and the original
+  record still replays (T-03, INV-I2); the record's TTL is the pinned 24 hours and a replay does
+  not extend it (DR-029); and a property test applies any amount at most once across two runner
+  instances (DR-030). The window is now linked across all three places it is pinned —
+  `script.IdempotencyWindow`, the Lua `local DAY = 86400`, and `cmd/quotacore`'s refusal of a
+  different `QUOTACORE_IDEMPOTENCY_TTL` — by a test on each boundary.
 
 ### Changed
 
@@ -361,6 +380,27 @@ exists, because a future implementer needs to know which statements are new.
   rather than a sentinel timestamp, and why: `HMGET` answers an absent field and an empty one
   identically, so a missing `window_end` cannot be told from a `never` one that was never written.
   The control-plane writer in `IP-09` therefore writes six fields or none.
+- **The statements about idempotency that the implementation contradicted were corrected by
+  `IP-06`, across every document that carried them.** `T-02` in
+  [testing-strategy.md](docs/architecture/testing-strategy.md) said all 50 responses to one
+  `Idempotency-Key` are byte-identical; they are not, and must not be, because the first says
+  `applied` and the retries say `replayed` and carry `Idempotent-Replay: true` (DR-027,
+  [api-conventions.md](docs/architecture/api-conventions.md) §6 and §7.1). What is identical is the
+  seven state values behind the decision, and that is now what the test asserts. The same rationale
+  in §7.1 of that document ("the replayed response is byte-identical to the original") was corrected
+  for the same reason. [data-model.md](docs/architecture/data-model.md) §3.3 described the record as
+  a JSON body with an HTTP status and a write of `SET … EX 86400 NX`; it is a tab-separated string of
+  the fingerprint, the transition verdict and the six balance-hash fields, written `SET … EX 86400`
+  with no `NX` and only when a mutation is applied, so a denial is never recorded (ADR-0004, ADR-0002).
+  Removing the `NX` also took it out of the required-command list in
+  [deployment.md](docs/architecture/deployment.md) §6 and out of the record's row in the
+  [Redis/Valkey licensing note](docs/research/licensing-redis-vs-valkey.md), each with a dated note.
+  The same edit removed a sentence in §3.2 that said a hash could be "lost to memory pressure", which
+  the `noeviction` policy makes impossible (DR-048). The
+  [idempotency research note](docs/research/idempotency-and-retries.md) — the note ADR-0004 rests on —
+  carries a dated 2026-09-30 update recording that the replay is state-identical and not
+  byte-identical, and that the record write no longer uses `NX`; its findings are left as the
+  point-in-time records they are.
 
 ### Fixed
 

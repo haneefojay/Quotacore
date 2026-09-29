@@ -262,8 +262,8 @@ requirement that it be correct under retry and under concurrency.
 - *Then* exactly one succeeds with balance `40` and the other receives `429 quota_exceeded` with
   balance `40`
 - *And* the sum of all event deltas in the cycle equals `40` minus the cycle opening allowance
-- *And* the same idempotency key replayed 10 times returns the identical response body and
-  deducts once
+- *And* the same idempotency key replayed 10 times returns the recorded state (with `replayed: true`)
+  and deducts once
 
 ---
 

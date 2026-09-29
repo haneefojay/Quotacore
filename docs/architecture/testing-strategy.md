@@ -61,14 +61,17 @@ Given  balance 100
 When  the same Idempotency-Key is sent 50 times concurrently with amount 30
 Then  exactly one deduction of 30 occurs
 And   the final balance is 70
-And   all 50 responses are byte-identical
+And   all 50 responses carry the same state: balance, limit, bonus, cycle index and both window ends
+And   the one applied response and the 49 replays differ only in `replayed` and `Idempotent-Replay`
 And   exactly one usage_events row exists
-And   each response has Idempotent-Replay: true except the first
+And   each response after the first has Idempotent-Replay: true
 ```
 
-Byte-identical is deliberate. A replayed response that differs in a timestamp or a rounding
-artifact forces clients to diff, and a client that diffs will eventually decide the service is
-inconsistent.
+The state every caller is told must be identical, because a replayed response that differs in a
+timestamp or a rounding artifact forces clients to diff, and a client that diffs will eventually
+decide the service is inconsistent. The responses themselves are not byte-identical, and that is
+deliberate: the first body says `applied` and the rest say `replayed`, so a client can tell a
+first delivery from a replay without comparing bodies (DR-027, api-conventions.md §6 and §7.1).
 
 ### T-03 — Idempotency fingerprint mismatch
 

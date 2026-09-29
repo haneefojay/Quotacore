@@ -72,6 +72,13 @@ func (r *Runner) Client() redis.Scripter { return r.client }
 type Request struct {
 	TenantID   string
 	FeatureKey string
+	// IdempotencyKey is the client's Idempotency-Key header, verbatim. It is
+	// required for Consume and Refund and ignored by Check, because a check
+	// changes nothing and has nothing to replay (DR-026). It is the one field a
+	// caller sends as free text, so it reaches the store only through
+	// store.IdempotencyKey, which refuses a brace or a colon rather than letting
+	// a key split the tenant's hash slot (request-lifecycle.md §6).
+	IdempotencyKey string
 	// Amount is the debit or the credit, never signed: a negative amount is a
 	// sign error on the wrong endpoint, not a refund (DR-023).
 	Amount int64
@@ -109,18 +116,29 @@ func (r *Runner) run(ctx context.Context, b body, req Request) (Outcome, error) 
 	if err := req.validate(b.op); err != nil {
 		return Outcome{}, err
 	}
-	// The key is built by internal/store and nowhere else, so a feature key
-	// carrying a brace or a colon cannot split a tenant across slots by being
-	// concatenated somewhere else (data-model.md §3.1).
+	// The keys are built by internal/store and nowhere else, so a feature key or
+	// an idempotency key carrying a brace or a colon cannot split a tenant
+	// across slots by being concatenated somewhere else (data-model.md §3.1).
 	key, err := store.BalanceKey(req.TenantID, req.FeatureKey)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("the %s script: %w", b.op, err)
+	}
+	keys := []string{key}
+	if b.op != Check {
+		// The record lives in the same tenant's hash slot as the balance, which is
+		// what keeps the script single-slot: the compare and the write have to be
+		// one execution, and a record in another slot could not be (ADR-0002, A-11).
+		idem, err := store.IdempotencyKey(req.TenantID, req.IdempotencyKey)
+		if err != nil {
+			return Outcome{}, fmt.Errorf("the %s script: %w", b.op, err)
+		}
+		keys = append(keys, idem)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
-	out, err := r.eval(ctx, b, key, req)
+	out, err := r.eval(ctx, b, keys, req)
 	if !isNoScript(err) {
 		return out, err
 	}
@@ -131,18 +149,18 @@ func (r *Runner) run(ctx context.Context, b body, req Request) (Outcome, error) 
 	if loadErr := Load(ctx, r.client); loadErr != nil {
 		return Outcome{}, fmt.Errorf("the %s script was not in the store and could not be put back: %w", b.op, loadErr)
 	}
-	return r.eval(ctx, b, key, req)
+	return r.eval(ctx, b, keys, req)
 }
 
 // eval runs one script. There is exactly one command here and no second call
 // for the result: the reply carries the state the decision left behind, because
 // reading it back would be a second round trip that could disagree with the
 // decision it is meant to describe (performance.md §3).
-func (r *Runner) eval(ctx context.Context, b body, key string, req Request) (Outcome, error) {
+func (r *Runner) eval(ctx context.Context, b body, keys []string, req Request) (Outcome, error) {
 	// EVALSHA, addressed by the digest of the embedded bytes. It is never EVAL
 	// with a body attached: a flush costs a reload, whereas a body on the wire
 	// would be a second copy of the rules on every request (NFR-S8, ADR-0002).
-	raw, err := r.client.EvalSha(ctx, b.digest, []string{key}, args(req)...).Result()
+	raw, err := r.client.EvalSha(ctx, b.digest, keys, args(b.op, req)...).Result()
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -163,15 +181,29 @@ func isNoScript(err error) bool {
 // constant rather than len(args(...)) because a slice length is what the
 // implementation happens to return today, and the number the Lua reads is the
 // thing that has to match.
-const argCount = 6
+//
+// Check reads seven like the other two and ignores the seventh, rather than the
+// number being read from the operation. One arity for all three scripts means
+// source_test.go can assert one number against all three bodies, and a script
+// that reads fewer arguments than it is sent is the failure mode that is hard to
+// see rather than hard to write.
+const argCount = 7
 
-// args is ARGV for all three scripts, in the order the Lua reads them. Six
-// values, each one a number or the empty string, none of them assembled from
-// anything a caller sent as text: the key is KEYS[1] and the tenant, the feature
-// and the amount are already numbers by the time they get here. source_test.go
-// asserts the arity against the scripts themselves, because six on this side and
-// five in the Lua would fail open rather than loudly.
-func args(req Request) []any {
+// args is ARGV for all three scripts, in the order the Lua reads them. Seven
+// values, each one a number, a hex fingerprint or the empty string, none of them
+// assembled from anything a caller sent as text: the key is KEYS[1] and the
+// tenant, the feature and the amount are already numbers by the time they get
+// here. source_test.go asserts the arity against the scripts themselves, because
+// seven on this side and six in the Lua would fail open rather than loudly.
+//
+// ARGV[7] is the fingerprint, and it is empty for Check, which has no record to
+// compare against. Computing it for a check would be a SHA-256 on the request
+// path for a value nothing reads (NFR-L5).
+func args(op Operation, req Request) []any {
+	fingerprint := ""
+	if op != Check {
+		fingerprint = Fingerprint(op, req.TenantID, req.FeatureKey, req.Amount)
+	}
 	return []any{
 		strconv.FormatInt(req.Amount, 10),
 		strconv.FormatInt(req.Window.Index, 10),
@@ -179,6 +211,7 @@ func args(req Request) []any {
 		windowEndArg(req.Window),
 		strconv.FormatInt(req.Limit, 10),
 		strconv.FormatInt(req.At.UnixMilli(), 10),
+		fingerprint,
 	}
 }
 
@@ -197,8 +230,17 @@ func windowEndArg(w cycle.Window) string {
 // package is not the only thing that can call them and a second caller must not
 // be able to skip them; the duplication is deliberate, and source_test.go
 // asserts the two copies of the bound are the same number.
+//
+// The missing key is refused here rather than by store.IdempotencyKey, which
+// would report it as an empty name - true, but reported as a malformed key when
+// it is a missing header, and the caller has two different codes for those
+// (missing_idempotency_key and validation_failed). What the key is allowed to
+// contain is still store.IdempotencyKey's business and is checked when the key
+// is built.
 func (r Request) validate(op Operation) error {
 	switch {
+	case op != Check && r.IdempotencyKey == "":
+		return fmt.Errorf("the %s script: %w", op, ErrMissingIdempotencyKey)
 	case r.Amount < 0 || r.Amount > bound:
 		return fmt.Errorf("the %s script: %w: amount %d is negative or above 2^53", op, ErrInvalidArgument, r.Amount)
 	case r.Limit < 0 || r.Limit > bound:

@@ -249,7 +249,7 @@ correct.
    hidden.
 4. **The fix.** The customer derives the key from their own durable operation identifier, so every
    retry of the same logical operation reuses it. One line of code. After that, the storm is
-   harmless: 50 attempts, one deduction, one stored response, 50 identical replies.
+   harmless: 50 attempts, one deduction, one record, 49 replays each marked `replayed: true`.
 5. **The SDK shortcut.** In v0.5 this is not a line of code at all, because the SDK manages key
    lifetime across retries. This is the strongest argument for the SDK release, and it is why
    DR-026 was not relaxed to make the key optional: an optional key would make the default

@@ -61,7 +61,7 @@ Each is a testable property with a test behind it, not a slogan.
 | Claim | How it is enforced | How it is proven |
 | --- | --- | --- |
 | **Atomic by construction** — check and deduct are one indivisible datastore operation | One Lua script execution — [ADR-0002](docs/decisions/0002-lua-scripts-for-atomicity.md) | 200 concurrent requests against a balance of 100, exactly 100 allowed — [T-01](docs/architecture/testing-strategy.md#t-01--atomic-decrement-under-contention) |
-| **Correct under retry** — a client that retries is charged once, and a double charge caused by store loss is reversed ([ADR-0017](docs/decisions/0017-noeviction-and-duplicate-reversal.md)) | Required idempotency key, recorded in the same atomic execution — [ADR-0004](docs/decisions/0004-idempotency-prevention-and-detection.md) | 50 concurrent retries, one deduction, byte-identical replies — [T-02](docs/architecture/testing-strategy.md#t-02--idempotent-replay) |
+| **Correct under retry** — a client that retries is charged once, and a double charge caused by store loss is reversed ([ADR-0017](docs/decisions/0017-noeviction-and-duplicate-reversal.md)) | Required idempotency key, recorded in the same atomic execution — [ADR-0004](docs/decisions/0004-idempotency-prevention-and-detection.md) | 50 concurrent retries, one deduction, 49 replays that answer the recorded state — [T-02](docs/architecture/testing-strategy.md#t-02--idempotent-replay) |
 | **Correct under failure** — a missed cycle boundary cannot deny or over-grant | Lazy, monotonic, atomic rollover — [ADR-0003](docs/decisions/0003-lazy-monotonic-cycle-rollover.md) | Idle across three boundaries: one allowance, one event — [T-06](docs/architecture/testing-strategy.md#t-06--missed-boundaries) |
 
 ## Reading order
