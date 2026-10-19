@@ -189,6 +189,10 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **`IP-09` is `IN PROGRESS`**, opened 2026-10-19 after `IP-07` closed. Its scope and `IP-10`'s
+  overlapped on most of the admin surface; both are amended so `IP-09` builds the resource routes and
+  `IP-10` everything that moves a balance or a boundary.
+
 - **ADR-0018 supersedes ADR-0012** (2026-10-19). Keys keep everything ADR-0012 decided, with one token
   format, the contract's `qc_<runtime|admin>_<hex prefix>.<base64url secret>`, where three had been
   written, and the SHA-256 verifier ADR-0012 chose, where eight documents and three contract

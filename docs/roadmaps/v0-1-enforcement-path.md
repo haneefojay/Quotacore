@@ -22,7 +22,7 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-06` | Idempotency prevention in the data plane | `IP-05` | `COMPLETE`, started and closed 2026-09-30 |
 | `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `COMPLETE`, started and closed 2026-10-19 |
 | `IP-08` | Control-plane schema and migrations | `IP-02` | `COMPLETE`, 2026-10-19 |
-| `IP-09` | Control-plane API and API keys | `IP-08` | `NOT STARTED` |
+| `IP-09` | Control-plane API and API keys | `IP-08` | `IN PROGRESS`, opened 2026-10-19 |
 | `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `BLOCKED` |
 | `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `BLOCKED` |
 | `IP-12` | Usage ledger, writer and archiver | `IP-08` | `NOT STARTED` |
@@ -1122,13 +1122,23 @@ constraints rather than application logic.
 
 ## IP-09 — Control-plane API and API keys
 
-**Status** `NOT STARTED`; `IP-08` closed on 2026-10-19 and nothing else gates this phase.
+**Status** `IN PROGRESS`, opened 2026-10-19. `IP-08` closed on 2026-10-19 and nothing else gates this
+phase.
 
 **Objective.** The administrative surface, with hashed scoped keys, audit in the same transaction,
 and no anonymous path after bootstrap.
 
 **Scope.**
 - Feature, plan, tenant, override, key, event-read, audit-read, status and health routes.
+  > **Amended 2026-10-19 (`IP-09`) — the line between this phase and `IP-10`.** The two scopes
+  > overlapped on most of the admin surface. This phase builds the resource surface: keys and the
+  > bootstrap key; features (list, create, get, update, archive, delete); plans (list, create, get,
+  > archive, delete); tenants (list, create, get, update of `display_name`, `timezone` and
+  > `metadata`, suspend, resume, delete); the audit and event reads; and status. Everything that
+  > moves a balance or a boundary is `IP-10`'s: the plan entitlement edit, apply-now, impact, a
+  > tenant's plan change, grant, set, force-rollover and both override routes. Tenant creation stays
+  > here because [data-model.md](../architecture/data-model.md) §3.2 names this phase as the writer
+  > that materialises the balance hash.
 - Key creation, listing and deletion, with the plaintext returned exactly once.
 - The audit write, inside the same transaction as the mutation it records.
 - Soft delete, archive, suspension and resumption.
@@ -1186,6 +1196,11 @@ semantics the specification fixes, and each answered by the rules `IP-00` produc
 - Feature and plan create, edit, archive.
 - Plan apply, `apply-now` with its confirmation above the tenant count the `Q-04` answer sets.
 - Tenant create, plan assignment, plan change, grant, set, force-rollover.
+  > **Amended 2026-10-19 (`IP-09`).** Feature and plan create and archive, and tenant create, are
+  > `IP-09`'s. This phase keeps the plan entitlement edit (`PATCH /v1/admin/plans/{id}`), apply-now,
+  > impact, a tenant's plan change, grant, set, force-rollover and both override routes, and with
+  > them the three codes only those routes reach: `confirmation_required`, `grant_exceeds_ceiling`
+  > and `reset_not_supported`.
 - The plan-impact route from `Q-14`.
 
 **Specification references.**
