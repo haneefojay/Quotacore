@@ -12,6 +12,20 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **The control-plane schema (`IP-08`).** Six up-only migrations in `internal/db/migrations` create
+  the eight tables of [data-model.md](docs/architecture/data-model.md) §2, and
+  `TestTheSchemaIsTheDataModel` compares the migrated catalogue with the document's own `sql` blocks.
+  Every earlier version upgrades to the same schema with its rows intact, and concurrent starts
+  migrate once.
+- A checksum record, `quotacore_migration_checksums`: the runner refuses to start when an applied
+  migration's file has changed, and records the checksums of a database migrated before it existed.
+- `db.Classify`, which turns each constraint the migrations create into its error-catalogue code
+  before any route exists, and `TestEveryConstraintIsClassified`, which fails on a constraint with no
+  entry. `DeletePlan`, `DeleteFeature` and `SetFeatureUnit` refuse as `plan_in_use`,
+  `feature_in_use` and `feature_unit_immutable`; `ValidExternalID` is the boundary half of DR-034.
+- The Postgres snapshot `Loader`, wired in `cmd/quotacore`: the tenant's version from the datastore,
+  then its rows in one statement (DR-039), with a deleted tenant answered as unknown (INV-T1).
+
 - `DR-046` — a `409 confirmation_required` with a single-use, plan-version-bound token above
   `QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD`, and `apply-now` applies nothing while the token is
   outstanding. T-12 proves it.
@@ -157,6 +171,27 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **`IP-08` is `COMPLETE`**, started and closed 2026-10-19, with Definition-of-Done items 4, 5, 6 and
+  7 amended so the `409` statuses and the boundary validation call are `IP-09`'s and the retention
+  deletion is `IP-12`'s. `IP-09` and `IP-12` are now `NOT STARTED`.
+
+- **`IP-08` is `IN PROGRESS`, opened 2026-10-19**, before any file it owns was written. `IP-07` and
+  `IP-08` read `BLOCKED` in the phase map although every dependency of both was `COMPLETE`; `IP-07`
+  is now `NOT STARTED`. The phase map in [v0-1-enforcement-path.md](docs/roadmaps/v0-1-enforcement-path.md)
+  had also kept `IP-06` at `BLOCKED` and `IP-03` and `IP-05` undated, and is brought in line with
+  [roadmap-index.md](docs/roadmaps/roadmap-index.md).
+- **The specification amendments `IP-08` needed before it could build the schema, 2026-10-19.**
+  [data-model.md](docs/architecture/data-model.md) now states `tenants_plan_idx`, which its own prose
+  and the impact route already required; a `seq` column on `usage_events`, which §2.2 already cited
+  and the within-batch order of `balance_after` needs; a `CHECK` on `audit_log.subject_type` with the
+  four values the API documents; and that no migration ships a down section and every applied
+  migration's checksum is recorded. [api-conventions.md](docs/architecture/api-conventions.md) §2
+  said the internal identifiers were UUIDv7; they are v4, which is what the data model generates
+  and PostgreSQL 16 can produce. The `UsageEvent.request_id` description in `api/openapi.yaml` said
+  a `system` event carries `null`; the column is `NOT NULL`, so a job mints the id, and only the
+  description changed (`make generate`, `make docs`). `Q-22` asks how a zero-delta transition meets
+  `delta <> 0`, with a default, and `Q-09`'s deadline moves to `IP-12`, because retention changes
+  no table. `SECURITY.md` §6 gains gap 8, `tenants.display_name`.
 - **`IP-02` is `COMPLETE`, started and closed on 2026-09-28, with all seven Definition-of-Done
   items met.** The contract exists, is served, and is generated from the specification rather than
   ahead of it.
@@ -403,6 +438,14 @@ exists, because a future implementer needs to know which statements are new.
   point-in-time records they are.
 
 ### Fixed
+
+- **An archived feature on a suspended tenant resolved `suspended`** (`IP-04`). The snapshot checked
+  the tenant's state before the feature's archive state, and its archived set was never filled by the
+  `Loader` contract. `Entitlement` now carries `Archived`, and archived resolves first.
+- **The migration runner kept no checksums and released its lock through the pool** (`IP-01`). goose
+  records versions only, so an edited migration went unnoticed, and the advisory unlock could run on
+  a different connection than the lock. The runner now records checksums, pins one connection, and
+  uses a goose `Provider` instead of goose's global state.
 
 - The snapshot subscriber missed a configuration change announced before its subscription was
   confirmed, so the change waited a full refresh interval rather than NFR-D3's second, and a cache

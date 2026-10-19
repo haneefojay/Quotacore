@@ -103,6 +103,7 @@ func run() error {
 		RefreshInterval:     cfg.ConfigRefreshInterval,
 		ControlPlaneTimeout: cfg.ControlPlaneTimeout,
 		Client:              snapshotClient{data},
+		Loader:              db.NewLoader(dbConn, data),
 	})
 	metrics := observability.New(observability.Options{HitRatio: snap.HitRatio})
 	snap.WithMetrics(metrics)

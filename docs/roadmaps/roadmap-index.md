@@ -49,16 +49,17 @@ decision recorded in [the register](../../docs/product/assumptions-and-open-ques
 | Item | State |
 | --- | --- |
 | Specification | 63 documents, 49 rules, 17 accepted decisions, 15 named correctness tests |
-| Questions blocking v0.1 | None. 8 open and 3 deferred, none of them gating; the five that needed an answer before the contract was frozen are answered |
-| Phases | 28, `IP-00`–`IP-27`. `IP-00`–`IP-06` are `COMPLETE`, and the other 21 are `BLOCKED` on an earlier phase |
+| Questions blocking v0.1 | None. 9 open and 3 deferred, none of them gating; the five that needed an answer before the contract was frozen are answered |
+| Phases | 28, `IP-00`–`IP-27`. `IP-00`–`IP-06` and `IP-08` are `COMPLETE`, `IP-07`, `IP-09` and `IP-12` are `NOT STARTED`, and the other 17 are `BLOCKED` on an earlier phase |
 | Code written | `IP-01`: 19 Go, Compose, Makefile, module and CI files. No product behaviour, asserted by a test rather than claimed. `IP-00` closed the contract and wrote none; `IP-01` was the first phase to own files in the repository. `IP-02` added `api/openapi.yaml` — 39 operations, 67 schemas, 34 error codes — plus the types and validation generated from it, the served `/openapi.json` and `/docs`, and the generator that keeps the two in step. It adds no product behaviour either: an enforcement call still returns `404`, because `IP-07` owns the routes, and `TestNoProductBehaviour` fails if that ever stops being true. `IP-03` added `internal/cycle`: the engine and the suite that proves it — boundary matrix, DST pair, `never`, monotonicity, property, tzdata, benchmark and shape-scope tests, 8 files — plus the embedded time-zone database. It is a pure library: no route, no store, no clock; a caller feeds an instant and gets a window, and `TestNoProductBehaviour` now also pins the engine's arithmetic vocabulary inside `internal/cycle`. `IP-04` added `internal/store` (the key builders for every key [data-model.md](../architecture/data-model.md) section 3.1 names, the config-version reads, the invalidation publish/subscribe, the expiry rule, and the two source checks that hold the data plane off the control plane and off cursor scans), `internal/snapshot` (the bounded LRU with byte budget and interned plans, the token-bucketed miss path, and the subscriber and reconcile loops that keep the previous snapshot while a refresh fails), and `internal/observability` (seven collectors, exactly the seven observability.md names). The phase owns seven Go files plus seven test files, an integration pair and a datastore round trip
-that CI runs against the real valkey. It is still not product behaviour: the data plane has no route (`TestNoProductBehaviour`), and the snapshot's `Loader` is an interface whose Postgres implementation is `IP-08`'s. `IP-05` added `internal/script`: three embedded Lua bodies and the Go runner that addresses them by digest. It is the first phase in this repository to contain the arithmetic the product exists to perform, and it is still not product behaviour, because `TestNoProductBehaviour` still holds — a consume is one `EVALSHA` and no route reaches it until `IP-07`. `IP-06` added the idempotency record inside those same scripts and `internal/script/idempotency.go` (the fingerprint and the pinned window), so a retried consume is still one `EVALSHA` and `TestNoProductBehaviour` still holds |
+that CI runs against the real valkey. It is still not product behaviour: the data plane has no route (`TestNoProductBehaviour`), and the snapshot's `Loader` is an interface whose Postgres implementation is `IP-08`'s. `IP-05` added `internal/script`: three embedded Lua bodies and the Go runner that addresses them by digest. It is the first phase in this repository to contain the arithmetic the product exists to perform, and it is still not product behaviour, because `TestNoProductBehaviour` still holds — a consume is one `EVALSHA` and no route reaches it until `IP-07`. `IP-06` added the idempotency record inside those same scripts and `internal/script/idempotency.go` (the fingerprint and the pinned window), so a retried consume is still one `EVALSHA` and `TestNoProductBehaviour` still holds. `IP-08` added the control-plane schema as six up-only migrations with a checksum record, the classifier that turns each constraint into its catalogue code, the three operations whose refusal is a schema property, and the Postgres `Loader`, which `cmd/quotacore` now wires; no route reaches any of it until `IP-07` and `IP-09` |
 | `IP-01` open DoD items | None. Item 4 was amended before it was met: the Go module graph stays here and the base image moved to `IP-15` item 11, so the obligation has a successor rather than a deletion |
 | `IP-02` open DoD items | None. All 7 met on 2026-09-28, each closed by a named test recorded in the phase's own section. Item 7 was added by its owner on 2026-09-28 because `mvp-scope.md` and ADR-0010 both required a generated `/docs` page and no phase owned it |
 | `IP-03` open DoD items | None. All 7 met on 2026-09-28. Verification found and fixed two defects, both recorded in the phase section and in CHANGELOG: rows 4–7 of the boundary table itself were wrong, and the committed `go.mod`/`go.sum` were never tidy |
 | `IP-04` open DoD items | None. All 6 met on 2026-09-28; item 1 was amended by a dated note to defer the end-to-end chaos row to `IP-07`, where the `503 control_plane_unavailable` verdict becomes observable. Verification resolved two conflicts inside the specification and found one defect in the phase's own fixtures, all recorded in the phase section and in CHANGELOG |
 | `IP-05` open DoD items | None. All 10 met on 2026-09-29; items 4, 5 and 6 were amended by dated notes so the process-level `T-09`/`T-10` and HTTP halves belong to `IP-07`, and item 10 was added for the caller answered `stale` that returned before the expiry write. Verification found three defects, all recorded in the phase section and in CHANGELOG |
 | `IP-06` open DoD items | None. All 7 met on 2026-09-30; items 1, 2, 3 and 6 carry dated amendments — the ledger's `usage_events` row half belongs to `IP-12`, the `409` and `400` statuses to `IP-07`, and the `noeviction` policy to `IP-01` with the sizing measured by `IP-15`. Verification found one defect in the phase's own fixtures (deterministic client keys replayed a previous run's records) and corrected two specification statements, all recorded in the phase section and in CHANGELOG |
+| `IP-08` open DoD items | None. All 8 met on 2026-10-19; items 4, 5, 6 and 7 carry dated amendments — the `409` statuses and the boundary validation call belong to `IP-09`, the retention deletion to `IP-12`, and the eviction sizing in the scope to `IP-15`. Verification found defects in `IP-01` (no checksum record, a pooled lock release) and `IP-04` (archived resolved after suspended), all recorded in those phases' sections and in CHANGELOG |
 
 ## 3. How to use this roadmap
 
@@ -122,8 +123,11 @@ work — nothing is marked in progress while it is not. `IP-05`, the atomic scri
 which is what [AGENTS.md](../../AGENTS.md) requires before a file the phase owns exists, and was
 closed the same day. `IP-06`, idempotency prevention, was opened `IN PROGRESS` on 2026-09-30, its
 gating decision accepted and its dependency `IP-05` closed, and was closed the same day. `IP-07`, the
-data-plane endpoints, is the next phase permitted: its dependencies, `IP-05` and `IP-06`, are both
-closed.
+data-plane endpoints, is permitted: its dependencies, `IP-05` and `IP-06`, are both closed, and it is
+`NOT STARTED`. `IP-08`, the control-plane schema, was opened `IN PROGRESS` on 2026-10-19 before any
+file it owns was written, its only dependency `IP-02` having closed on 2026-09-28, and was closed the
+same day, which permits `IP-09` and `IP-12`. `IP-07` follows it because `IP-07`'s runtime-key authentication reads the `api_keys` table and the Postgres snapshot
+loader that `IP-08` builds.
 
 ### Phase-complete checkpoint
 
@@ -157,12 +161,12 @@ answer.
 | `IP-04` | Data-plane skeleton, keyspace and snapshot cache | ADR-0001, ADR-0011 | `COMPLETE` — started and closed 2026-09-28, 6 of 6 DoD items met, item 1 amended to defer the chaos row to `IP-07` |
 | `IP-05` | The atomic scripts | ADR-0002, ADR-0005 | `COMPLETE` — started and closed 2026-09-29, 10 of 10 DoD items met with items 4, 5 and 6 amended to defer the process-level and HTTP halves to `IP-07`, and item 10 added |
 | `IP-06` | Idempotency prevention in the data plane | ADR-0004 | `COMPLETE` — started and closed 2026-09-30, 7 of 7 DoD items met with items 1, 2, 3 and 6 amended to defer the byte-identity, HTTP-status, ledger and sizing halves to `IP-07`, `IP-12` and `IP-15` |
-| `IP-07` | Data-plane endpoints | ADR-0001, ADR-0012 | `BLOCKED` on `IP-05`, `IP-06` |
-| `IP-08` | Control-plane schema and migrations | ADR-0011, ADR-0013 | `BLOCKED` on `IP-02` |
-| `IP-09` | Control-plane API and API keys | ADR-0012, ADR-0013 | `BLOCKED` on `IP-08` |
+| `IP-07` | Data-plane endpoints | ADR-0001, ADR-0012 | `NOT STARTED` — both dependencies `COMPLETE` |
+| `IP-08` | Control-plane schema and migrations | ADR-0011, ADR-0013 | `COMPLETE` — started and closed 2026-10-19, 8 of 8 DoD items met with items 4, 5, 6 and 7 amended to defer the HTTP, boundary and retention halves to `IP-09` and `IP-12` |
+| `IP-09` | Control-plane API and API keys | ADR-0012, ADR-0013 | `NOT STARTED` — its dependency is `COMPLETE` |
 | `IP-10` | Plan lifecycle and cycle-boundary semantics | ADR-0006, `Q-01`, `Q-02`, `Q-04`, `Q-14` | `BLOCKED` on `IP-09` |
 | `IP-11` | Idempotency detection and reconciliation | ADR-0004, ADR-0016, ADR-0017 | `BLOCKED` on `IP-07`, `IP-12` |
-| `IP-12` | Usage ledger, writer and archiver | ADR-0016 | `BLOCKED` on `IP-08` |
+| `IP-12` | Usage ledger, writer and archiver | ADR-0016 | `NOT STARTED` — its dependency is `COMPLETE` |
 | `IP-13` | Observability | — | `BLOCKED` on `IP-07` |
 | `IP-14` | The `quotacore` CLI | — | `BLOCKED` on `IP-09`, `IP-12` |
 | `IP-15` | Reference deployment and restore rehearsal | ADR-0009, `Q-21`, ADR-0017 | `BLOCKED` on `IP-13`, `IP-14` |

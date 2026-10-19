@@ -206,9 +206,10 @@ func TestResolveMissLoadsExactlyOncePerTenant(t *testing.T) {
 // DR-015 in one place (request-lifecycle.md section 5): archived beats
 // suspended beats in-plan beats not-in-plan.
 func TestResolveOrderArchivedOverSuspendedOverInPlan(t *testing.T) {
-	loader := &fakeLoader{byID: map[string]*LoadedTenant{tenantID: tenantFixture(tenantID)}}
+	archived := tenantFixture(tenantID)
+	archived.Plan.Entitlements = map[string]Entitlement{"feature_a": {Limit: 1, Interval: cycle.Daily, Archived: true}}
+	loader := &fakeLoader{byID: map[string]*LoadedTenant{tenantID: archived}}
 	s := New(Options{Loader: loader, MissRate: 1e9})
-	s.features["feature_a"] = true
 
 	r, err := s.Resolve(tenantID, "feature_a")
 	if err != nil {
@@ -217,7 +218,20 @@ func TestResolveOrderArchivedOverSuspendedOverInPlan(t *testing.T) {
 	if !r.Archived || r.InPlan {
 		t.Errorf("archived feature must resolve archived over in-plan, got %+v", r)
 	}
-	delete(s.features, "feature_a")
+
+	// Archived over suspended: an archived feature on a suspended tenant is
+	// feature_archived, because the archival holds whatever the tenant's
+	// state (state-machines.md section 5, request-lifecycle.md step 3).
+	s.fill(&LoadedTenant{ID: otherID, ExternalID: "y", State: "suspended", Timezone: "UTC",
+		Plan:    &LoadedPlan{ID: "q", Key: "legacy", Entitlements: map[string]Entitlement{"feature_a": {Limit: 1, Interval: cycle.Daily, Archived: true}}},
+		Version: 4})
+	r, err = s.Resolve(otherID, "feature_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Archived || r.Suspended {
+		t.Errorf("an archived feature on a suspended tenant must resolve archived, got %+v", r)
+	}
 
 	s.fill(&LoadedTenant{ID: tenantID, ExternalID: "x", State: "suspended", Timezone: "UTC",
 		Plan:    &LoadedPlan{ID: "p", Key: "starter", Entitlements: map[string]Entitlement{"feature_a": {Limit: 1, Interval: cycle.Daily}}},

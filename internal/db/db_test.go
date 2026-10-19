@@ -15,8 +15,8 @@ func TestEmbeddedVersionReadsTheFileSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EmbeddedVersion: %v", err)
 	}
-	if v != 1 {
-		t.Errorf("EmbeddedVersion = %d, want 1", v)
+	if v != 7 {
+		t.Errorf("EmbeddedVersion = %d, want 7", v)
 	}
 }
 
@@ -115,7 +115,8 @@ func TestMigrationsAgainstRealPostgres(t *testing.T) {
 	if err := row.Scan(&recorded); err != nil {
 		t.Fatalf("read goose version table: %v", err)
 	}
-	if !recorded.Valid || recorded.Int64 != 1 {
-		t.Errorf("recorded version = %v, want 1", recorded)
+	want, _ := EmbeddedVersion()
+	if !recorded.Valid || recorded.Int64 != want {
+		t.Errorf("recorded version = %v, want %d", recorded, want)
 	}
 }

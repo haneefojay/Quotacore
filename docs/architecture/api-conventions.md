@@ -30,9 +30,9 @@ one of them, and a contract test enforces that they do not.
 
 | Element | Type | Format | Notes |
 | --- | --- | --- | --- |
-| `tenant_id` | string | UUIDv7 | Opaque. Never parsed by a client |
-| `plan_id` | string | UUIDv7 | Opaque |
-| `feature_id` | string | UUIDv7 | Opaque. Clients use `feature_key` |
+| `tenant_id` | string | UUID | Opaque. Never parsed by a client |
+| `plan_id` | string | UUID | Opaque |
+| `feature_id` | string | UUID | Opaque. Clients use `feature_key` |
 | `feature_key` | string | `^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$` | Immutable, customer-chosen, reverse-DNS style (INV-F3) |
 | `plan_key` | string | `^[a-z0-9][a-z0-9_-]{0,62}$` | Immutable |
 | `tenant.external_id` | string | `^[A-Za-z0-9._:-]{1,128}$` | Customer-chosen, unique, excludes `@` (DR-034) |
@@ -41,8 +41,13 @@ one of them, and a contract test enforces that they do not.
 | `X-Request-Id` | string | ULID or UUID | Adopted if valid, otherwise minted (NFR-S10) |
 
 Every identifier is opaque. A client that parses a `tenant_id` to extract meaning from it is
-relying on an implementation detail, and the ID type is chosen for index locality, not
-comprehensibility.
+relying on an implementation detail. The internal identifiers are version 4 UUIDs from
+`gen_random_uuid()`, and [data-model.md](data-model.md#22-features) §2.2 states why nothing depends on
+the version.
+
+> **Amended 2026-10-19 (`IP-08`).** These three rows said UUIDv7, chosen for index locality.
+> [data-model.md](data-model.md) is the source for the schema and generates v4, PostgreSQL 16 has no
+> `uuidv7()`, and the contract only ever said `format: uuid`, so the rows now say what is stored.
 
 ## 3. Time
 

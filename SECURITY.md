@@ -105,6 +105,7 @@ valid key or host access.
 | 5 | No independent penetration test | Medium | No code exists to test | Before the first public release, not before the first pilot |
 | 6 | No per-tenant key issuance without a runtime key per tenant | Low | Deferred deliberately | Post-MVP |
 | 7 | The v0.4 UI's XSS and redirect surface | Unknown | Not built; requirements recorded for when it is | At the start of v0.4 |
+| 8 | `tenants.display_name` is free text, required, and could hold a person's name | Low | It is an operator label for a tenant list, never a lookup key and never logged (NFR-O6). ADR-0013 puts personal names out of scope, and nothing can enforce that on a free-text label, so the position is documentation: it names the account or workspace, not a person | If a deployment needs it enforced, a configurable pattern on the label, not a schema change |
 
 ## 7. Verification
 

@@ -16,16 +16,16 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-00` | Close the blocking questions | — | `COMPLETE`, closed 2026-09-27 |
 | `IP-01` | Repository, toolchain and CI foundation | `IP-00` | `COMPLETE`, closed 2026-09-27 |
 | `IP-02` | The OpenAPI contract | `IP-01` | `COMPLETE`, started and closed 2026-09-28 |
-| `IP-03` | Cycle engine and boundary matrix | `IP-01` | `COMPLETE` |
+| `IP-03` | Cycle engine and boundary matrix | `IP-01` | `COMPLETE`, started and closed 2026-09-28 |
 | `IP-04` | Data-plane skeleton, keyspace and snapshot cache | `IP-02`, `IP-03` | `COMPLETE`, started and closed 2026-09-28 |
-| `IP-05` | The atomic scripts | `IP-03`, `IP-04` | `COMPLETE` |
-| `IP-06` | Idempotency prevention in the data plane | `IP-05` | `BLOCKED` |
-| `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `BLOCKED` |
-| `IP-08` | Control-plane schema and migrations | `IP-02` | `BLOCKED` |
-| `IP-09` | Control-plane API and API keys | `IP-08` | `BLOCKED` |
+| `IP-05` | The atomic scripts | `IP-03`, `IP-04` | `COMPLETE`, started and closed 2026-09-29 |
+| `IP-06` | Idempotency prevention in the data plane | `IP-05` | `COMPLETE`, started and closed 2026-09-30 |
+| `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `NOT STARTED` |
+| `IP-08` | Control-plane schema and migrations | `IP-02` | `COMPLETE`, 2026-10-19 |
+| `IP-09` | Control-plane API and API keys | `IP-08` | `NOT STARTED` |
 | `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `BLOCKED` |
 | `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `BLOCKED` |
-| `IP-12` | Usage ledger, writer and archiver | `IP-08` | `BLOCKED` |
+| `IP-12` | Usage ledger, writer and archiver | `IP-08` | `NOT STARTED` |
 | `IP-13` | Observability | `IP-07` | `BLOCKED` |
 | `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `BLOCKED` |
 | `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `BLOCKED` |
@@ -272,6 +272,14 @@ are current" in `/readyz` a real condition rather than a constant. The runner is
 structurally: it calls `goose.UpContext` and there is no down path to call, so ADR-0011's production
 rule cannot be bypassed by configuration. `TestUpOnlyIsStructural` asserts that by reading this
 package's own source and failing if a down, reset or redo call appears.
+
+> **Defects found after close, 2026-10-19, by `IP-08`.** Three claims above did not hold. **There
+> was no checksum record**: goose records versions only, so an applied migration edited in place
+> went unnoticed. The runner now keeps `quotacore_migration_checksums` and refuses to start on a
+> mismatch (`TestAnEditedMigrationRefusesToStart`). **The advisory lock was taken and released
+> through the pool**, so the unlock could run on a different connection and leave the lock held; the
+> runner now pins one connection for both. **goose's global state** (dialect, base filesystem) was
+> set per call; the runner now uses a goose `Provider` with the global registry disabled.
 
 **Two things the development Compose file deliberately does not do.** Both were measured on
 2026-09-27 against the running stack rather than assumed, and both are the reference deployment's
@@ -582,6 +590,13 @@ Three things are recorded here because the phase surfaced them.
 > `TestConcurrentHitsAreRaceFree` fails under `-race` without the fix. `find` now takes the write
 > lock. Its cost under contention is measured by `IP-16`'s load rows, not asserted here.
 
+> **A third defect, found by `IP-08` the same day: archived resolved after suspended, and was never
+> filled.** The resolution order is archived, then suspended, then the plan, but `decide` checked the
+> tenant's state first, and the set of archived features it consulted was never populated by the
+> `Loader` contract, so an archived feature was never reported. `Entitlement` now carries
+> `Archived`, the Postgres loader fills it, and the extended
+> `TestResolveOrderArchivedOverSuspendedOverInPlan` fails without the reorder.
+
 **Exit criteria.** The service enforces against a snapshot it can hold in memory, and stopping
 Postgres changes nothing about that; the second half of the sentence becomes observable in `IP-07`.
 
@@ -881,7 +896,8 @@ once — and that is a property of the store, not of a process.
 
 ## IP-07 — Data-plane endpoints
 
-**Status** `BLOCKED`, gated on `IP-05` and `IP-06`.
+**Status** `NOT STARTED`. Both dependencies, `IP-05` and `IP-06`, are `COMPLETE`; the row read `BLOCKED`
+until 2026-10-19, which was stale.
 
 **Objective.** The four runtime routes, with the request lifecycle the specification annotates, and
 with the codes and labels the catalogue assigns.
@@ -932,7 +948,11 @@ remedy.
 
 ## IP-08 — Control-plane schema and migrations
 
-**Status** `BLOCKED`, gated on `IP-02`.
+**Status** `COMPLETE`, started and closed 2026-10-19. `IP-02` closed on 2026-09-28 and nothing else
+gated this phase; the status was set to `IN PROGRESS` before any file the phase owns was written,
+which is what [AGENTS.md](../../AGENTS.md) requires, and was closed once all eight
+Definition-of-Done items were met, four of them amended with a dated note. The row read `BLOCKED`
+until the opening change, which was stale.
 
 **Objective.** The Postgres schema, applied by embedded up-only migrations, with the constraints
 that make misuse unrepresentable rather than merely discouraged.
@@ -945,6 +965,10 @@ that make misuse unrepresentable rather than merely discouraged.
 - Enums, which must match the filter values in
   [api-conventions.md](../architecture/api-conventions.md).
 - Indexes for every documented query, and the sizing for the eviction question.
+  > **Amended 2026-10-19 — the eviction sizing is `IP-15`'s.** The eviction question (`Q-21`) was
+  > answered by [ADR-0017](../decisions/0017-noeviction-and-duplicate-reversal.md) and concerns the
+  > fast store; its floor is a projection [deployment.md](../architecture/deployment.md) §5 says is
+  > measured by `IP-15`. Postgres has no eviction question.
 
 **Specification references.**
 - [data-model.md](../architecture/data-model.md)
@@ -970,14 +994,63 @@ that make misuse unrepresentable rather than merely discouraged.
    with a foreign key, and a test asserts the database rejects the second (DR-011).
 4. Deleting a plan referenced by a tenant is refused by a foreign key, and surfaced as
    `409 plan_in_use` (DR-035).
+   > **Amended 2026-10-19 — the `409` is `IP-09`'s.** This phase proves that `DeletePlan` refuses as
+   > `ErrPlanInUse`, carrying the catalogue code `plan_in_use`, including for a plan held only by a
+   > soft-deleted tenant. The status is applied by the route, and no v0.1 route deletes a plan yet:
+   > openapi has archive only. The obligation has a successor rather than a deletion.
 5. `unit` is immutable once an assignment exists, enforced by a constraint or a transaction, and a
    test asserts `409 feature_unit_immutable` (INV-F2).
+   > **Amended 2026-10-19 — the `409` is `IP-09`'s.** `SetFeatureUnit` locks the feature row and
+   > refuses as `ErrFeatureUnitImmutable` once an entitlement, an override or a usage event references
+   > it. `FeatureUpdate` in openapi omits `unit`, so a unit change on the wire is `400
+   > validation_failed` today; the route that reaches the `409` is `IP-09`'s to add or rule out.
 6. `audit_log` has no `UPDATE` or `DELETE` statement anywhere in the application, asserted by a
    source check (INV-U2, DR-044).
+   > **Amended 2026-10-19 — `usage_events` is held too, and retention is `IP-12`'s.** The check covers
+   > `UPDATE` and `DELETE` of `audit_log` and `usage_events`, `DELETE FROM api_keys`, a change to a
+   > feature's `key`, and any rule or trigger on the two append-only tables. DR-044 and NFR-C6 allow
+   > one bounded retention deletion; `IP-12` adds it by naming its one file in the check's allow-list,
+   > which is empty today, rather than by loosening the pattern.
 7. `external_id` is validated so that no personally identifiable information is required, accepted or
    stored, and `@` is rejected (NFR-S2, DR-034).
+   > **Amended 2026-10-19 — the boundary call is `IP-09`'s.** This phase supplies the `CHECK` and
+   > `ValidExternalID`, held to the same answer over one corpus, and the refusal never echoes the
+   > rejected value. Calling the validator on a request is the route's.
 8. Every enum value in the DDL is a value the API accepts and vice versa; the checker's schema
    check passes.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The rows
+marked `(integration)` need real Postgres 16 and run in CI's `service` job.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestMigrationsApplyFromEmpty`, `TestEveryPreviousVersionUpgradesToTheSameSchema`, `TestConcurrentStartsMigrateOnce`, `TestTheMigrationLockIsReleased`, `TestAnEditedMigrationRefusesToStart`, `TestAPreChecksumDatabaseIsRecordedOnFirstStart` (integration), `TestNoDownMigrationShips`, `TestUpOnlyIsStructural` | A migration set that fails from empty, an upgrade from any earlier version that ends in a different schema or loses rows, two replicas both migrating, an applied migration edited in place, or any down path in the files or the binary |
+| 2 | `TestTheSchemaIsTheDataModel` (integration) | Any difference between the migrated catalogue and the one built by running the `sql` blocks of [data-model.md](../architecture/data-model.md) §2, read at test time, into a second fresh database |
+| 3 | `TestASecondPlanIsUnrepresentable` (integration) | A second path from a tenant to a plan, a `NULL` plan, or a second row for one `external_id` accepted (DR-011) |
+| 4 | `TestDeletingAnAssignedPlanIsPlanInUse`, `TestDeletingAReferencedFeatureIsFeatureInUse` (integration), as amended | A plan held by an active or soft-deleted tenant, or a referenced feature, deleted, or refused with anything but its code, or a refusal that changed anything; and an unassigned plan with entitlements not deleting (DR-035, DR-016) |
+| 5 | `TestUnitIsImmutableOnceAssigned` (integration), as amended | A unit changed while an entitlement, an override or an orphaned usage event references the feature, or refused while nothing does (INV-F2) |
+| 6 | `TestNoAuditOrLedgerRowIsRewritten`, `TestTheRewriteMatcherCatchesWhatItMust`, as amended | A string literal in the module or a migration that rewrites the audit log or the ledger, or a matcher that passes by matching nothing (INV-U2, DR-044) |
+| 7 | `TestExternalIdCannotCarryPII`, `TestExternalIdValidatorAgreesWithTheConstraint` (integration), as amended | An `@`, an email, 129 characters, an empty string, a space or a non-ASCII letter stored; the validator, the `CHECK` and openapi's pattern disagreeing; or a refusal that echoes the value (NFR-S2, DR-034) |
+| 8 | `TestEveryEnumMatchesTheContract`, `TestEveryMigrationEnumHasAContractPair` (integration) | A `pg_enum` label, an `audit_log.subject_type` value or an api-conventions filter list that differs from the generated contract, or an enum with no contract pair |
+| — | `TestEveryConstraintIsClassified` (integration), `TestEveryClassifiedCodeIsInTheCatalogue`, `TestNonDatabaseErrorsAreNotRefusals`, `TestTheLedgerAndAuditConstraintsRefuseWhatTheyShould` | A constraint that reaches a caller as an unnamed driver error, a code that is not in the catalogue, a lost connection answered as a refusal, or a ledger or audit constraint that does not fire |
+| — | `TestPostgresLoaderProjectsATenant`, `TestPostgresLoaderTreatsDeletedAsUnknown`, `TestPostgresLoaderReadsTheVersionFirst`, `TestPostgresLoaderFailureIsNotUnknown` (integration), `TestPostgresLoaderIsOneQuery` | A loaded tenant that disagrees with its rows, a deleted tenant served (INV-T1), the version read after the rows, a failed read answered as an unknown tenant, or more than one round trip per miss (DR-039) |
+| — | `TestResolveOrderArchivedOverSuspendedOverInPlan`, extended | An archived feature on a suspended tenant resolving `suspended` (the `IP-04` defect below) |
+
+Four things are recorded here because the phase surfaced them.
+
+- **The planned race test for item 5 was not written, because it has nothing to refute.** The plan
+  proposed 200 concurrent pairs of "add an entitlement" and "change the unit", failing if both
+  commit. Both committing is correct when the unit change orders first, which the row lock allows,
+  so the test could not tell a defect from a valid order. The lock is what holds the property, and
+  `SetFeatureUnit` documents it.
+- **`TestTheMigrationLockIsReleased` holds half of what it was written for.** It asserts the lock is
+  released on the connection that took it. The `IP-01` code it replaced also passes it, because a
+  pooled unlock on another connection usually fails silently rather than visibly; the fix is
+  structural (the conn is pinned), and the test guards against it regressing.
+- **A usage event with a zero delta is refused by a `CHECK`, and whether a zero-amount consume
+  writes one is open.** `Q-22` records it with a default, for `IP-12`.
+- **Two catalogue codes cannot be reached on the wire yet.** `plan_in_use` has no deleting route and
+  `feature_unit_immutable` has no field to send; items 4 and 5 are amended to `IP-09` for that.
 
 **Exit criteria.** The schema is the specification's schema, and the constraints that matter are
 constraints rather than application logic.
@@ -988,7 +1061,7 @@ constraints rather than application logic.
 
 ## IP-09 — Control-plane API and API keys
 
-**Status** `BLOCKED`, gated on `IP-08`.
+**Status** `NOT STARTED`; `IP-08` closed on 2026-10-19 and nothing else gates this phase.
 
 **Objective.** The administrative surface, with hashed scoped keys, audit in the same transaction,
 and no anonymous path after bootstrap.
@@ -1142,7 +1215,7 @@ reconciliation says which tenants cannot be answered.
 
 ## IP-12 — Usage ledger, writer and archiver
 
-**Status** `BLOCKED`, gated on `IP-08`.
+**Status** `NOT STARTED`; `IP-08` closed on 2026-10-19 and nothing else gates this phase.
 
 **Objective.** One signed event per applied mutation, written off the request path, retained by
 policy, and never able to slow enforcement down.
