@@ -171,6 +171,9 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **`IP-07` is `IN PROGRESS`**, opened 2026-10-19 after `IP-08` closed. The IP-07 scope line said
+  `POST /v1/balance`; it is `GET`, as the contract and every other document say.
+
 - **`IP-08` is `COMPLETE`**, started and closed 2026-10-19, with Definition-of-Done items 4, 5, 6 and
   7 amended so the `409` statuses and the boundary validation call are `IP-09`'s and the retention
   deletion is `IP-12`'s. `IP-09` and `IP-12` are now `NOT STARTED`.
