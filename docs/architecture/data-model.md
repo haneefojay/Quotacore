@@ -353,9 +353,9 @@ container, no migration step in the quickstart, and no requirement for the opera
 anything.
 
 ```sql
--- schema_migrations is maintained by goose
--- down migrations are shipped for emergency rollback during development only;
--- in production the documented downgrade is a restore (NFR-OPS3).
+-- goose_db_version is maintained by goose, quotacore_migration_checksums by the
+-- runner; no migration ships a down section, and the documented downgrade is a
+-- restore (NFR-OPS3).
 ```
 
 Each migration is a single transaction where possible. A migration that cannot be transactional,
