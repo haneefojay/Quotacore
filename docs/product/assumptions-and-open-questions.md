@@ -104,7 +104,10 @@ the cost of stalling the first endpoint. Five of the eleven had to be settled be
 document is frozen, and they are answered: [Q-05](#2-open-questions),
 [Q-06](#2-open-questions), [Q-07](#2-open-questions), [Q-10](#2-open-questions) and
 [Q-16](#2-open-questions). Four of those five were also already decided elsewhere, in the request
-schema, the endpoint matrix or an invariant; only Q-16 needed new text.
+schema, the endpoint matrix or an invariant; only Q-16 needed new text. [Q-22](#2-open-questions)
+was added on 2026-10-19 by `IP-08`, which found it while building the ledger table, and does not
+block that phase: the constraint is built as written and the writer that faces the question is
+`IP-12`'s.
 
 | ID | Question | Proposed default | Deadline | Blocks | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -116,7 +119,7 @@ schema, the endpoint matrix or an invariant; only Q-16 needed new text.
 | Q-06 | Should `check` be a `POST` or a `GET`? | **`POST`**, because it carries an amount and a window, and `GET` with a body is not portable. Naming it `check` rather than `quote` because it does not reserve anything | Before the OpenAPI is frozen | `POST /v1/check` | answered — api-conventions 7.2 |
 | Q-07 | Is an idempotency key required on `check`? | **No.** `check` mutates nothing, so a duplicate is harmless (DR-024) | Before the OpenAPI is frozen | `POST /v1/check` | answered — api-conventions 7.2 |
 | Q-08 | What is the exact snapshot-propagation bound to document? | **1 second, p99**, measured, with the observed distribution published | Before v0.1 release | A-10, [api-conventions](../architecture/api-conventions.md) | open |
-| Q-09 | Do event and audit retention have different defaults? | **Yes.** Events 90 days, audit 400 days. Audit is the contractual record; events are operational history | Before the first migration ships | `events-retention` config | open |
+| Q-09 | Do event and audit retention have different defaults? | **Yes.** Events 90 days, audit 400 days. Audit is the contractual record; events are operational history | Before the retention job ships (`IP-12`). Until 2026-10-19 this read "before the first migration ships"; `IP-08` shipped the first migration, and the answer changes no table, because retention is a background job and configuration (DR-044) | `events-retention` config | open |
 | Q-10 | Should `GET /v1/balance` return every feature for a tenant, or require a feature key? | **Optional `feature_key`.** Without it, return the full set; with it, one entry. The full set is a small bounded number per plan | Before the OpenAPI is frozen | `GET /v1/balance` | answered — api-conventions 7.3 |
 | Q-11 | Do we accept a numeric `window` for rolling, or a string enum? | **String enum** (`rolling_1h`), because a numeric duration invites unit mistakes and a 32-bit overflow | v0.2 | UC-17 | deferred |
 | Q-12 | What is the official support commitment? | **Community only**, explicitly. A support SLA would be a business change, not a technical one | Before the README claims anything | — | open |
@@ -129,6 +132,7 @@ schema, the endpoint matrix or an invariant; only Q-16 needed new text.
 | Q-19 | Should the data plane be able to run without the control plane entirely, for a hard-isolation deployment? | **No.** The two planes are one product; splitting them creates a stale-configuration failure mode nobody asked for | Not scheduled | — | open |
 | Q-20 | What is the migration story for the event ledger if a customer has a compliance retention requirement? | **Documented export.** A documented query plus a documented deletion job. A full export pipeline is a v0.5+ candidate, not an MVP feature | Before v0.1 release | `events-retention` config | open |
 | Q-21 | May the data store evict an idempotency record inside the 24-hour window, and still claim "a retrying client is charged once"? | **No, the window is a contract, and the store is sized to keep it.** `maxmemory-policy noeviction` on the whole fast-store keyspace, sized for the 24-hour window at the sustained-throughput figure in NFR-T1. Capacity exhaustion is a `503`, not a silent eviction. What `noeviction` cannot survive is *total* store loss, and that is answered by an automatic reversal of the duplicate once it is detected | Before v0.1 release | DR-029, NFR-T1, NFR-T9, [deployment](../architecture/deployment.md#5-sizing) | answered — ADR-0017 |
+| Q-22 | A `set` to the current value and a rollover with nothing consumed both have `delta = 0`, which `usage_events_delta_nonzero` refuses, while DR-042 says each attempts one row. Which gives way? | **The constraint.** A zero-delta transition writes no row, because a row that changes nothing is not a mutation and the constraint is the schema. Reconciliation then reads a cycle's opening allowance from the plan and the anchor rather than from a `cycle_rolled_over` row, and `IP-12` states that in the writer | Before the ledger writer ships (`IP-12`) | `usage_events` writer | open |
 ---
 
 ## 3. How this register is maintained

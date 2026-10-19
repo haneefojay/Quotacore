@@ -2213,7 +2213,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>source</code></td><td><a href="#schema-eventsource"><code>EventSource</code></a></td><td>yes</td><td></td></tr>
 <tr><td><code>event_type</code></td><td><a href="#schema-eventtype"><code>EventType</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>request_id</code></td><td>—</td><td>yes</td><td><p>Null for <code>system</code> events, which no request caused.</p>
+<tr><td><code>request_id</code></td><td>—</td><td>yes</td><td><p>The request that caused the event. A <code>system</code> event, such as a rollover by the reset<br>worker, carries the request id the job minted for its run, so every event joins to a log<br>line (NFR-S10). The column is <code>NOT NULL</code> (data-model.md §2.7); <code>null</code> is allowed by the<br>schema and is not produced.</p>
 </td></tr>
 <tr><td><code>idempotency_key</code></td><td>—</td><td>yes</td><td><p>The customer&#39;s key, on <code>consumed</code> and <code>refunded</code>. Filtering by it is how a disputed<br>charge is resolved: the recorded outcome shows whether it was applied once or twice<br>(UC-16).</p>
 </td></tr>

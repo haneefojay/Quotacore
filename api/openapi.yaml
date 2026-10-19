@@ -4640,7 +4640,11 @@ components:
           oneOf:
             - $ref: '#/components/schemas/RequestId'
             - type: 'null'
-          description: Null for `system` events, which no request caused.
+          description: |
+            The request that caused the event. A `system` event, such as a rollover by the reset
+            worker, carries the request id the job minted for its run, so every event joins to a log
+            line (NFR-S10). The column is `NOT NULL` (data-model.md §2.7); `null` is allowed by the
+            schema and is not produced.
         idempotency_key:
           oneOf:
             - $ref: '#/components/schemas/IdempotencyKey'
