@@ -68,7 +68,7 @@ func TestInvalidationLagWithinNFRD3(t *testing.T) {
 	if _, err := snap.Resolve(tenantID, "feature_a"); err != nil {
 		t.Fatalf("initial resolve: %v", err)
 	}
-	if snap.cache.get(tenantID) == nil {
+	if snap.find(tenantID) == nil {
 		t.Fatal("the tenant should be cached after the first resolve")
 	}
 
@@ -78,7 +78,7 @@ func TestInvalidationLagWithinNFRD3(t *testing.T) {
 		t.Fatalf("publish: %v", err)
 	}
 	deadline := time.After(1 * time.Second)
-	for snap.cache.get(tenantID) != nil {
+	for snap.find(tenantID) != nil {
 		select {
 		case <-deadline:
 			t.Fatalf("the tenant was still cached %.2f s after publish, over NFR-D3's second", time.Since(start).Seconds())

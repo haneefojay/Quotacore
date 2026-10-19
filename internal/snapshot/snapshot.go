@@ -174,9 +174,12 @@ func (s *Snapshot) Resolve(tenantID, featureKey string) (Resolution, error) {
 	return s.resolveMiss(tenantID, featureKey)
 }
 
+// find takes the write lock, not the read lock, because a hit is a write: get
+// moves the entry to the front of the recency list, and two hits under a shared
+// lock are two concurrent writes to that list.
 func (s *Snapshot) find(tenantID string) *Tenant {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.cache.get(tenantID)
 }
 
@@ -298,8 +301,10 @@ func overrideOrPlan(t *Tenant, featureKey string) (Entitlement, bool) {
 }
 
 // subscriberLoop applies invalidations off the channel. It re-subscribes on
-// failure and keeps going until Close; a message lost here is recovered by the
-// reconcile loop, and the lag observed here is what NFR-D3 budgets to a second.
+// failure and keeps going until Close, and reconciles once each time a
+// subscription is confirmed, so a message published while it was not
+// subscribed is recovered at once rather than at the next tick. The lag
+// observed here is what NFR-D3 budgets to a second.
 func (s *Snapshot) subscriberLoop(ctx context.Context) {
 	defer close(s.stopped)
 	if s.client == nil {
@@ -315,6 +320,12 @@ func (s *Snapshot) subscriberLoop(ctx context.Context) {
 			}
 			continue
 		}
+		// A change committed and announced before the subscription was live
+		// went to nobody, and the next tick is a RefreshInterval away. One
+		// reconcile here, after the subscription is confirmed, closes that
+		// gap: anything published before this point is in the versions it
+		// reads, and anything published after it arrives on the channel.
+		s.reconcile()
 		received := s.now()
 		msgs := sub.Messages()
 	loop:
