@@ -141,7 +141,10 @@ This is the checklist the implementation is held to. It is deliberately specific
 ### Auth
 - [ ] No API key is recoverable in plaintext from the database, logs, or metrics.
 - [ ] `runtime` scope cannot call any `/v1/admin` path; `admin` scope can call the data plane.
-- [ ] A revoked key is rejected on the next request with no cache delay.
+- [ ] A revoked key is rejected on the next request to the instance that revoked it, and on every
+      other instance within the propagation bound (NFR-D3). (Amended 2026-10-19, `IP-07`: this said
+      "with no cache delay", which no per-instance cache can promise across instances without a
+      second round trip on every request.)
 - [ ] Bootstrap admin key creation is logged at `warn` with the key's prefix, never its value.
 
 ### Operations

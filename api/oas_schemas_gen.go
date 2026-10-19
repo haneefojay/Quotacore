@@ -356,7 +356,9 @@ type BalanceEntry struct {
 	Balance    Amount     `json:"balance"`
 	Limit      Limit      `json:"limit"`
 	Bonus      Amount     `json:"bonus"`
-	// Consumption so far in this cycle, as recorded in the ledger.
+	// Net consumption in the stored cycle, derived as `limit + bonus - balance`. A refund lowers it and an
+	// administrative `set` shows through it. It is computed from the balance hash rather than read from
+	// the ledger, because this route never reads the control plane (DR-039).
 	Consumed   Amount       `json:"consumed"`
 	CycleStart NilTimestamp `json:"cycle_start"`
 	CycleEnd   NilTimestamp `json:"cycle_end"`
@@ -2974,9 +2976,9 @@ func (s *KeyCreate) SetExpiresAt(val OptTimestamp) {
 	s.ExpiresAt = val
 }
 
-// The only response that ever contains the plaintext key. It is not recoverable afterwards; only an
-// Argon2id hash and the public prefix are stored, and the hash is deliberately not indexed because
-// indexing a verifier invites a timing-oracle design (ADR-0012).
+// The only response that ever contains the plaintext key. It is not recoverable afterwards; only a
+// SHA-256 digest of the secret and the public prefix are stored, and the digest is deliberately not
+// indexed because indexing a verifier invites a timing-oracle design (ADR-0018).
 //
 // A lost key is replaced, not recovered (UC-15).
 // Ref: #/components/schemas/KeyCreated
@@ -3469,8 +3471,10 @@ type MeteredResponse struct {
 	Limit   Limit  `json:"limit"`
 	// Cycle-scoped granted quota. It does not survive the boundary (DR-020).
 	Bonus Amount `json:"bonus"`
-	// The amount the original call applied, returned unchanged on a replay because the replayed response
-	// is byte-identical (DR-026). `balance` minus `consumed` is the balance before the original deduction.
+	// The amount the original call applied, returned unchanged on a replay because a replay reads the
+	// recorded state (DR-027). On `consume`, `balance` minus `consumed` is the balance before the original
+	// deduction. On `refund` the schema is shared, so `consumed` is the amount refunded and `balance`
+	// minus `consumed` is the balance before the refund.
 	Consumed   Amount       `json:"consumed"`
 	CycleStart NilTimestamp `json:"cycle_start"`
 	CycleEnd   NilTimestamp `json:"cycle_end"`

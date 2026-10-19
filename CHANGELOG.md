@@ -171,6 +171,23 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **ADR-0018 supersedes ADR-0012** (2026-10-19). Keys keep everything ADR-0012 decided, with one token
+  format, the contract's `qc_<runtime|admin>_<hex prefix>.<base64url secret>`, where three had been
+  written, and the SHA-256 verifier ADR-0012 chose, where eight documents and three contract
+  descriptions had drifted to Argon2id. Each of those carries a dated correction.
+- **The contract, for `IP-07`.** `IdempotencyKey` takes api-conventions' grammar,
+  `[A-Za-z0-9._:-]{8,255}`, instead of a ULID only, so a customer can derive the key from their own
+  operation identifier. `GET /v1/balance` requires `tenant_external_id`. `BalanceEntry.consumed` is
+  `limit + bonus - balance`, not a ledger read. A replay is described as identical in its state values
+  and different in `replayed`, as `IP-06` already corrected elsewhere. The `ValidationFailed` and
+  `PayloadTooLarge` examples agree that an oversized `metadata` is `413`.
+- **Documents corrected for `IP-07`.** The error envelope has no `documentation_url` and no
+  `retry_after_ms: null` (error-catalog §1). `service_unavailable` promises no *partial* change, with a
+  same-key retry as the safe response. DR-026 names `missing_idempotency_key`. Revocation is immediate
+  on the serving instance and within NFR-D3 elsewhere (api-conventions §5, mvp-scope, K-2). The
+  balance route reports the stored cycle as one consistent set, and omits an archived feature whose
+  hash has expired (request-lifecycle §2). `rejected` means a `5xx` (observability §1.1).
+  `QUOTACORE_AMOUNT_MAX` and `QUOTACORE_MAX_FEATURE_KEY_LEN` are fixed by the contract.
 - **`IP-07` is `IN PROGRESS`**, opened 2026-10-19 after `IP-08` closed. The IP-07 scope line said
   `POST /v1/balance`; it is `GET`, as the contract and every other document say.
 
@@ -441,6 +458,9 @@ exists, because a future implementer needs to know which statements are new.
   point-in-time records they are.
 
 ### Fixed
+
+- `make generate` regenerated nothing: it ran `ogen-check`, which only compares. A new `ogen` target
+  writes the generated files, and `generate` runs it.
 
 - **An archived feature on a suspended tenant resolved `suspended`** (`IP-04`). The snapshot checked
   the tenant's state before the feature's archive state, and its archived set was never filled by the

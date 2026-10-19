@@ -60,7 +60,7 @@ Three rules follow from these boundaries:
 | Control | Decision | Rationale |
 | --- | --- | --- |
 | Credential | Opaque random 256-bit secret in a prefixed token | No structure to attack, no derivation to get wrong |
-| Storage | Argon2id hash with a per-key salt, plus a public prefix | Unrecoverable by construction, not by policy (ADR-0012) |
+| Storage | SHA-256 digest of the secret, plus a public prefix | Unrecoverable by construction, not by policy, because the secret is 256 random bits (ADR-0018) |
 | Comparison | Constant time, every request | The cache holds the hash, not a boolean |
 | Cache | Bounded, per-instance, with a configured TTL; eviction is a metric | An unbounded credential cache is a memory-exhaustion vector |
 | Expiry | Optional at issue, enforced always | A long-lived leaked key is worse than a rotation chore |
@@ -70,8 +70,13 @@ Three rules follow from these boundaries:
 | Transport | TLS required in the deployment | A bearer token in clear text is a leaked token |
 | Brute force | Irrelevant. 256 bits of entropy | — |
 | Timing | Auth failures take the same time whether the prefix is unknown or the hash mismatches | A distinguishable path is an oracle |
+| Format | `qc_<runtime\|admin>_<hex prefix>.<base64url secret>`; the scope label is cosmetic and must agree with the stored row | One format, the contract's (ADR-0018) |
 | Bootstrap key | One admin key on first start, printed once at `warn`; the service **refuses to start** while an unacknowledged default exists | A service that starts with a known key is not secure, and NFR-S9 exists to make that impossible (INV-K2) |
 | Comparison surface | Probes and `/docs` are unauthenticated; `/metrics` is bound to localhost or authenticated; `/openapi.json` is public because it describes the service, not the data | A published specification is not a disclosure |
+
+> **Amended 2026-10-19 ([ADR-0018](../decisions/0018-api-key-format-and-verifier.md)).** The storage row said Argon2id with a per-key
+> salt. ADR-0018 keeps ADR-0012's SHA-256: the secret's entropy is the defence, and a slow hash on
+> every request would spend the first claim's latency budget.
 
 ## 4. Authorisation
 
@@ -109,7 +114,7 @@ the first candidate for a post-MVP release.
 | --- | --- |
 | PII | None required, none accepted, none stored. `external_id` excludes `@` **at the schema level**, so an email address cannot become a tenant identifier (DR-034, NFR-S2) |
 | `metadata` | A bounded correlation object. Not indexed, excluded from logs, never returned by an endpoint, and documented as not a data store |
-| Secrets at rest | API keys are Argon2id hashes. Nothing else in the schema is secret. Connection strings come from the environment, not the database |
+| Secrets at rest | API keys are SHA-256 digests of 256-bit random secrets (ADR-0018). Nothing else in the schema is secret. Connection strings come from the environment, not the database |
 | Secrets in transit | TLS, and `rediss://` for the data store. A plaintext `redis://` connection is a configuration error the service warns about at startup and honours only with an explicit override |
 | Data in the ledger | Amounts, deltas, balances, request identifiers, and the customer's optional metadata. Billing-relevant, not personal |
 | Data in logs | No `external_id` values, no tenant names, no `metadata` content, no secrets (NFR-O6, DR-043) |
@@ -124,7 +129,7 @@ the first candidate for a post-MVP release.
 | Threat | Control | Residual risk |
 | --- | --- | --- |
 | Key enumeration | 256-bit entropy; no endpoint enumerates keys; the prefix is public and reveals nothing about the secret | None |
-| Credential stuffing against the admin API | Argon2id makes each guess expensive; rate limiting per key and per IP; no default credentials | An attacker with a valid admin key has full control, by design |
+| Credential stuffing against the admin API | 256-bit secrets make guessing infeasible; rate limiting per key and per IP; no default credentials | An attacker with a valid admin key has full control, by design |
 | Lua injection through a feature key or tenant id | Keys built by one tested function; values passed as `ARGV`; the script body is a constant (NFR-S8) | A bypass is P0 |
 | Integer overflow in an amount | `int64` parsed strictly; Lua arithmetic in doubles is a real hazard, so amounts are validated and bounded before the script and the script range-checks (see below) | **Lua uses doubles.** `2^53` is where integer arithmetic stops being exact. Amounts above that are rejected with `400 validation_failed` and the limit is documented |
 | Replay of a webhook (v0.3) | HMAC signature with a timestamp and a JTI, and a documented receiver-side replay window | Receiver-side idempotency remains the receiver's responsibility |
@@ -150,7 +155,7 @@ and bonuses to `±2^53 − 1`, validates on input with `400 validation_failed`, 
 | TLS | Terminated by the customer's proxy or by the service. A self-signed certificate is supported for internal deployments, with a startup warning |
 | Bind address | The service binds `0.0.0.0:8080` inside the container; the published port should be restricted by the customer's firewall. The metrics port 9090 binds localhost inside the container |
 | Privileges | Non-root user, non-root port, read-only root filesystem, `no-new-privileges`, all capabilities dropped (NFR-S6) |
-| Secrets in the environment | Connection strings, the bootstrap acknowledgement, and the Argon2 parameters. Never baked into the image |
+| Secrets in the environment | Connection strings and the bootstrap acknowledgement. Never baked into the image |
 | Admin API exposure | Recommended: on an internal network only. A key on a public endpoint is a key that will eventually leak |
 | Data store exposure | Bind to localhost or a private network. Anyone with write access to it can mint free service, and that is the strongest single reason to keep it private (section 2) |
 | Postgres exposure | Same. Plus: no `trust` authentication, a `scram-sha-256` role, and a dedicated non-superuser application role |

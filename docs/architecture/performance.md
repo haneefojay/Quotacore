@@ -18,7 +18,7 @@ A `consume` that crosses a cycle boundary, in the reference deployment, warm:
 | 1 | Network, client to service | 0.2–1.0 ms | **The customer's network, not ours.** Frequently the largest single term (J-7) |
 | 2 | TLS termination | 0.05–0.3 ms | The customer's proxy, or ours |
 | 3 | HTTP parse, route, middleware | ~40 µs | Pure CPU |
-| 4 | Authenticate | ~80 µs | Argon2id verification, cached hash |
+| 4 | Authenticate | ~5 µs | SHA-256 of the secret and a constant-time compare, against a cached digest (ADR-0018) |
 | 5 | Validate | ~20 µs | Pure CPU |
 | 6 | Snapshot resolve | ~15 µs | One map lookup plus a small slice scan |
 | 7 | **Cycle compute** | ~5 µs | Logarithmic in elapsed intervals, resolved `*time.Location` |
@@ -28,6 +28,10 @@ A `consume` that crosses a cycle boundary, in the reference deployment, warm:
 | 11 | Observe, metrics, log | ~20 µs | Buffered |
 | | **Total, service-side** | **0.5–2.5 ms** | p50 target 1.0 ms, p99 target 5.0 ms |
 | | **Total, end to end** | **1–5 ms** | p99 depends mostly on the customer's network |
+
+> **Amended 2026-10-19 ([ADR-0018](../decisions/0018-api-key-format-and-verifier.md)).** Row 4 said ~80 µs of Argon2id verification,
+> and two rows below named an Argon2id work factor as a tuning lever. ADR-0018 verifies a SHA-256
+> digest instead, so the lever and the risk it tuned no longer exist.
 
 **The single most useful fact in this table is that the script round trip dominates.** The
 optimisation effort for this product therefore belongs in the script and in the round trip, not in
@@ -113,7 +117,6 @@ during a latency incident.
 | **The script grew to cover a new case** | p50 and p99 rise together, script execution time rises | Split the script by operation. One script per endpoint, not one script with a mode flag |
 | **Snapshot cache thrash** | `config_cache_evictions` rising, `cache_hit_ratio` falling, p99 intermittent | Raise `QUOTACORE_CONFIG_CACHE_ENTRIES` or `QUOTACORE_CONFIG_CACHE_MB` |
 | **Cache miss storm on a cold cache** | `config_cache_miss_total` spiking, then `dbpool_wait` rising | The miss rate limit is doing its job. Pre-warm on startup, and investigate why the cache went cold |
-| **Argon2id cost too high for the hardware** | `auth` dominating the profile, p99 rising with concurrency | Reduce the work factor, within a documented minimum. This is a deliberate trade: it weakens brute-force resistance to improve latency |
 | **The ledger writer saturating a connection** | p99 rising while data-store latency is flat; `event_queue_depth` growing | Move the writer to a separate pool with a small size. It should never contend with the request path |
 | **The queue being full and the non-blocking send spinning** | CPU at 100%, p99 high, `event_sink_dropped_total` rising | The send must be a single non-blocking attempt that drops. Spinning is a defect |
 | **GC pressure from per-request allocations** | `gc_pause` rising, p99 correlated with allocation rate | Profile. The usual cause is a per-request map or a `fmt.Sprintf` in a path that should not format anything |
@@ -178,7 +181,6 @@ exactly one tenant.
 | `QUOTACORE_CONFIG_CACHE_ENTRIES` | Hit ratio, hence p99 | The single most effective latency setting available |
 | `QUOTACORE_EVENT_QUEUE_SIZE` | Drop rate under burst | Drops are better than blocking (FS-10) |
 | `QUOTACORE_EVENT_FLUSH_INTERVAL` | Ledger durability latency, not request latency | 100 ms, off the path |
-| Argon2id work factor | Auth cost, on every request | The one security setting with a direct latency cost. A documented minimum, and a decision the operator makes knowingly |
 
 ## 9. Performance claims, and what backs each one
 
