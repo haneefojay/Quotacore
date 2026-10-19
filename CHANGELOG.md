@@ -157,6 +157,11 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **`IP-08` is `IN PROGRESS`, opened 2026-10-19**, before any file it owns was written. `IP-07` and
+  `IP-08` read `BLOCKED` in the phase map although every dependency of both was `COMPLETE`; `IP-07`
+  is now `NOT STARTED`. The phase map in [v0-1-enforcement-path.md](docs/roadmaps/v0-1-enforcement-path.md)
+  had also kept `IP-06` at `BLOCKED` and `IP-03` and `IP-05` undated, and is brought in line with
+  [roadmap-index.md](docs/roadmaps/roadmap-index.md).
 - **`IP-02` is `COMPLETE`, started and closed on 2026-09-28, with all seven Definition-of-Done
   items met.** The contract exists, is served, and is generated from the specification rather than
   ahead of it.
