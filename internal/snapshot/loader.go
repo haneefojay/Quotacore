@@ -63,9 +63,13 @@ type LoadedPlan struct {
 }
 
 // Entitlement is the enforceable content of one plan_entitlements row.
+// Archived is the referenced feature's state: an archived feature is refused
+// with 403 feature_archived before the tenant's state is considered
+// (state-machines.md section 5, step 1), and its balance stays readable.
 type Entitlement struct {
 	Limit    int64
 	Interval cycle.Interval
+	Archived bool
 }
 
 // LoadedOverride is one tenant_entitlement_overrides row, resolved to concrete
