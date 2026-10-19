@@ -63,10 +63,9 @@ type Tenant struct {
 // the cache with a read lock and nothing else, and the miss path spends its
 // budget from the limiter before a Loader call.
 type Snapshot struct {
-	mu       sync.RWMutex
-	cache    *tenantCache
-	features map[string]bool
-	version  int64
+	mu      sync.RWMutex
+	cache   *tenantCache
+	version int64
 
 	loader      Loader
 	client      Client
@@ -110,7 +109,6 @@ func New(opts Options) *Snapshot {
 		ctrlTimeout: opts.ControlPlaneTimeout,
 		now:         now,
 		metrics:     opts.Metrics,
-		features:    map[string]bool{},
 		stop:        make(chan struct{}),
 		stopped:     make(chan struct{}),
 	}
@@ -256,12 +254,12 @@ func (s *Snapshot) decide(t *Tenant, featureKey string) Resolution {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	r := Resolution{Timezone: t.Timezone, TenantVersion: t.Version}
-	if t.State == "suspended" {
-		r.Suspended = true
+	if t.Plan.Entitlements[featureKey].Archived {
+		r.Archived = true
 		return r
 	}
-	if s.features[featureKey] {
-		r.Archived = true
+	if t.State == "suspended" {
+		r.Suspended = true
 		return r
 	}
 	e, inPlan := overrideOrPlan(t, featureKey)

@@ -47,7 +47,7 @@ Read in order; the documents build on each other. Start with
 | [state-machines.md](product/state-machines.md) | Every state, its transitions, guards and invariants | You are implementing transitions or reasoning about an edge case |
 | [error-catalog.md](product/error-catalog.md) | 34 error codes and 22 failure scenarios (`FS-01`–`FS-22`), with a client action for each | You are handling errors, or writing an SDK |
 | [user-journeys.md](product/user-journeys.md) | 10 end-to-end journeys (`J-1`–`J-10`), including the sceptical evaluator | You are validating that the product solves a real problem |
-| [assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) | 23 assumptions (`A-01`–`A-23`) with validation methods, a dated accepted-risk table and a corrections log, and 21 questions: 10 answered, 3 deferred, 8 open | You are about to build on an unverified assumption |
+| [assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) | 23 assumptions (`A-01`–`A-23`) with validation methods, a dated accepted-risk table and a corrections log, and 22 questions: 10 answered, 3 deferred, 9 open | You are about to build on an unverified assumption |
 | [glossary.md](product/glossary.md) | Every term, with the ones that are easy to confuse marked | Any time a word is ambiguous |
 
 ## Architecture — how it is built and proven
@@ -139,14 +139,14 @@ documents themselves and fails if this table disagrees, so a stale count cannot 
 | Error codes | 34 | [product/error-catalog.md](product/error-catalog.md) |
 | Failure scenarios | 22 | [product/error-catalog.md](product/error-catalog.md) |
 | Assumptions | 23 | [product/assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) |
-| Open questions | 21 | [product/assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) |
+| Open questions | 22 | [product/assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) |
 | Journeys | 10 | [product/user-journeys.md](product/user-journeys.md) |
 | Non-functional requirements | 63 | [architecture/non-functional-requirements.md](architecture/non-functional-requirements.md) |
 | Invariants | 43 | [product/state-machines.md](product/state-machines.md), [architecture/data-model.md](architecture/data-model.md) |
 | Named tests | 15 | [architecture/testing-strategy.md](architecture/testing-strategy.md) |
 | Decisions | 17 | [decisions/](decisions/) |
 | Markdown documents | 63 | repository root |
-| Files in the repository | 147 | repository root, excluding the paths `.gitignore` marks as build output (13 files added by `IP-05` and `IP-06`: `IP-05`'s three embedded Lua scripts, the runner and the outcome, and the source, unit and integration tests that assert them; `IP-06`'s `idempotency.go` and its unit and integration tests) |
+| Files in the repository | 163 | repository root, excluding the paths `.gitignore` marks as build output (13 files added by `IP-05` and `IP-06`: `IP-05`'s three embedded Lua scripts, the runner and the outcome, and the source, unit and integration tests that assert them; `IP-06`'s `idempotency.go` and its unit and integration tests; and 16 by `IP-08`: six migrations, the checksum record, the error classifier, the three guarded operations and the Postgres snapshot loader, and the schema, enum, constraint, source, loader and test-database tests) |
 
 ## Identifier namespaces
 

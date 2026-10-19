@@ -95,6 +95,26 @@ func (s *Store) TenantVersions(ctx context.Context) (map[string]int64, error) {
 	return out, nil
 }
 
+// TenantVersion reads one tenant's entry in `qc:cfg:tenants`: one HGET, the
+// version the control-plane loader stamps on what it loads, read before the
+// rows so a concurrent change can only leave a load stale-and-pruned rather
+// than fresh-looking and wrong. An absent entry is version zero, which the
+// prune treats as stale; the control-plane writer (IP-09) creates entries.
+func (s *Store) TenantVersion(ctx context.Context, tenantID string) (int64, error) {
+	v, err := s.client.HGet(ctx, ConfigTenantsKey(), tenantID).Result()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read tenant version: %w", err)
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse tenant version %q: %w", v, err)
+	}
+	return n, nil
+}
+
 // PublishInvalidation publishes `qc:cfg:invalidate` with a version. A control
 // plane write publishes after commit, best-effort (request-lifecycle.md
 // section 4); this helper exists so IP-04's tests can drive the channel without
