@@ -12,6 +12,20 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **The control-plane schema (`IP-08`).** Six up-only migrations in `internal/db/migrations` create
+  the eight tables of [data-model.md](docs/architecture/data-model.md) §2, and
+  `TestTheSchemaIsTheDataModel` compares the migrated catalogue with the document's own `sql` blocks.
+  Every earlier version upgrades to the same schema with its rows intact, and concurrent starts
+  migrate once.
+- A checksum record, `quotacore_migration_checksums`: the runner refuses to start when an applied
+  migration's file has changed, and records the checksums of a database migrated before it existed.
+- `db.Classify`, which turns each constraint the migrations create into its error-catalogue code
+  before any route exists, and `TestEveryConstraintIsClassified`, which fails on a constraint with no
+  entry. `DeletePlan`, `DeleteFeature` and `SetFeatureUnit` refuse as `plan_in_use`,
+  `feature_in_use` and `feature_unit_immutable`; `ValidExternalID` is the boundary half of DR-034.
+- The Postgres snapshot `Loader`, wired in `cmd/quotacore`: the tenant's version from the datastore,
+  then its rows in one statement (DR-039), with a deleted tenant answered as unknown (INV-T1).
+
 - `DR-046` — a `409 confirmation_required` with a single-use, plan-version-bound token above
   `QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD`, and `apply-now` applies nothing while the token is
   outstanding. T-12 proves it.
@@ -156,6 +170,10 @@ exists, because a future implementer needs to know which statements are new.
   different `QUOTACORE_IDEMPOTENCY_TTL` — by a test on each boundary.
 
 ### Changed
+
+- **`IP-08` is `COMPLETE`**, started and closed 2026-10-19, with Definition-of-Done items 4, 5, 6 and
+  7 amended so the `409` statuses and the boundary validation call are `IP-09`'s and the retention
+  deletion is `IP-12`'s. `IP-09` and `IP-12` are now `NOT STARTED`.
 
 - **`IP-08` is `IN PROGRESS`, opened 2026-10-19**, before any file it owns was written. `IP-07` and
   `IP-08` read `BLOCKED` in the phase map although every dependency of both was `COMPLETE`; `IP-07`
@@ -420,6 +438,14 @@ exists, because a future implementer needs to know which statements are new.
   point-in-time records they are.
 
 ### Fixed
+
+- **An archived feature on a suspended tenant resolved `suspended`** (`IP-04`). The snapshot checked
+  the tenant's state before the feature's archive state, and its archived set was never filled by the
+  `Loader` contract. `Entitlement` now carries `Archived`, and archived resolves first.
+- **The migration runner kept no checksums and released its lock through the pool** (`IP-01`). goose
+  records versions only, so an edited migration went unnoticed, and the advisory unlock could run on
+  a different connection than the lock. The runner now records checksums, pins one connection, and
+  uses a goose `Provider` instead of goose's global state.
 
 - The snapshot subscriber missed a configuration change announced before its subscription was
   confirmed, so the change waited a full refresh interval rather than NFR-D3's second, and a cache
