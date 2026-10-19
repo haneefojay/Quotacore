@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // Key is one api_keys row as authentication needs it.
@@ -66,6 +68,7 @@ type Authenticator struct {
 	loader  KeyLoader
 	cache   *keyCache
 	limiter *limiter
+	misses  singleflight.Group
 	timeout time.Duration
 	now     func() time.Time
 
@@ -146,11 +149,21 @@ func (a *Authenticator) Authenticate(header string, at time.Time) (Key, error) {
 }
 
 // lookup returns the cached entry for a prefix, or spends one limiter token on
-// one read by prefix.
+// one read by prefix. Concurrent misses of one prefix share the read, so a
+// burst from a key the cache has not seen costs one token, not one per
+// request.
 func (a *Authenticator) lookup(prefix string) (entry, error) {
 	if en, ok := a.cache.get(prefix); ok {
 		return en, nil
 	}
+	v, err, _ := a.misses.Do(prefix, func() (any, error) { return a.miss(prefix) })
+	if err != nil {
+		return entry{}, err
+	}
+	return v.(entry), nil
+}
+
+func (a *Authenticator) miss(prefix string) (entry, error) {
 	if !a.limiter.allow() {
 		return entry{}, ErrMissRefused
 	}

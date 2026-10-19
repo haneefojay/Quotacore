@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/quotacore/quotacore/internal/observability"
 )
 
@@ -72,6 +74,7 @@ type Snapshot struct {
 
 	loader      Loader
 	resolver    IDResolver
+	firstSight  singleflight.Group
 	listeners   []func()
 	client      Client
 	refresh     time.Duration
@@ -207,6 +210,19 @@ func (s *Snapshot) Tenant(externalID string) (*Tenant, error) {
 		return t, nil
 	}
 	s.misses.Add(1)
+	// Concurrent first sights of one tenant share one miss: one limiter
+	// token and one pair of statements, however many requests arrived
+	// together. Without this, a burst at a cold tenant would spend the whole
+	// miss budget on one tenant and refuse the rest of the burst.
+	v, err, _ := s.firstSight.Do(externalID, func() (any, error) { return s.firstSightOf(externalID) })
+	if err != nil {
+		return nil, err
+	}
+	return v.(*Tenant), nil
+}
+
+// firstSightOf is the bounded miss for an external_id.
+func (s *Snapshot) firstSightOf(externalID string) (*Tenant, error) {
 	if s.resolver == nil {
 		s.countMiss(observability.MissError)
 		return nil, fmt.Errorf("%w: no external_id resolver is configured", ErrRefreshFailed)
@@ -220,7 +236,7 @@ func (s *Snapshot) Tenant(externalID string) (*Tenant, error) {
 	id, err := s.resolver.TenantIDByExternalID(ctx, externalID)
 	if err == nil {
 		// The tenant may already be cached under its id, loaded by Resolve
-		// before anyone asked for it by external_id.
+		// in the meantime.
 		if t := s.find(id); t != nil {
 			s.countMiss(observability.MissLoaded)
 			return t, nil
@@ -465,11 +481,13 @@ func (s *Snapshot) reconcile() {
 		s.noteRefresh(false)
 		return
 	}
+	// The subscriber and the ticker both reconcile, so the comparison is
+	// under the lock as well as the write.
+	s.mu.Lock()
 	if version > s.version {
-		s.mu.Lock()
 		s.version = version
-		s.mu.Unlock()
 	}
+	s.mu.Unlock()
 	s.pruneTo(latest)
 	s.noteRefresh(true)
 	s.notify()
@@ -501,7 +519,9 @@ func (s *Snapshot) applyInvalidation(payload string) bool {
 		return false
 	}
 	s.mu.Lock()
-	s.version = version
+	if version > s.version {
+		s.version = version
+	}
 	s.mu.Unlock()
 	s.pruneTo(latest)
 	s.noteRefresh(true)
