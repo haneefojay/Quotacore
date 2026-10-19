@@ -419,3 +419,66 @@ func TestResolutionCountsHitsAndMisses(t *testing.T) {
 		t.Errorf("hit ratio = %v, want 0.75", s.HitRatio())
 	}
 }
+
+// TestConcurrentHitsAreRaceFree is run under -race: a cache hit touches the
+// recency list, so concurrent resolves of cached tenants are concurrent writes
+// and must be serialised. IP-07 sends 200 at once (mvp-scope.md §3).
+func TestConcurrentHitsAreRaceFree(t *testing.T) {
+	loader := &fakeLoader{byID: map[string]*LoadedTenant{
+		tenantID: tenantFixture(tenantID),
+		otherID:  tenantFixture(otherID),
+	}}
+	s := New(Options{Loader: loader, Client: &fakeClient{tenants: map[string]int64{}}, MissRate: 1e9})
+	for _, id := range []string{tenantID, otherID} {
+		if _, err := s.Resolve(id, "feature_a"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		id := tenantID
+		if i%2 == 1 {
+			id = otherID
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				if _, err := s.Resolve(id, "feature_a"); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// TestAChangeAnnouncedBeforeTheSubscriptionIsNotMissed is the gap between
+// Start and a confirmed subscription: a change committed and announced in that
+// gap reached no subscriber, and the reconcile tick is a RefreshInterval away.
+// The subscriber reconciles once it is subscribed, so the change is applied
+// with no message and no tick (NFR-D3).
+func TestAChangeAnnouncedBeforeTheSubscriptionIsNotMissed(t *testing.T) {
+	fx := tenantFixture(tenantID)
+	fc := &fakeClient{version: 1, tenants: map[string]int64{tenantID: fx.Version}}
+	loader := &fakeLoader{byID: map[string]*LoadedTenant{tenantID: fx}}
+	s := New(Options{Loader: loader, Client: fc, MissRate: 1e9, RefreshInterval: time.Hour})
+	if _, err := s.Resolve(tenantID, "feature_a"); err != nil {
+		t.Fatal(err)
+	}
+	fc.mu.Lock()
+	fc.version = 2
+	fc.tenants[tenantID] = fx.Version + 1
+	fc.mu.Unlock()
+
+	s.Start(context.Background())
+	defer s.Close()
+	deadline := time.Now().Add(time.Second)
+	for s.find(tenantID) != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("a change made before the subscription was live was still cached a second later")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
