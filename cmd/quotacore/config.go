@@ -26,6 +26,16 @@ type Config struct {
 	Migrate               bool
 	BootstrapAdminKey     string
 	BootstrapKeyIsAcked   bool
+
+	// The IP-07 keys of deployment.md section 4.
+	RequestTimeout      time.Duration
+	MaxBodyBytes        int64
+	MetadataMaxBytes    int
+	KeyCacheEntries     int
+	RateLimitEnabled    bool
+	RateLimitRuntimeRPS float64
+	RateLimitBurst      float64
+	RateLimiterMaxKeys  int
 }
 
 type Getenv func(string) string
@@ -44,6 +54,14 @@ func Load(getenv Getenv) (Config, error) {
 		LogLevel:              valueOr(getenv, "QUOTACORE_LOG_LEVEL", "info"),
 		LogFormat:             valueOr(getenv, "QUOTACORE_LOG_FORMAT", "json"),
 		Migrate:               true,
+		RequestTimeout:        2 * time.Second,
+		MaxBodyBytes:          65536,
+		MetadataMaxBytes:      4096,
+		KeyCacheEntries:       10000,
+		RateLimitEnabled:      true,
+		RateLimitRuntimeRPS:   2000,
+		RateLimitBurst:        4000,
+		RateLimiterMaxKeys:    100000,
 	}
 	if c.DatabaseURL == "" {
 		return c, fmt.Errorf("QUOTACORE_DATABASE_URL is required and is not set")
@@ -121,6 +139,61 @@ func Load(getenv Getenv) (Config, error) {
 			return c, fmt.Errorf("QUOTACORE_MIGRATE is %q, which is not a boolean", raw)
 		}
 		c.Migrate = b
+	}
+	if raw := getenv("QUOTACORE_REQUEST_TIMEOUT"); raw != "" {
+		d, err := parseDuration(raw, "QUOTACORE_REQUEST_TIMEOUT")
+		if err != nil {
+			return c, err
+		}
+		c.RequestTimeout = d
+	}
+	for _, k := range []struct {
+		key string
+		dst *int
+	}{
+		{"QUOTACORE_METADATA_MAX_BYTES", &c.MetadataMaxBytes},
+		{"QUOTACORE_KEY_CACHE_ENTRIES", &c.KeyCacheEntries},
+		{"QUOTACORE_RATE_LIMITER_MAX_KEYS", &c.RateLimiterMaxKeys},
+	} {
+		if raw := getenv(k.key); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 1 {
+				return c, fmt.Errorf("%s is %q, which is not a positive integer", k.key, raw)
+			}
+			*k.dst = n
+		}
+	}
+	if raw := getenv("QUOTACORE_MAX_BODY_BYTES"); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 1 {
+			return c, fmt.Errorf("QUOTACORE_MAX_BODY_BYTES is %q, which is not a positive integer", raw)
+		}
+		c.MaxBodyBytes = n
+	}
+	if int64(c.MetadataMaxBytes) > c.MaxBodyBytes {
+		return c, fmt.Errorf("QUOTACORE_METADATA_MAX_BYTES (%d) is larger than QUOTACORE_MAX_BODY_BYTES (%d), so the metadata cap could never be reached", c.MetadataMaxBytes, c.MaxBodyBytes)
+	}
+	for _, k := range []struct {
+		key string
+		dst *float64
+	}{
+		{"QUOTACORE_RATELIMIT_RUNTIME_RPS", &c.RateLimitRuntimeRPS},
+		{"QUOTACORE_RATELIMIT_RUNTIME_BURST", &c.RateLimitBurst},
+	} {
+		if raw := getenv(k.key); raw != "" {
+			r, err := strconv.ParseFloat(raw, 64)
+			if err != nil || r <= 0 {
+				return c, fmt.Errorf("%s is %q, which is not a positive number", k.key, raw)
+			}
+			*k.dst = r
+		}
+	}
+	if raw := getenv("QUOTACORE_RATELIMIT_ENABLED"); raw != "" {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return c, fmt.Errorf("QUOTACORE_RATELIMIT_ENABLED is %q, which is not a boolean", raw)
+		}
+		c.RateLimitEnabled = b
 	}
 	c.BootstrapAdminKey = getenv("QUOTACORE_BOOTSTRAP_ADMIN_KEY")
 	c.BootstrapKeyIsAcked = getenv("QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK") != ""

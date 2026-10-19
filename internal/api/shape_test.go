@@ -60,6 +60,17 @@ import (
 // boundary calculation inside a script would be a second authority over when a
 // tenant's allowance resets, and the scripts instead take the window the caller
 // already computed and are handed it.
+//
+// `internal/auth`, `internal/envelope` and `internal/dataplane` are here
+// because IP-07 owns them, and IP-07 is where product behaviour reaches HTTP.
+// `internal/auth` verifies a key and decides nothing about a balance.
+// `internal/envelope` writes the one error shape and reads the status of each
+// code from the contract. `internal/dataplane` is the four routes: it decides
+// which refusal a request gets before the script and maps what the script
+// decided, but the decision about a balance is still the script's alone, so
+// the symbol rules below hold for it unchanged. The name of this test is kept
+// for its history; what it guards now is that the package set is exactly the
+// set the phases own, and that the calendar and the script stay single.
 func TestNoProductBehaviour(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -71,7 +82,10 @@ func TestNoProductBehaviour(t *testing.T) {
 		"api":                    true,
 		"cmd/quotacore":          true,
 		"internal/api":           true,
+		"internal/auth":          true,
 		"internal/cycle":         true,
+		"internal/dataplane":     true,
+		"internal/envelope":      true,
 		"internal/db":            true,
 		"internal/observability": true,
 		"internal/snapshot":      true,

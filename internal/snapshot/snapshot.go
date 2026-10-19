@@ -25,8 +25,11 @@ type Options struct {
 	ControlPlaneTimeout time.Duration
 	Client              Client // the datastore handle for invalidation and versions
 	Loader              Loader // the single bounded control-plane read (IP-08)
-	Metrics             *observability.Metrics
-	Now                 func() time.Time
+	// Resolver maps an external_id on a cold miss. When nil, the Loader is
+	// used if it implements IDResolver.
+	Resolver IDResolver
+	Metrics  *observability.Metrics
+	Now      func() time.Time
 }
 
 // Client is the slice of the datastore the snapshot talks to: the invalidation
@@ -68,6 +71,8 @@ type Snapshot struct {
 	version int64
 
 	loader      Loader
+	resolver    IDResolver
+	listeners   []func()
 	client      Client
 	refresh     time.Duration
 	ctrlTimeout time.Duration
@@ -102,8 +107,13 @@ func New(opts Options) *Snapshot {
 	if opts.ControlPlaneTimeout <= 0 {
 		opts.ControlPlaneTimeout = 3 * time.Second
 	}
+	resolver := opts.Resolver
+	if resolver == nil {
+		resolver, _ = opts.Loader.(IDResolver)
+	}
 	s := &Snapshot{
 		loader:      opts.Loader,
+		resolver:    resolver,
 		client:      opts.Client,
 		refresh:     opts.RefreshInterval,
 		ctrlTimeout: opts.ControlPlaneTimeout,
@@ -142,6 +152,18 @@ func (s *Snapshot) WithMetrics(m *observability.Metrics) {
 	s.cache.onEvict = func(string) { m.CacheEvictions.Inc() }
 }
 
+// OnChange registers fn to run after every applied invalidation and every
+// successful reconcile, on its own goroutine so a slow listener cannot hold
+// the subscriber. The key cache uses it to reconcile revoked keys at the same
+// moment the snapshot learns of a change. Call it before Start.
+func (s *Snapshot) OnChange(fn func()) { s.listeners = append(s.listeners, fn) }
+
+func (s *Snapshot) notify() {
+	for _, fn := range s.listeners {
+		go fn()
+	}
+}
+
 // Close stops the loops. It is idempotent.
 func (s *Snapshot) Close() { s.stopOnce.Do(func() { close(s.stop) }) }
 
@@ -171,6 +193,66 @@ func (s *Snapshot) Resolve(tenantID, featureKey string) (Resolution, error) {
 	s.misses.Add(1)
 	return s.resolveMiss(tenantID, featureKey)
 }
+
+// Tenant finds the tenant an external_id names, with no I/O when it is cached.
+// A cold external_id is one bounded miss: one limiter token, then the id read
+// and the version-first Load, and the tenant is cached under both identifiers.
+// The errors are Resolve's.
+func (s *Snapshot) Tenant(externalID string) (*Tenant, error) {
+	s.mu.Lock()
+	t := s.cache.byExternal(externalID)
+	s.mu.Unlock()
+	if t != nil {
+		s.hits.Add(1)
+		return t, nil
+	}
+	s.misses.Add(1)
+	if s.resolver == nil {
+		s.countMiss(observability.MissError)
+		return nil, fmt.Errorf("%w: no external_id resolver is configured", ErrRefreshFailed)
+	}
+	if !s.limiter.allow() {
+		s.countMiss(observability.MissRefused)
+		return nil, ErrMissRefused
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), s.ctrlTimeout)
+	defer cancel()
+	id, err := s.resolver.TenantIDByExternalID(ctx, externalID)
+	if err == nil {
+		// The tenant may already be cached under its id, loaded by Resolve
+		// before anyone asked for it by external_id.
+		if t := s.find(id); t != nil {
+			s.countMiss(observability.MissLoaded)
+			return t, nil
+		}
+		var loaded *LoadedTenant
+		if loaded, err = s.loader.Load(ctx, id); err == nil {
+			s.countMiss(observability.MissLoaded)
+			s.fill(loaded)
+			if t := s.find(id); t != nil {
+				return t, nil
+			}
+			return nil, ErrStaleSnapshot
+		}
+	}
+	if errors.Is(err, ErrTenantUnknown) {
+		s.countMiss(observability.MissUnknown)
+		return nil, ErrTenantUnknown
+	}
+	s.countMiss(observability.MissError)
+	return nil, fmt.Errorf("%w: %v", ErrRefreshFailed, err)
+}
+
+// Decide resolves a feature for a tenant Tenant returned. It is Resolve's
+// decision with no lookup, so the order archived, suspended, in-plan lives in
+// one place still.
+func (s *Snapshot) Decide(t *Tenant, featureKey string) Resolution { return s.decide(t, featureKey) }
+
+// Features lists the features the tenant's plan names, each with whether it is
+// archived, for the balance route. An override cannot add a feature (DR-015),
+// so the plan's list is the whole list. The returned map is the shared plan's
+// and must not be modified.
+func (t *Tenant) Features() map[string]Entitlement { return t.Plan.Entitlements }
 
 // find takes the write lock, not the read lock, because a hit is a write: get
 // moves the entry to the front of the recency list, and two hits under a shared
@@ -390,6 +472,7 @@ func (s *Snapshot) reconcile() {
 	}
 	s.pruneTo(latest)
 	s.noteRefresh(true)
+	s.notify()
 }
 
 // applyInvalidation handles one channel payload. It reports whether a genuine
@@ -422,6 +505,7 @@ func (s *Snapshot) applyInvalidation(payload string) bool {
 	s.mu.Unlock()
 	s.pruneTo(latest)
 	s.noteRefresh(true)
+	s.notify()
 	return true
 }
 
