@@ -20,7 +20,7 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-04` | Data-plane skeleton, keyspace and snapshot cache | `IP-02`, `IP-03` | `COMPLETE`, started and closed 2026-09-28 |
 | `IP-05` | The atomic scripts | `IP-03`, `IP-04` | `COMPLETE`, started and closed 2026-09-29 |
 | `IP-06` | Idempotency prevention in the data plane | `IP-05` | `COMPLETE`, started and closed 2026-09-30 |
-| `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `NOT STARTED` |
+| `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `IN PROGRESS`, opened 2026-10-19 |
 | `IP-08` | Control-plane schema and migrations | `IP-02` | `COMPLETE`, 2026-10-19 |
 | `IP-09` | Control-plane API and API keys | `IP-08` | `NOT STARTED` |
 | `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `BLOCKED` |
@@ -896,14 +896,17 @@ once — and that is a property of the store, not of a process.
 
 ## IP-07 — Data-plane endpoints
 
-**Status** `NOT STARTED`. Both dependencies, `IP-05` and `IP-06`, are `COMPLETE`; the row read `BLOCKED`
-until 2026-10-19, which was stale.
+**Status** `IN PROGRESS`, opened 2026-10-19. Both dependencies, `IP-05` and `IP-06`, are `COMPLETE`; the
+row read `BLOCKED` until 2026-10-19, which was stale.
 
 **Objective.** The four runtime routes, with the request lifecycle the specification annotates, and
 with the codes and labels the catalogue assigns.
 
 **Scope.**
-- `POST /v1/consume`, `POST /v1/check`, `POST /v1/balance`, `POST /v1/refund`.
+- `POST /v1/consume`, `POST /v1/check`, `GET /v1/balance`, `POST /v1/refund`.
+  > **Amended 2026-10-19.** This line said `POST /v1/balance`. The contract,
+  > [api-conventions.md](../architecture/api-conventions.md) §7.3, request-lifecycle §2 and the error
+  > matrix all say `GET`, and the contract is frozen.
 - Authentication, scope checks, and `X-Request-Id` on every response.
 - `Idempotency-Key` handling, and the error envelope.
 - The metric labels the catalogue requires, including `outcome` and `feature_key`.
