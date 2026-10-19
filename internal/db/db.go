@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"io/fs"
 	"strconv"
 	"strings"
 
@@ -71,23 +72,72 @@ type MigrateOptions struct {
 	Disabled bool
 }
 
+// Migrate applies the embedded migrations, up only, under a session-level
+// advisory lock so N replicas starting together produce one run (ADR-0011).
+// The lock is taken and released on one pinned connection: on a pool, an
+// unlock sent down a different connection releases nothing, and the lock would
+// stay held by an idle connection for the life of the process.
 func Migrate(ctx context.Context, db *sql.DB, opts MigrateOptions) error {
 	if opts.Disabled {
 		return nil
 	}
-	goose.SetBaseFS(migrationsFS)
-	goose.SetLogger(goose.NopLogger())
-	if err := goose.SetDialect("postgres"); err != nil {
-		return fmt.Errorf("set migration dialect: %w", err)
+	return migrate(ctx, db, embeddedMigrations(), 0)
+}
+
+// migrate is Migrate over any file set and, when target is non-zero, only up
+// to that version. The tests use both: an edited copy of the set proves the
+// checksum refusal, and a target proves every earlier version upgrades.
+func migrate(ctx context.Context, db *sql.DB, fsys fs.FS, target int64) error {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire migration connection: %w", err)
 	}
-	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_lock($1)", advisoryLockKey); err != nil {
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", advisoryLockKey); err != nil {
 		return fmt.Errorf("acquire migration lock: %w", err)
 	}
-	defer db.ExecContext(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", advisoryLockKey)
-	if err := goose.UpContext(ctx, db, migrationDir); err != nil {
+	defer conn.ExecContext(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", advisoryLockKey)
+
+	sums, err := fileChecksums(fsys)
+	if err != nil {
+		return err
+	}
+	if err := verifyChecksums(ctx, conn, sums); err != nil {
+		return err
+	}
+	provider, err := newProvider(db, fsys)
+	if err != nil {
+		return err
+	}
+	if target == 0 {
+		_, err = provider.Up(ctx)
+	} else {
+		_, err = provider.UpTo(ctx, target)
+	}
+	if err != nil {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
-	return nil
+	applied, err := provider.GetDBVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("read applied migration version: %w", err)
+	}
+	return recordChecksums(ctx, conn, sums, applied)
+}
+
+func newProvider(db *sql.DB, fsys fs.FS) (*goose.Provider, error) {
+	p, err := goose.NewProvider(goose.DialectPostgres, db, fsys, goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		return nil, fmt.Errorf("open migration provider: %w", err)
+	}
+	return p, nil
+}
+
+func embeddedMigrations() fs.FS {
+	sub, err := fs.Sub(migrationsFS, migrationDir)
+	if err != nil {
+		panic(err) // the directory is embedded at build time
+	}
+	return sub
 }
 
 func MigrationsCurrent(ctx context.Context, db *sql.DB) (bool, error) {
@@ -95,7 +145,11 @@ func MigrationsCurrent(ctx context.Context, db *sql.DB) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	got, err := goose.GetDBVersionContext(ctx, db)
+	provider, err := newProvider(db, embeddedMigrations())
+	if err != nil {
+		return false, err
+	}
+	got, err := provider.GetDBVersion(ctx)
 	if err != nil {
 		return false, fmt.Errorf("read applied migration version: %w", err)
 	}
@@ -103,11 +157,26 @@ func MigrationsCurrent(ctx context.Context, db *sql.DB) (bool, error) {
 }
 
 func EmbeddedVersion() (int64, error) {
-	entries, err := migrationsFS.ReadDir(migrationDir)
+	versions, err := versionedFiles(embeddedMigrations())
 	if err != nil {
-		return 0, fmt.Errorf("read embedded migrations: %w", err)
+		return 0, err
 	}
 	var max int64
+	for v := range versions {
+		if v > max {
+			max = v
+		}
+	}
+	return max, nil
+}
+
+// versionedFiles maps each migration's version to its file name.
+func versionedFiles(fsys fs.FS) (map[int64]string, error) {
+	entries, err := fs.ReadDir(fsys, ".")
+	if err != nil {
+		return nil, fmt.Errorf("read embedded migrations: %w", err)
+	}
+	out := map[int64]string{}
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".sql") {
@@ -115,15 +184,13 @@ func EmbeddedVersion() (int64, error) {
 		}
 		prefix, _, ok := strings.Cut(name, "_")
 		if !ok {
-			return 0, fmt.Errorf("migration %s does not follow NNNNN_name.sql", name)
+			return nil, fmt.Errorf("migration %s does not follow NNNNN_name.sql", name)
 		}
 		v, err := strconv.ParseInt(prefix, 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("migration %s has an unreadable version prefix: %w", name, err)
+			return nil, fmt.Errorf("migration %s has an unreadable version prefix: %w", name, err)
 		}
-		if v > max {
-			max = v
-		}
+		out[v] = name
 	}
-	return max, nil
+	return out, nil
 }

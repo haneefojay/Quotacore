@@ -146,7 +146,7 @@ documents themselves and fails if this table disagrees, so a stale count cannot 
 | Named tests | 15 | [architecture/testing-strategy.md](architecture/testing-strategy.md) |
 | Decisions | 17 | [decisions/](decisions/) |
 | Markdown documents | 63 | repository root |
-| Files in the repository | 147 | repository root, excluding the paths `.gitignore` marks as build output (13 files added by `IP-05` and `IP-06`: `IP-05`'s three embedded Lua scripts, the runner and the outcome, and the source, unit and integration tests that assert them; `IP-06`'s `idempotency.go` and its unit and integration tests) |
+| Files in the repository | 157 | repository root, excluding the paths `.gitignore` marks as build output (13 files added by `IP-05` and `IP-06`: `IP-05`'s three embedded Lua scripts, the runner and the outcome, and the source, unit and integration tests that assert them; `IP-06`'s `idempotency.go` and its unit and integration tests; and, so far, 10 by `IP-08`: six migrations, the checksum record, and the schema, enum and test-database helpers) |
 
 ## Identifier namespaces
 
