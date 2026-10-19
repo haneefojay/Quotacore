@@ -162,6 +162,18 @@ exists, because a future implementer needs to know which statements are new.
   is now `NOT STARTED`. The phase map in [v0-1-enforcement-path.md](docs/roadmaps/v0-1-enforcement-path.md)
   had also kept `IP-06` at `BLOCKED` and `IP-03` and `IP-05` undated, and is brought in line with
   [roadmap-index.md](docs/roadmaps/roadmap-index.md).
+- **The specification amendments `IP-08` needed before it could build the schema, 2026-10-19.**
+  [data-model.md](docs/architecture/data-model.md) now states `tenants_plan_idx`, which its own prose
+  and the impact route already required; a `seq` column on `usage_events`, which §2.2 already cited
+  and the within-batch order of `balance_after` needs; a `CHECK` on `audit_log.subject_type` with the
+  four values the API documents; and that no migration ships a down section and every applied
+  migration's checksum is recorded. [api-conventions.md](docs/architecture/api-conventions.md) §2
+  said the internal identifiers were UUIDv7; they are v4, which is what the data model generates
+  and PostgreSQL 16 can produce. The `UsageEvent.request_id` description in `api/openapi.yaml` said
+  a `system` event carries `null`; the column is `NOT NULL`, so a job mints the id, and only the
+  description changed (`make generate`, `make docs`). `Q-22` asks how a zero-delta transition meets
+  `delta <> 0`, with a default, and `Q-09`'s deadline moves to `IP-12`, because retention changes
+  no table. `SECURITY.md` §6 gains gap 8, `tenants.display_name`.
 - **`IP-02` is `COMPLETE`, started and closed on 2026-09-28, with all seven Definition-of-Done
   items met.** The contract exists, is served, and is generated from the specification rather than
   ahead of it.

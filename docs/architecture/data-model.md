@@ -166,6 +166,8 @@ CREATE TABLE tenants (
   CONSTRAINT tenants_external_id_format
     CHECK (external_id ~ '^[A-Za-z0-9._:-]{1,128}$')
 );
+
+CREATE INDEX tenants_plan_idx ON tenants (plan_id);
 ```
 
 The `external_id` character class deliberately excludes `@` (DR-034), which makes it structurally
@@ -181,6 +183,11 @@ logs (DR-043, NFR-O6).
 
 Indexes: the unique index on `external_id` serves lookups. `plan_id` is indexed for
 `apply-now` and for impact previews (Q-14).
+
+> **Amended 2026-10-19 (`IP-08`).** The sentence above already required `tenants_plan_idx`, and
+> [request-lifecycle.md](request-lifecycle.md) calls the impact route "a single indexed count", but
+> the DDL block did not contain the index. It does now, so the schema the migrations build and the
+> schema this document states are the same text.
 
 ### 2.5 Tenant overrides
 
@@ -248,6 +255,7 @@ indexing a verifier invites a timing-oracle design and a scan.
 ```sql
 CREATE TABLE usage_events (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  seq            bigint GENERATED ALWAYS AS IDENTITY,
   tenant_id      uuid NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
   feature_id     uuid NOT NULL REFERENCES features(id) ON DELETE RESTRICT,
   cycle_index    bigint NOT NULL,
@@ -259,10 +267,20 @@ CREATE TABLE usage_events (
   idempotency_key text,
   metadata       jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at     timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT usage_events_delta_nonzero CHECK (delta <> 0)
+  CONSTRAINT usage_events_delta_nonzero CHECK (delta <> 0),
+  CONSTRAINT usage_events_seq_unique UNIQUE (seq)
 );
 ```
 
+`seq` is the ledger's order. `created_at DEFAULT now()` is the start of the *transaction*, so every
+event a writer inserts in one batch carries the same timestamp, and an order by `created_at` alone
+would read `balance_after` in an arbitrary order inside the batch. `seq` is assigned per row, in
+insert order, and is the tiebreaker that newest-first pagination needs (api-conventions.md §9).
+
+> **Amended 2026-10-19 (`IP-08`).** Section 2.2 already said ordering is "never by `id` — which is
+> also why the ledger's `seq` column exists", but this block had no `seq`. The column is added here
+> rather than the sentence deleted, because the within-batch order is the one the reconciliation
+> identity of DR-042 is read in.
 `delta <> 0` is enforced, which makes U-8 in the state machines a database guarantee rather than
 an application intention: an `amount: 0` consume cannot produce a row.
 
@@ -300,12 +318,26 @@ CREATE TABLE audit_log (
   before       jsonb,
   after        jsonb,
   request_id   text NOT NULL,
-  created_at   timestamptz NOT NULL DEFAULT now()
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT audit_log_subject_type
+    CHECK (subject_type IN ('tenant', 'plan', 'feature', 'api_key'))
 );
 
 CREATE INDEX audit_log_subject_idx ON audit_log (subject_type, subject_id, created_at DESC);
 CREATE INDEX audit_log_time_idx    ON audit_log (created_at DESC);
 ```
+
+`subject_type` is a `CHECK` rather than an enum because it names a kind of resource rather than a
+lifecycle state, and its four values are exactly the `AuditEntry.subject_type` values the API
+returns, so a row the API could not describe cannot be written.
+
+`actor_key_id` is `ON DELETE SET NULL`, which would be the database itself updating an append-only
+table. It never fires: an API key is revoked, which is a state change, and no path deletes an
+`api_keys` row. The source check that holds `audit_log` append-only also refuses `DELETE FROM
+api_keys` for that reason.
+
+> **Amended 2026-10-19 (`IP-08`).** The `subject_type` constraint is new. The column was free text,
+> while the API documents it as a four-value enum.
 
 The audit write happens **in the same transaction as the mutation it records** (NFR-D4). An audit
 log that is written best-effort is a log, not an audit trail, and the distinction is the entire
@@ -329,6 +361,16 @@ anything.
 Each migration is a single transaction where possible. A migration that cannot be transactional,
 such as one adding an index concurrently, is split into steps and its lock behaviour documented
 in the migration comment.
+
+> **Amended 2026-10-19 (`IP-08`).** No migration file ships a down section. The runner has no down
+> path (`IP-01`, `TestUpOnlyIsStructural`), so a down block is SQL that can never run and never be
+> tested, and a `DROP TABLE usage_events` sitting in the file set is exactly the hazard
+> [ADR-0011](../decisions/0011-postgres-only-control-plane.md) describes; the ADR permits down
+> migrations for development and does not require them. The rollback is a restore
+> ([deployment.md](deployment.md#11-upgrade-and-rollback)). Each applied file's SHA-256 is recorded
+> in `quotacore_migration_checksums`, which the runner creates itself, and a file whose bytes
+> differ from the recorded hash refuses to start, which is the checksum rule ADR-0011 states and goose
+> does not implement.
 
 ---
 

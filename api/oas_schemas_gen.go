@@ -6766,7 +6766,9 @@ type UsageEvent struct {
 	BalanceAfter Amount      `json:"balance_after"`
 	Source       EventSource `json:"source"`
 	EventType    EventType   `json:"event_type"`
-	// Null for `system` events, which no request caused.
+	// The request that caused the event. A `system` event, such as a rollover by the reset worker, carries
+	// the request id the job minted for its run, so every event joins to a log line (NFR-S10). The column
+	// is `NOT NULL` (data-model.md §2.7); `null` is allowed by the schema and is not produced.
 	RequestID NilRequestId `json:"request_id"`
 	// The customer's key, on `consumed` and `refunded`. Filtering by it is how a disputed charge is
 	// resolved: the recorded outcome shows whether it was applied once or twice (UC-16).
