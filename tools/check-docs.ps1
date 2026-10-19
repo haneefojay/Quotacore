@@ -282,7 +282,12 @@ $counts = [ordered]@{
     'Named tests'               = { ($defined['T'] | Measure-Object).Count }
     'Decisions'                 = { ($defined['ADR'] | Measure-Object).Count }
     'Markdown documents'        = { $fileCount }
-    'Files in the repository'   = { (Get-ChildItem -Path $Root -Recurse -File | Where-Object { $_.FullName -notmatch '\\\.git\\' -and $_.FullName -notmatch '\\\.opencode\\' -and -not (& $isIgnored $_.FullName) }).Count }
+    # -Force, because on Linux and macOS a dotfile is hidden and Get-ChildItem skips
+    # it without the flag: `.gitignore`, `.github/workflows/ci.yml` and the rest are
+    # repository files on every platform, and a count that depends on the platform
+    # would fail CI for a number that is right on Windows. The separators are
+    # matched either way for the same reason.
+    'Files in the repository'   = { (Get-ChildItem -Path $Root -Recurse -File -Force | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.FullName -notmatch '[\\/]\.opencode[\\/]' -and -not (& $isIgnored $_.FullName) }).Count }
 }
 
 $measured = [ordered]@{}
