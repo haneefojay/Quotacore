@@ -39,6 +39,14 @@ type Loader interface {
 	Load(ctx context.Context, tenantID string) (*LoadedTenant, error)
 }
 
+// IDResolver maps a customer's external_id to the internal tenant id. It is
+// the first of the two statements the first sight of a tenant costs (IP-07,
+// decision D3); every later miss of that tenant costs only Load. A tenant that
+// provably does not exist, or is deleted, returns ErrTenantUnknown.
+type IDResolver interface {
+	TenantIDByExternalID(ctx context.Context, externalID string) (string, error)
+}
+
 // LoadedTenant is one tenant's configuration as the data plane needs it,
 // projected from features, plans, entitlements, tenants and overrides. Version
 // is the value of qc:cfg:tenants[tenant] at read time, which is what staleness

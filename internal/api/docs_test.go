@@ -10,9 +10,8 @@ import (
 	contract "github.com/quotacore/quotacore/api"
 )
 
-// These tests are about the two documentation routes only. The probes are covered in
-// router_test.go, and the product routes are deliberately absent, which router_test.go also
-// asserts.
+// These tests are about the two documentation routes only. The probes and the product routes
+// are covered in router_test.go.
 
 // TestRouterServesTheOperationalRoutes is the table that says what the current phase serves.
 func TestRouterServesTheOperationalRoutes(t *testing.T) {
@@ -35,9 +34,11 @@ func TestRouterServesTheOperationalRoutes(t *testing.T) {
 		{http.MethodGet, "/openapi.yaml", http.StatusNotFound, ""},
 		{http.MethodGet, "/api/openapi.json", http.StatusNotFound, ""},
 		{http.MethodGet, "/swagger.json", http.StatusNotFound, ""},
-		{http.MethodGet, "/v1/consume", http.StatusNotFound, ""},
-		{http.MethodGet, "/v1/check", http.StatusNotFound, ""},
-		{http.MethodGet, "/v1/refund", http.StatusNotFound, ""},
+		// The three metered routes are POST, so a GET is a wrong method rather than an unknown
+		// path, with or without a data plane behind them.
+		{http.MethodGet, "/v1/consume", http.StatusMethodNotAllowed, ""},
+		{http.MethodGet, "/v1/check", http.StatusMethodNotAllowed, ""},
+		{http.MethodGet, "/v1/refund", http.StatusMethodNotAllowed, ""},
 		{http.MethodGet, "/v1/balance", http.StatusNotFound, ""},
 		{http.MethodGet, "/v1/admin/tenants", http.StatusNotFound, ""},
 		{http.MethodGet, "/v1/admin/keys", http.StatusNotFound, ""},
