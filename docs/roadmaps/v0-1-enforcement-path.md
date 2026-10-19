@@ -569,6 +569,19 @@ Three things are recorded here because the phase surfaced them.
   the data model exactly, the accepted ADR is untouched, and the spelling difference is recorded here
   rather than silently "fixed" in the ADR.
 
+> **Defects found after close, 2026-10-19.** Two defects in `internal/snapshot` were found while
+> verifying `IP-06`, and fixed without reopening the phase because neither changes a DoD item, only
+> whether the code meets it. **The subscriber missed a change announced before it subscribed.** A
+> message published between `Start` and a confirmed subscription reached nobody, so the change
+> waited a full `RefreshInterval`, over NFR-D3's second; `TestInvalidationLagWithinNFRD3` failed on
+> every local run for exactly that reason, and had never run in CI because CI had never run on this
+> branch. The subscriber now reconciles once each time a subscription is confirmed, and
+> `TestAChangeAnnouncedBeforeTheSubscriptionIsNotMissed` holds it without a datastore. **A cache hit
+> was a write under a read lock.** A hit moves the entry to the front of the recency list, and
+> `find` took the shared lock, so two concurrent hits were two concurrent writes to that list:
+> `TestConcurrentHitsAreRaceFree` fails under `-race` without the fix. `find` now takes the write
+> lock. Its cost under contention is measured by `IP-16`'s load rows, not asserted here.
+
 **Exit criteria.** The service enforces against a snapshot it can hold in memory, and stopping
 Postgres changes nothing about that; the second half of the sentence becomes observable in `IP-07`.
 
@@ -704,7 +717,7 @@ are the three embedded Lua bodies and the runner is the only Go caller; the sour
 | — | `TestTheRunnerAddressesTheScriptByItsDigest`, `TestAFlushedScriptCacheIsRecoveredFromWithoutARestart`, `TestTheStoreThatForgotTheScriptsIsRecoveredFrom` (integration) | An `EVAL` on the request path, a flushed script cache needing a restart, or a retry that is not bounded to one (NFR-S8) |
 | — | `TestARecoveredCallIsRetriedOnceAndNoMore`, `TestAFailedReloadIsReportedRatherThanRetried` | A retry loop, or a second `SCRIPT LOAD` behind one `NOSCRIPT` |
 | — | `TestTheBudgetIsTheCallersBudget` | A request budget that is not the caller's context deadline, or a `NOSCRIPT` reload that starts a second budget |
-| — | `TestTheScriptsCallOnlyTheCommandsTheyNeed`, `TestScriptsIterateOverNothing` | A command outside `HMGET`, `HSET`, `HINCRBY`, `EXPIREAT` and `PERSIST`, and any loop, so the work stays constant per key |
+| — | `TestScriptsCallOnlyTheCommandsTheyNeed`, `TestScriptsIterateOverNothing` | A command outside `HMGET`, `HSET`, `HINCRBY`, `EXPIREAT` and `PERSIST`, and any loop, so the work stays constant per key |
 | — | `TestTheScriptsWorkIsNotProportionalToTheTenant` (integration) | A per-request operation over the tenant's other feature keys — 200 sibling hashes leave the work unchanged |
 | — | `TestTheScriptsAndTheRunnerAgreeOnTheBound`, `TestTheScriptsReadTheArgumentsTheRunnerSends`, `TestTheRunnerSendsOneKeyAndSixValues` | The scripts and the runner disagreeing about the bound, the argument order, or the key, which is the failure a silent `ARGV` shift produces |
 | — | `TestT05TheTransitionIsMonotonic`, `TestOnlyOneOfManyConcurrentCallersRollsTheCycle` (integration) | A caller behind the store rolling the cycle, or 50 callers that all discover a closed boundary re-granting it 50 times (DR-045, T-05) |
@@ -841,7 +854,7 @@ the `.lua` files, so they hold the script surface rather than one call site. The
 | 7 | `TestT02AReplayReportsTheRecordedStateNotTheLiveOne` (integration) | A replay reading the balance instead of the record, so a retry is visible to, or lies to, a caller (detection is `IP-11`'s) |
 | — | `TestTheFingerprintIsHexOfTheRightLength`, `TestTheFingerprintIsStable`, `TestTheFingerprintChangesWithEveryPartOfTheOperation`, `TestTheFingerprintCannotBeShiftedByTheContentsOfAField`, `TestTheFingerprintExcludesTheRequestId` | A fingerprint that is not stable, does not change with the operation, or can be shifted by the contents of a field — the injection the length prefix closes |
 | — | `TestTheMutationScriptsShareOneIdempotencyBlock`, `TestTheMutationScriptsLookUpTheRecordBeforeTheyRoll`, `TestCheckSendsOneKeyAndAnEmptyFingerprint` | Two mutation scripts that drift apart, a lookup that runs after a rollover, or a `check` given a record key it has no use for |
-| — | `TestTheRunnerSendsTwoKeysAndSevenValues`, `TestTheScriptsReadTheArgumentsTheRunnerSends`, `TestTheScriptsCallOnlyTheCommandsTheyNeed` | The scripts and the runner disagreeing about the keys, the argument order or the new `GET`/`SET`, which is the failure a silent `ARGV` shift produces |
+| — | `TestTheRunnerSendsTwoKeysAndSevenValues`, `TestTheScriptsReadTheArgumentsTheRunnerSends`, `TestScriptsCallOnlyTheCommandsTheyNeed` | The scripts and the runner disagreeing about the keys, the argument order or the new `GET`/`SET`, which is the failure a silent `ARGV` shift produces |
 | — | `TestDecodeReadsEveryShapeAScriptCanAnswerWith`, `TestDecodeRefusesAnythingItDoesNotUnderstand`, `TestTheTwoNamedRefusalsAreRecognisable` | A `replayed` or `reused` reply read as a real one, or of the wrong arity, accepted as if it were state |
 
 Two things are recorded here because the phase surfaced them.

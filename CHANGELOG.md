@@ -404,6 +404,14 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Fixed
 
+- The snapshot subscriber missed a configuration change announced before its subscription was
+  confirmed, so the change waited a full refresh interval rather than NFR-D3's second, and a cache
+  hit wrote to the recency list under a shared lock, a data race once two requests hit at once. The
+  subscriber now reconciles each time it subscribes and a hit takes the write lock; both are proved
+  by tests that fail without the fix, and recorded in the `IP-04` section of
+  [v0-1-enforcement-path.md](docs/roadmaps/v0-1-enforcement-path.md).
+- Two evidence rows named `TestTheScriptsCallOnlyTheCommandsTheyNeed`; the test is
+  `TestScriptsCallOnlyTheCommandsTheyNeed`.
 - Rows 4–7 of the boundary table in [cycle-engine.md](docs/architecture/cycle-engine.md) §6 were
   wrong, and an implementer reading them would have built the wrong calendar engine while the tests
   written from the same document passed. The daily and weekly rows around the EU spring forward
