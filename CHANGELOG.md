@@ -412,6 +412,10 @@ exists, because a future implementer needs to know which statements are new.
   [v0-1-enforcement-path.md](docs/roadmaps/v0-1-enforcement-path.md).
 - Two evidence rows named `TestTheScriptsCallOnlyTheCommandsTheyNeed`; the test is
   `TestScriptsCallOnlyTheCommandsTheyNeed`.
+- `tools/check-docs.ps1` counted "Files in the repository" without `-Force`, so on Linux and macOS
+  it skipped the five dotfiles that Windows counts, and CI's Ubuntu runner measured 142 against
+  the inventory's correct 147. The count now includes hidden files and matches `.git` with either
+  path separator, so it is the same number on every platform.
 - Rows 4–7 of the boundary table in [cycle-engine.md](docs/architecture/cycle-engine.md) §6 were
   wrong, and an implementer reading them would have built the wrong calendar engine while the tests
   written from the same document passed. The daily and weekly rows around the EU spring forward
