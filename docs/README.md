@@ -1,7 +1,7 @@
 # Documentation
 
-Every document in this repository, what it settles, and who should read it. 111 files: 63 Markdown
-documents — 10 root, 9 product, 12 architecture, 17 decisions, 8 research, 6 roadmaps and this
+Every document in this repository, what it settles, and who should read it. 112 files: 64 Markdown
+documents — 10 root, 9 product, 12 architecture, 18 decisions, 8 research, 6 roadmaps and this
 index — plus 48 that are not documents: `LICENSE`, the two checkers, one allowlist and the
 documentation generator under `tools/`, `.gitignore`, `.gitattributes`, the two files under
 `.github/`, the module, Compose and Makefile files `IP-01` owns, the twenty files `IP-02` owns
@@ -25,7 +25,7 @@ file is the reference. If you are an agent or a contributor making changes, read
 | [../PROJECT.md](../PROJECT.md) | Orientation, status, the three claims, four reading orders | You are new to the project |
 | [../PRD.md](../PRD.md) | Requirements, personas, metrics, and the scope boundary with reasons | You are deciding whether to adopt or to build |
 | [../ARCHITECTURE.md](../ARCHITECTURE.md) | System shape, components, data model, runtime flow | You are building or reviewing the system |
-| [../TECHNICAL-DECISIONS.md](../TECHNICAL-DECISIONS.md) | All 17 decisions, their rationale and revisit triggers | You want to know *why*, or you want to reopen something |
+| [../TECHNICAL-DECISIONS.md](../TECHNICAL-DECISIONS.md) | All 18 decisions, their rationale and revisit triggers | You want to know *why*, or you want to reopen something |
 | [../SECURITY.md](../SECURITY.md) | Threat model, controls, known gaps, incident response | You are assessing risk, or deciding whether to trust it with revenue-bearing state |
 | [../ROADMAP.md](../ROADMAP.md) | v0.1 → v0.5, gates, and what is deliberately late | You want to know what ships when, and what will not |
 | [../AGENTS.md](../AGENTS.md) | How to work in this repository: reading order, change recipes, definition of done | You are about to change anything here |
@@ -94,6 +94,7 @@ Full records in [decisions/](decisions/), indexed with rationale in
 | [0015](decisions/0015-release-slicing.md) | A hard MVP boundary, with the rest sequenced behind it | |
 | [0016](decisions/0016-usage-event-ledger.md) | The usage event log is a signed-delta ledger, and it is the recovery source | Yes |
 | [0017](decisions/0017-noeviction-and-duplicate-reversal.md) | No eviction inside the 24-hour window, and an automatic reversal for what no eviction cannot prevent | Yes |
+| [0018](decisions/0018-api-key-format-and-verifier.md) | API keys: the contract's token format, and a SHA-256 verifier on every request. Supersedes 0012 | |
 
 ## Research — what was investigated before deciding
 
@@ -144,9 +145,9 @@ documents themselves and fails if this table disagrees, so a stale count cannot 
 | Non-functional requirements | 63 | [architecture/non-functional-requirements.md](architecture/non-functional-requirements.md) |
 | Invariants | 43 | [product/state-machines.md](product/state-machines.md), [architecture/data-model.md](architecture/data-model.md) |
 | Named tests | 15 | [architecture/testing-strategy.md](architecture/testing-strategy.md) |
-| Decisions | 17 | [decisions/](decisions/) |
-| Markdown documents | 63 | repository root |
-| Files in the repository | 163 | repository root, excluding the paths `.gitignore` marks as build output (13 files added by `IP-05` and `IP-06`: `IP-05`'s three embedded Lua scripts, the runner and the outcome, and the source, unit and integration tests that assert them; `IP-06`'s `idempotency.go` and its unit and integration tests; and 16 by `IP-08`: six migrations, the checksum record, the error classifier, the three guarded operations and the Postgres snapshot loader, and the schema, enum, constraint, source, loader and test-database tests) |
+| Decisions | 18 | [decisions/](decisions/) |
+| Markdown documents | 64 | repository root |
+| Files in the repository | 164 | repository root, excluding the paths `.gitignore` marks as build output (13 files added by `IP-05` and `IP-06`: `IP-05`'s three embedded Lua scripts, the runner and the outcome, and the source, unit and integration tests that assert them; `IP-06`'s `idempotency.go` and its unit and integration tests; and 16 by `IP-08`: six migrations, the checksum record, the error classifier, the three guarded operations and the Postgres snapshot loader, and the schema, enum, constraint, source, loader and test-database tests) |
 
 ## Identifier namespaces
 

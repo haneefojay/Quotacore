@@ -48,16 +48,20 @@ configuration we prescribe, and a penetration test — see [§6](#6-known-gaps).
 
 ### 4.1 Authentication and authorisation
 
-Opaque 256-bit secrets, Argon2id with a per-key salt, constant-time comparison on every request,
+Opaque 256-bit secrets, stored as a SHA-256 digest, constant-time comparison on every request,
 and a bounded credential cache that holds the hash rather than a boolean. No recovery path, ever —
 a recovery path is a path for an attacker with database read access (INV-K3). Two scopes only:
 `runtime` for the four data-plane endpoints, `admin` for everything including configuration. The
 bootstrap key is printed once, and the service **refuses to start** while an unacknowledged default
 exists (NFR-S9, INV-K2).
 
+> **Amended 2026-10-19 ([ADR-0018](docs/decisions/0018-api-key-format-and-verifier.md)).** This section said Argon2id with a per-key salt.
+> A slow hash defends nothing that a 256-bit random secret has not already defeated, and verifying one
+> on every request cannot fit the first claim's latency budget.
+
 ### 4.2 Secrets management
 
-Connection strings, the bootstrap acknowledgement and the Argon2 parameters come from the
+Connection strings and the bootstrap acknowledgement come from the
 environment and are never baked into an image. Nothing else in the schema is secret. Plaintext
 `redis://` is a startup warning honoured only with an explicit override.
 

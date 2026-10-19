@@ -162,7 +162,7 @@ grant a feature the plan excludes (DR-015).
 | # | From | Trigger | To | Effect | Audited |
 | --- | --- | --- | --- | --- | --- |
 | K-1 | absent | issue (UC-15) | active | plaintext returned once; hash and prefix stored | yes, prefix only |
-| K-2 | active | revoke | revoked | rejected on the next request, no cache delay | yes, prefix only |
+| K-2 | active | revoke | revoked | rejected on the next request to the revoking instance, and within NFR-D3 on every other (amended 2026-10-19, `IP-07`) | yes, prefix only |
 | K-3 | active | expiry reached | expired | same as K-2, by clock | on transition |
 | K-4 | active | rotate | active | a new key is issued by K-1; the old key is retired by K-2 only when the caller chooses | yes |
 
