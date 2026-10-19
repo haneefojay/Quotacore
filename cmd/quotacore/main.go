@@ -99,7 +99,7 @@ func run() error {
 			return
 		}
 		log.Warn("readiness changed", "ready", false, "unsatisfied", terms)
-	}))
+	}), nil)
 	if err != nil {
 		return err
 	}

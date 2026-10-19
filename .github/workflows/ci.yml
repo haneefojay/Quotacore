@@ -96,8 +96,10 @@ jobs:
           done
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz)" = "200"
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/readyz)" = "503"
-      - name: No product route exists yet
-        run: test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/v1/balance)" = "404"
+      - name: The data plane asks for a credential, in the envelope
+        run: |
+          test "$(curl -s -o /tmp/unauth.json -w '%{http_code}' 'http://127.0.0.1:8080/v1/balance?tenant_external_id=acme')" = "401"
+          python3 -c "import json;e=json.load(open('/tmp/unauth.json'))['error'];assert e['code']=='unauthorized',e;assert e['request_id'],e"
       - name: The running binary serves the contract it was built from
         run: |
           curl -fsS -o /tmp/served.json http://127.0.0.1:8080/openapi.json
@@ -110,8 +112,8 @@ jobs:
         run: |
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/openapi.json)" = "405"
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/docs)" = "405"
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/v1/consume)" = "404"
-          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/v1/admin/tenants)" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/v1/consume)" = "405"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/v1/admin/tenants)" = "401"
       - name: Refuses to start on an unacknowledged bootstrap key
         run: |
           if docker run --rm --network quotacore_default \

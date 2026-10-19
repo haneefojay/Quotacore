@@ -31,7 +31,10 @@ type enforcement struct {
 	Close    func()
 }
 
-func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB, data *store.Store, ready api.Readiness) (*enforcement, error) {
+// events is the ledger's sink; nil is the no-op sink, which is what ships
+// until IP-12 provides the queue and the writer.
+func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB, data *store.Store,
+	ready api.Readiness, events dataplane.EventSink) (*enforcement, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	snap := snapshot.New(snapshot.Options{
 		LimitEntries:        cfg.ConfigCacheEntries,
@@ -97,6 +100,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		Scripts:     runner,
 		Balances:    data,
 		Metrics:     plane,
+		Events:      events,
 		MetadataMax: cfg.MetadataMaxBytes,
 		StoreBudget: cfg.DataScriptTimeout,
 	})
