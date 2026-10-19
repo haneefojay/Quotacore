@@ -19,7 +19,8 @@ import (
 type tenantCache struct {
 	ll        *list.List
 	byID      map[string]*list.Element
-	plans     map[string]*Plan // id → interned plan, refcounted
+	byExtern  map[string]string // external_id → tenant id, for cached tenants only
+	plans     map[string]*Plan  // id → interned plan, refcounted
 	tenantMem int64
 	planMem   int64
 	limit     int
@@ -36,11 +37,12 @@ type cacheEntry struct {
 
 func newTenantCache(limit int, byteCap int64) *tenantCache {
 	return &tenantCache{
-		ll:      list.New(),
-		byID:    make(map[string]*list.Element),
-		plans:   make(map[string]*Plan),
-		limit:   limit,
-		byteCap: byteCap,
+		ll:       list.New(),
+		byID:     make(map[string]*list.Element),
+		byExtern: make(map[string]string),
+		plans:    make(map[string]*Plan),
+		limit:    limit,
+		byteCap:  byteCap,
 	}
 }
 
@@ -65,8 +67,12 @@ func (c *tenantCache) add(t *Tenant) {
 	entry := &cacheEntry{id: id, tenant: t, bytes: tenantBytes(t)}
 	if existing, ok := c.byID[id]; ok {
 		old := existing.Value.(*cacheEntry)
-		if old.tenant.Plan != t.Plan {
-			c.release(old.tenant.Plan)
+		// intern took a reference for the new entry whether or not the plan
+		// changed, so the old entry's reference is always released; skipping it
+		// when the plan was the same kept that plan alive forever.
+		c.release(old.tenant.Plan)
+		if old.tenant.ExternalID != t.ExternalID && c.byExtern[old.tenant.ExternalID] == id {
+			delete(c.byExtern, old.tenant.ExternalID)
 		}
 		c.tenantMem += entry.bytes - old.bytes
 		existing.Value = entry
@@ -75,6 +81,7 @@ func (c *tenantCache) add(t *Tenant) {
 		c.byID[id] = c.ll.PushFront(entry)
 		c.tenantMem += entry.bytes
 	}
+	c.byExtern[t.ExternalID] = id
 	for !c.withinBounds() {
 		if !c.evictOldest() {
 			break
@@ -104,6 +111,7 @@ func (c *tenantCache) evictOldest() bool {
 	entry := back.Value.(*cacheEntry)
 	c.ll.Remove(back)
 	delete(c.byID, entry.id)
+	c.forgetExtern(entry)
 	c.tenantMem -= entry.bytes
 	c.release(entry.tenant.Plan)
 	if c.onEvict != nil {
@@ -130,6 +138,7 @@ func (c *tenantCache) prune(latest map[string]int64) (evicted int) {
 		entry := e.Value.(*cacheEntry)
 		c.ll.Remove(e)
 		delete(c.byID, id)
+		c.forgetExtern(entry)
 		c.tenantMem -= entry.bytes
 		c.release(entry.tenant.Plan)
 		if c.onEvict != nil {
@@ -146,6 +155,25 @@ func (c *tenantCache) prune(latest map[string]int64) (evicted int) {
 }
 
 func (c *tenantCache) len() int { return c.ll.Len() }
+
+// byExternal returns the cached tenant an external_id names and touches
+// recency, or nil. The mapping lives and dies with its tenant: an external_id
+// is immutable (TenantUpdate has no such field) and never reused (the column
+// is unique across soft-deleted rows), so a cached pair is never wrong, and
+// evicting the tenant evicts the pair, so the map is bounded by the cache.
+func (c *tenantCache) byExternal(externalID string) *Tenant {
+	id, ok := c.byExtern[externalID]
+	if !ok {
+		return nil
+	}
+	return c.get(id)
+}
+
+func (c *tenantCache) forgetExtern(e *cacheEntry) {
+	if c.byExtern[e.tenant.ExternalID] == e.id {
+		delete(c.byExtern, e.tenant.ExternalID)
+	}
+}
 
 // intern finds or creates the shared plan a tenant points at, and records one
 // reference. Plans are identified by their UUID; a new id interns a fresh

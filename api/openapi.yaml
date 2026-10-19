@@ -98,8 +98,8 @@ paths:
         The call a customer's application makes instead of decrementing a counter itself.
 
         `Idempotency-Key` is required. The same key replayed with the same
-        `operation | tenant | feature | amount` returns the original response byte for byte with
-        `replayed: true`, and the same key with a different fingerprint is
+        `operation | tenant | feature | amount` returns the original response's state values
+        unchanged, with `replayed: true` where the original said `false`, and the same key with a different fingerprint is
         `409 idempotency_key_reuse` with no state change at all (DR-028, INV-I2).
 
         The window is 24 hours from the first application. A key first seen after that is a new
@@ -275,7 +275,7 @@ paths:
         indistinguishable from an exhausted allowance, which is the distinction the caller most
         needs (FS-17).
       parameters:
-        - $ref: '#/components/parameters/TenantExternalIdQuery'
+        - $ref: '#/components/parameters/TenantExternalIdRequired'
         - $ref: '#/components/parameters/FeatureKeyQuery'
       responses:
         '200':
@@ -1339,9 +1339,9 @@ paths:
       operationId: createKey
       summary: Issue an API key
       description: |
-        The plaintext key is in this response and nowhere else. Only an Argon2id hash and the
-        public prefix are stored, and the hash is deliberately not indexed, because indexing a
-        verifier invites a timing-oracle design (ADR-0012).
+        The plaintext key is in this response and nowhere else. Only a SHA-256 digest of the secret
+        and the public prefix are stored, and the digest is deliberately not indexed, because
+        indexing a verifier invites a timing-oracle design (ADR-0018).
 
         Scope is visible in the token itself, so a scope mismatch is not a 400-line debugging
         session: `qc_runtime_<prefix>.<secret>` and `qc_admin_<prefix>.<secret>`.
@@ -1575,8 +1575,8 @@ components:
     IdempotentReplay:
       description: |
         `true` when this response is a replay of a stored one rather than a new application. A
-        proxy or a client can tell without parsing the body. The body is byte-identical to the
-        original either way, so `replayed` in the body says the same thing (DR-026).
+        proxy or a client can tell without parsing the body. `replayed` in the body says the same
+        thing, and it is the only field in which a replay differs from the original (DR-027).
       required: false
       schema:
         type: boolean
@@ -1623,6 +1623,15 @@ components:
         twice (UC-16).
       schema:
         $ref: '#/components/schemas/IdempotencyKey'
+    TenantExternalIdRequired:
+      name: tenant_external_id
+      in: query
+      required: true
+      description: |
+        Your identifier for the tenant whose balances you are reading. Required here, because the
+        route cannot answer without a tenant; absent is `400 validation_failed`.
+      schema:
+        $ref: '#/components/schemas/ExternalId'
     TenantExternalIdQuery:
       name: tenant_external_id
       in: query
@@ -1752,8 +1761,8 @@ components:
             errors:
               - field: amount
                 issue: must be an integer, got 4200.0
-              - field: metadata
-                issue: must be at most 4096 bytes
+              - field: feature_key
+                issue: 'must match ^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$'
     InvalidAmount:
       summary: A negative amount
       description: |
@@ -1908,8 +1917,8 @@ components:
     PayloadTooLarge:
       summary: metadata above its cap
       description: |
-        The body is capped before it is parsed, so this is decided without reading the payload
-        (NFR-T6). `metadata` is correlation, not a data store.
+        The whole body is capped at 64 KiB before it is parsed, and `metadata` at 4 KiB once it is
+        decoded (NFR-T6). Either is this code, never `validation_failed`. `metadata` is correlation, not a data store.
       value:
         error:
           code: payload_too_large
@@ -2192,8 +2201,9 @@ components:
         deduction, `consumed` is the amount the *original* call applied, and the two together
         reconstruct the balance before it.
 
-        `consumed` is returned unchanged on a replay, because the replayed response is
-        byte-identical to the original (DR-026). To tell whether this particular call moved
+        `consumed` is returned unchanged on a replay, because a replay reads the recorded state
+        rather than recomputing it (DR-027). The replay differs from the original only in
+        `replayed`. To tell whether this particular call moved
         anything, read `replayed` or the `Idempotent-Replay` header; it is a one-field test rather
         than an inference from arithmetic.
       headers:
@@ -2667,7 +2677,7 @@ components:
       x-status: 201
       description: |
         The only response that ever contains the plaintext key. It is not recoverable afterwards:
-        only an Argon2id hash and the public prefix are stored (ADR-0012, INV-K3).
+        only a SHA-256 digest of the secret and the public prefix are stored (ADR-0018, INV-K3).
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'
@@ -3360,10 +3370,13 @@ components:
         One key per logical operation, reused across every attempt including retries. The window
         is 24 hours from application and is **not** configurable, because it is a documented
         customer guarantee (DR-029).
-      pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'
+      pattern: '^[A-Za-z0-9._:-]{8,255}$'
       examples:
         ulid:
           value: 01JCQ9W3K2M9XQ3F8V6T0B5NDE
+        derived:
+          summary: Derived from the customer's own durable operation identifier
+          value: 'order:8841:charge'
 
     Timestamp:
       type: string
@@ -3728,9 +3741,11 @@ components:
           allOf:
             - $ref: '#/components/schemas/Amount'
           description: |
-            The amount the **original** call applied, returned unchanged on a replay because the
-            replayed response is byte-identical (DR-026). `balance` minus `consumed` is the
-            balance before the original deduction.
+            The amount the **original** call applied, returned unchanged on a replay because a
+            replay reads the recorded state (DR-027). On `consume`, `balance` minus `consumed` is
+            the balance before the original deduction. On `refund` the schema is shared, so
+            `consumed` is the amount refunded and `balance` minus `consumed` is the balance before
+            the refund.
         cycle_start:
           oneOf:
             - $ref: '#/components/schemas/Timestamp'
@@ -3790,7 +3805,11 @@ components:
         consumed:
           allOf:
             - $ref: '#/components/schemas/Amount'
-          description: Consumption so far in this cycle, as recorded in the ledger.
+          description: |
+            Net consumption in the stored cycle, derived as `limit + bonus - balance`. A refund
+            lowers it and an administrative `set` shows through it. It is computed from the balance
+            hash rather than read from the ledger, because this route never reads the control
+            plane (DR-039).
         cycle_start:
           oneOf:
             - $ref: '#/components/schemas/Timestamp'
@@ -4843,9 +4862,9 @@ components:
       type: object
       description: |
         The **only** response that ever contains the plaintext key. It is not recoverable
-        afterwards; only an Argon2id hash and the public prefix are stored, and the hash is
-        deliberately not indexed because indexing a verifier invites a timing-oracle design
-        (ADR-0012).
+        afterwards; only a SHA-256 digest of the secret and the public prefix are stored, and the
+        digest is deliberately not indexed because indexing a verifier invites a timing-oracle
+        design (ADR-0018).
 
         A lost key is replaced, not recovered (UC-15).
       additionalProperties: false

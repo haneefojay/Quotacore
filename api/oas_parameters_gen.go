@@ -26,8 +26,9 @@ type ArchivePlanParams struct {
 
 // BalanceParams is parameters of balance operation.
 type BalanceParams struct {
-	// Your identifier for the tenant. The customer never handles an internal `tenant_id`.
-	TenantExternalID OptExternalId `json:",omitempty,omitzero"`
+	// Your identifier for the tenant whose balances you are reading. Required here, because the route
+	// cannot answer without a tenant; absent is `400 validation_failed`.
+	TenantExternalID ExternalId
 	// Restrict to one feature. On `GET /v1/balance` it is optional, and omitting it returns the tenant's
 	// full set, which is bounded by the plan's entitlement count (NFR-T5).
 	FeatureKey OptFeatureKey `json:",omitempty,omitzero"`

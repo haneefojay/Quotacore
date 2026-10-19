@@ -155,7 +155,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h3><span class="method method-post">POST</span> <span class="path">/v1/consume</span></h3>
 <p><strong>Deduct an amount from the current cycle&#39;s balance</strong></p>
 <p>The call a customer&#39;s application makes instead of decrementing a counter itself.</p>
-<p><code>Idempotency-Key</code> is required. The same key replayed with the same<br><code>operation | tenant | feature | amount</code> returns the original response byte for byte with<br><code>replayed: true</code>, and the same key with a different fingerprint is<br><code>409 idempotency_key_reuse</code> with no state change at all (DR-028, INV-I2).</p>
+<p><code>Idempotency-Key</code> is required. The same key replayed with the same<br><code>operation | tenant | feature | amount</code> returns the original response&#39;s state values<br>unchanged, with <code>replayed: true</code> where the original said <code>false</code>, and the same key with a different fingerprint is<br><code>409 idempotency_key_reuse</code> with no state change at all (DR-028, INV-I2).</p>
 <p>The window is 24 hours from the first application. A key first seen after that is a new<br>operation, not a replay (DR-029). The window is fixed and is not configurable, because it<br>is a documented customer guarantee.</p>
 <p class="muted">Operation ID: <code>consume</code></p>
 <h4>Authorisation</h4>
@@ -184,7 +184,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <table>
 <tr><th>Status</th><th>Content</th><th>Schema</th><th>Headers</th><th>Description</th></tr>
 <tr><td><code>200</code></td><td>application/json</td><td><a href="#schema-meteredresponse"><code>MeteredResponse</code></a></td><td><code>X-Request-Id</code>, <code>Idempotent-Replay</code></td><td><p>The deduction was applied, or the stored response was replayed. <code>balance</code> is <strong>after</strong> the<br>deduction, <code>consumed</code> is the amount the <em>original</em> call applied, and the two together<br>reconstruct the balance before it.</p>
-<p><code>consumed</code> is returned unchanged on a replay, because the replayed response is<br>byte-identical to the original (DR-026). To tell whether this particular call moved<br>anything, read <code>replayed</code> or the <code>Idempotent-Replay</code> header; it is a one-field test rather<br>than an inference from arithmetic.</p>
+<p><code>consumed</code> is returned unchanged on a replay, because a replay reads the recorded state<br>rather than recomputing it (DR-027). The replay differs from the original only in<br><code>replayed</code>. To tell whether this particular call moved<br>anything, read <code>replayed</code> or the <code>Idempotent-Replay</code> header; it is a one-field test rather<br>than an inference from arithmetic.</p>
 </td></tr>
 <tr><td><code>400</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The request was not applied. Nothing is charged and nothing is reserved.</p>
 <p><code>missing_idempotency_key</code> and <code>invalid_window</code> are in the same <code>400</code> as<br><code>validation_failed</code> because they are the same class of mistake, but they are distinct<br>codes: a client that retries with a key fixes one and not the others.</p>
@@ -238,7 +238,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <table>
 <tr><th>Status</th><th>Content</th><th>Schema</th><th>Headers</th><th>Description</th></tr>
 <tr><td><code>200</code></td><td>application/json</td><td><a href="#schema-meteredresponse"><code>MeteredResponse</code></a></td><td><code>X-Request-Id</code>, <code>Idempotent-Replay</code></td><td><p>The deduction was applied, or the stored response was replayed. <code>balance</code> is <strong>after</strong> the<br>deduction, <code>consumed</code> is the amount the <em>original</em> call applied, and the two together<br>reconstruct the balance before it.</p>
-<p><code>consumed</code> is returned unchanged on a replay, because the replayed response is<br>byte-identical to the original (DR-026). To tell whether this particular call moved<br>anything, read <code>replayed</code> or the <code>Idempotent-Replay</code> header; it is a one-field test rather<br>than an inference from arithmetic.</p>
+<p><code>consumed</code> is returned unchanged on a replay, because a replay reads the recorded state<br>rather than recomputing it (DR-027). The replay differs from the original only in<br><code>replayed</code>. To tell whether this particular call moved<br>anything, read <code>replayed</code> or the <code>Idempotent-Replay</code> header; it is a one-field test rather<br>than an inference from arithmetic.</p>
 </td></tr>
 <tr><td><code>400</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The request was not applied. Nothing is charged and nothing is reserved.</p>
 <p><code>missing_idempotency_key</code> and <code>invalid_window</code> are in the same <code>400</code> as<br><code>validation_failed</code> because they are the same class of mistake, but they are distinct<br>codes: a client that retries with a key fixes one and not the others.</p>
@@ -314,7 +314,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>tenant_external_id</code></td><td><code>query</code></td><td>no</td><td>ExternalId</td><td><p>Your identifier for the tenant. The customer never handles an internal <code>tenant_id</code>.</p>
+<tr><td><code>tenant_external_id</code></td><td><code>query</code></td><td>yes</td><td>ExternalId</td><td><p>Your identifier for the tenant whose balances you are reading. Required here, because the<br>route cannot answer without a tenant; absent is <code>400 validation_failed</code>.</p>
 </td></tr>
 <tr><td><code>feature_key</code></td><td><code>query</code></td><td>no</td><td>FeatureKey</td><td><p>Restrict to one feature. On <code>GET /v1/balance</code> it is optional, and omitting it returns the<br>tenant&#39;s full set, which is bounded by the plan&#39;s entitlement count (NFR-T5).</p>
 </td></tr>
@@ -1288,7 +1288,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/keys</span></h3>
 <p><strong>Issue an API key</strong></p>
-<p>The plaintext key is in this response and nowhere else. Only an Argon2id hash and the<br>public prefix are stored, and the hash is deliberately not indexed, because indexing a<br>verifier invites a timing-oracle design (ADR-0012).</p>
+<p>The plaintext key is in this response and nowhere else. Only a SHA-256 digest of the secret<br>and the public prefix are stored, and the digest is deliberately not indexed, because<br>indexing a verifier invites a timing-oracle design (ADR-0018).</p>
 <p>Scope is visible in the token itself, so a scope mismatch is not a 400-line debugging<br>session: <code>qc_runtime_&lt;prefix&gt;.&lt;secret&gt;</code> and <code>qc_admin_&lt;prefix&gt;.&lt;secret&gt;</code>.</p>
 <p class="muted">Operation ID: <code>createKey</code></p>
 <h4>Authorisation</h4>
@@ -1304,7 +1304,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Responses</h4>
 <table>
 <tr><th>Status</th><th>Content</th><th>Schema</th><th>Headers</th><th>Description</th></tr>
-<tr><td><code>201</code></td><td>application/json</td><td><a href="#schema-keycreated"><code>KeyCreated</code></a></td><td><code>X-Request-Id</code></td><td><p>The only response that ever contains the plaintext key. It is not recoverable afterwards:<br>only an Argon2id hash and the public prefix are stored (ADR-0012, INV-K3).</p>
+<tr><td><code>201</code></td><td>application/json</td><td><a href="#schema-keycreated"><code>KeyCreated</code></a></td><td><code>X-Request-Id</code></td><td><p>The only response that ever contains the plaintext key. It is not recoverable afterwards:<br>only a SHA-256 digest of the secret and the public prefix are stored (ADR-0018, INV-K3).</p>
 </td></tr>
 <tr><td><code>400</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The request was rejected and nothing changed. Validation errors aggregate, so one response<br>names every offending field.</p>
 </td></tr>
@@ -1471,9 +1471,11 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p class="muted">Type <code>string</code></p>
 <p>One key per logical operation, reused across every attempt including retries. The window<br>is 24 hours from application and is <strong>not</strong> configurable, because it is a documented<br>customer guarantee (DR-029).</p>
 <ul>
-<li><p>Must match the pattern <code>^[0-9A-HJKMNP-TV-Z]{26}$</code>.</p>
+<li><p>Must match the pattern <code>^[A-Za-z0-9._:-]{8,255}$</code>.</p>
 </li>
 </ul>
+<h4>Example: derived</h4>
+<pre><code>&#34;order:8841:charge&#34;</code></pre>
 <h4>Example: ulid</h4>
 <pre><code>&#34;01JCQ9W3K2M9XQ3F8V6T0B5NDE&#34;</code></pre>
 <h3 id="schema-timestamp">Timestamp</h3>
@@ -1671,7 +1673,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>limit</code></td><td><a href="#schema-limit"><code>Limit</code></a></td><td>yes</td><td></td></tr>
 <tr><td><code>bonus</code></td><td>—</td><td>yes</td><td><p>Cycle-scoped granted quota. It does not survive the boundary (DR-020).</p>
 </td></tr>
-<tr><td><code>consumed</code></td><td>—</td><td>yes</td><td><p>The amount the <strong>original</strong> call applied, returned unchanged on a replay because the<br>replayed response is byte-identical (DR-026). <code>balance</code> minus <code>consumed</code> is the<br>balance before the original deduction.</p>
+<tr><td><code>consumed</code></td><td>—</td><td>yes</td><td><p>The amount the <strong>original</strong> call applied, returned unchanged on a replay because a<br>replay reads the recorded state (DR-027). On <code>consume</code>, <code>balance</code> minus <code>consumed</code> is<br>the balance before the original deduction. On <code>refund</code> the schema is shared, so<br><code>consumed</code> is the amount refunded and <code>balance</code> minus <code>consumed</code> is the balance before<br>the refund.</p>
 </td></tr>
 <tr><td><code>cycle_start</code></td><td>—</td><td>yes</td><td></td></tr>
 <tr><td><code>cycle_end</code></td><td>—</td><td>yes</td><td></td></tr>
@@ -1709,7 +1711,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>balance</code></td><td><a href="#schema-amount"><code>Amount</code></a></td><td>yes</td><td></td></tr>
 <tr><td><code>limit</code></td><td><a href="#schema-limit"><code>Limit</code></a></td><td>yes</td><td></td></tr>
 <tr><td><code>bonus</code></td><td><a href="#schema-amount"><code>Amount</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>consumed</code></td><td>—</td><td>yes</td><td><p>Consumption so far in this cycle, as recorded in the ledger.</p>
+<tr><td><code>consumed</code></td><td>—</td><td>yes</td><td><p>Net consumption in the stored cycle, derived as <code>limit + bonus - balance</code>. A refund<br>lowers it and an administrative <code>set</code> shows through it. It is computed from the balance<br>hash rather than read from the ledger, because this route never reads the control<br>plane (DR-039).</p>
 </td></tr>
 <tr><td><code>cycle_start</code></td><td>—</td><td>yes</td><td></td></tr>
 <tr><td><code>cycle_end</code></td><td>—</td><td>yes</td><td></td></tr>
@@ -2317,7 +2319,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </table>
 <h3 id="schema-keycreated">KeyCreated</h3>
 <p class="muted">Type <code>object</code></p>
-<p>The <strong>only</strong> response that ever contains the plaintext key. It is not recoverable<br>afterwards; only an Argon2id hash and the public prefix are stored, and the hash is<br>deliberately not indexed because indexing a verifier invites a timing-oracle design<br>(ADR-0012).</p>
+<p>The <strong>only</strong> response that ever contains the plaintext key. It is not recoverable<br>afterwards; only a SHA-256 digest of the secret and the public prefix are stored, and the<br>digest is deliberately not indexed because indexing a verifier invites a timing-oracle<br>design (ADR-0018).</p>
 <p>A lost key is replaced, not recovered (UC-15).</p>
 <ul>
 <li><p><strong>Undeclared fields are rejected.</strong> A field that is not in this schema is a <code>400 validation_failed</code>.</p>

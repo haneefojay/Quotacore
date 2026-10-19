@@ -21,7 +21,7 @@ value (NFR-O6).
 | --- | --- | --- | --- |
 | `quotacore_consume_total` | counter | `outcome` = `allowed` \| `denied` \| `replayed` \| `rejected` | Every `consume` call |
 | `quotacore_refund_total` | counter | `outcome` as above | Every `refund` call |
-| `quotacore_check_total` | counter | `allowed` \| `denied` | Advisory checks |
+| `quotacore_check_total` | counter | `outcome` = `allowed` \| `denied` | Advisory checks |
 | `quotacore_consume_amount_total` | counter | `feature_key` | Units consumed. Feeds the "should this match my own logs" question |
 | `quotacore_rolled_over_total` | counter | `interval` | Cycle transitions applied, by the request path or the worker |
 | `quotacore_rollover_stale_total` | counter | — | Transitions refused because the stored index was ahead. **Non-zero is a clock or data defect** (P1) |
@@ -36,7 +36,12 @@ value (NFR-O6).
 > the identifier is unchanged.
 
 `outcome` is the label to alert on. `denied` is a business outcome and is expected to scale with
-usage; `rejected` is a failure and should be near zero. Keeping them in one counter with distinct
+usage; `rejected` is a failure and should be near zero. `rejected` means the service failed closed,
+a `5xx`. A `4xx` other than `quota_exceeded` is the client's error and is counted in
+`quotacore_errors_total` only, so a misconfigured key cannot fire the P0 alert below.
+
+> **Amended 2026-10-19 (`IP-07`).** The table named `check_total`'s values but not its label, which is
+> `outcome`, and did not say which failures `rejected` covers. Both are stated above. Keeping them in one counter with distinct
 values is deliberate: a customer asking "why is my quota going up?" is answered by the same series.
 
 ### 1.2 Errors

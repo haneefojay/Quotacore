@@ -96,9 +96,20 @@ func TestKeyBuilderRejectsUnsafeParts(t *testing.T) {
 		if _, err := BalanceKey(tenant, name); !errors.Is(err, ErrBadKeyPart) {
 			t.Errorf("BalanceKey(%q) err = %v, want ErrBadKeyPart", name, err)
 		}
+	}
+	for _, name := range []string{"", "a{b", "a}b", "{", "order:{t:x}"} {
 		if _, err := IdempotencyKey(tenant, name); !errors.Is(err, ErrBadKeyPart) {
 			t.Errorf("IdempotencyKey(%q) err = %v, want ErrBadKeyPart", name, err)
 		}
+	}
+	// The contract admits a colon in an Idempotency-Key, and the record stays
+	// in the tenant's slot because the tag is untouched.
+	key, err := IdempotencyKey(tenant, "order:8841:charge")
+	if err != nil {
+		t.Fatalf("IdempotencyKey with a colon: %v", err)
+	}
+	if want := "qc:" + HashTag(tenant) + ":idem:order:8841:charge"; key != want {
+		t.Errorf("IdempotencyKey = %q, want %q", key, want)
 	}
 	for _, bad := range []string{"", "not-a-uuid", "01JCV3A8B9C0D1E2F3G4H5J:extra", "{x}"} {
 		if _, err := BalanceKey(bad, "f"); !errors.Is(err, ErrBadKeyPart) {

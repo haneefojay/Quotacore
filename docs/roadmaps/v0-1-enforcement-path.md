@@ -20,13 +20,13 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-04` | Data-plane skeleton, keyspace and snapshot cache | `IP-02`, `IP-03` | `COMPLETE`, started and closed 2026-09-28 |
 | `IP-05` | The atomic scripts | `IP-03`, `IP-04` | `COMPLETE`, started and closed 2026-09-29 |
 | `IP-06` | Idempotency prevention in the data plane | `IP-05` | `COMPLETE`, started and closed 2026-09-30 |
-| `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `NOT STARTED` |
+| `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `COMPLETE`, started and closed 2026-10-19 |
 | `IP-08` | Control-plane schema and migrations | `IP-02` | `COMPLETE`, 2026-10-19 |
 | `IP-09` | Control-plane API and API keys | `IP-08` | `NOT STARTED` |
 | `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `BLOCKED` |
 | `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `BLOCKED` |
 | `IP-12` | Usage ledger, writer and archiver | `IP-08` | `NOT STARTED` |
-| `IP-13` | Observability | `IP-07` | `BLOCKED` |
+| `IP-13` | Observability | `IP-07` | `NOT STARTED` |
 | `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `BLOCKED` |
 | `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `BLOCKED` |
 | `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `BLOCKED` |
@@ -896,14 +896,19 @@ once — and that is a property of the store, not of a process.
 
 ## IP-07 — Data-plane endpoints
 
-**Status** `NOT STARTED`. Both dependencies, `IP-05` and `IP-06`, are `COMPLETE`; the row read `BLOCKED`
-until 2026-10-19, which was stale.
+**Status** `COMPLETE`, opened and closed 2026-10-19. All 8 DoD items are met; items 2 and 8 carry
+dated amendments, and the obligations `IP-04`, `IP-05` and `IP-06` deferred here are closed by the
+tests in the evidence table. Both dependencies, `IP-05` and `IP-06`, were `COMPLETE`; the row read
+`BLOCKED` until 2026-10-19, which was stale.
 
 **Objective.** The four runtime routes, with the request lifecycle the specification annotates, and
 with the codes and labels the catalogue assigns.
 
 **Scope.**
-- `POST /v1/consume`, `POST /v1/check`, `POST /v1/balance`, `POST /v1/refund`.
+- `POST /v1/consume`, `POST /v1/check`, `GET /v1/balance`, `POST /v1/refund`.
+  > **Amended 2026-10-19.** This line said `POST /v1/balance`. The contract,
+  > [api-conventions.md](../architecture/api-conventions.md) §7.3, request-lifecycle §2 and the error
+  > matrix all say `GET`, and the contract is frozen.
 - Authentication, scope checks, and `X-Request-Id` on every response.
 - `Idempotency-Key` handling, and the error envelope.
 - The metric labels the catalogue requires, including `outcome` and `feature_key`.
@@ -926,6 +931,12 @@ with the codes and labels the catalogue assigns.
    decrements of a balance of 100 succeed exactly 100 times.
 2. `check` mutates nothing, and a test asserts that the balance and the ledger count are identical
    before and after (DR-024).
+   > **Amended 2026-10-19 (`IP-07`) — a boundary, and the ledger half.** Inside a cycle a check
+   > changes nothing. Across a closed boundary it applies the transition any request applies, as
+   > [request-lifecycle.md](../architecture/request-lifecycle.md) §2 and `check.lua` specify, so the
+   > window it reports is current; it never deducts, records or emits. The call site is proved here:
+   > a check hands the event sink nothing. The `usage_events` rows are `IP-12`'s, in the form `IP-05`
+   > amended T-01 and T-08.
 3. `GET /v1/balance` returns `cycle_start` and `cycle_end` as RFC 3339 instants with offsets, in the
    tenant's zone, and `cycle_end` is `null` for a `never` entitlement (INV-C6).
 4. `balance < amount` is `429 quota_exceeded`, and the service's own protective limit is
@@ -938,11 +949,61 @@ with the codes and labels the catalogue assigns.
 7. `quotacore_errors_total`'s `code` label set equals the catalogue's code set, asserted by a test.
 8. A runtime key cannot reach a control-plane route, and the rejection is `403 insufficient_scope`
    (NFR-S4).
+   > **Amended 2026-10-19 (`IP-07`) — the admin handlers are `IP-09`'s.** The `403` holds for every
+   > `/v1/admin/*` operation in the contract. An admin key reaching one is answered with a bare `404`
+   > until `IP-09` adds the handler, the bootstrap key and the revoke route. The revocation mechanism
+   > (the key cache's invalidation) is this phase's; its end-to-end test through the revoke route is
+   > `IP-09`'s.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The rows
+marked `(integration)` need real Postgres 16 and valkey and run in CI's `service` job; they live in
+`cmd/quotacore`, because the source checks keep every package under `internal/` except `internal/db`
+off the control plane, tests included.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestT01TwoHundredConsumesOverHTTP` (integration) | 200 concurrent consumes of 1 against 100 producing anything but 100 `200`s, 100 `429 quota_exceeded` each reporting `balance: 0`, and a final balance of 0, at 1, 2, 4, 8, 16 and 32 client connections (T-01) |
+| 2 | `TestCheckChangesNothingInsideACycle`, `TestCheckAcrossABoundaryOnlyRolls` (integration), as amended | A check, allowed or denied, that moves a hash field, the expiry, the count of idempotency records or the events handed to the sink; or one across a boundary that does more than roll |
+| 3 | `TestBalanceRendersTheCycleInTheTenantsZone` (integration) | `cycle_start`/`cycle_end` not RFC 3339 with the tenant's offset in UTC, `Europe/Berlin`, `America/New_York` and `Asia/Kolkata`, including a Berlin month whose ends differ in offset; or a `never` entitlement whose two fields are not both `null` (INV-C6) |
+| 4 | `TestQuotaExceededAndRateLimitedAreDistinct` (integration), `TestRateLimitIsPerKeyAndDistinct` | `quota_exceeded` with a `Retry-After` or without `details.cycle_end`, `rate_limited` without `Retry-After` and `retry_after_ms`, or a `rate_limited` that changed the balance (DR-040) |
+| 5 | `TestADeadDataStoreIs503WithinTheBound` (integration) | Through a TCP proxy: a store that never answers taking more than 250 ms server-side to become `503 service_unavailable`, or changing the balance; a lost reply leaving anything but the balance or one deduction, or a same-key retry that charges again |
+| 6 | `TestEveryResponseCarriesTheRequestId`, `TestEveryLogLineOfARequestCarriesItsId` | A response on any route without `X-Request-Id`, an envelope whose `request_id` differs, an invalid inbound id adopted, a log line without the id, or a token secret, `external_id` or `metadata` in the log (NFR-S10, DR-043) |
+| 7 | `TestErrorsTotalCodesAreTheCatalogue`, `TestStatusesAreTheCatalogues` | The `code` label set differing from error-catalog.md §2 or from the generated enum in either direction, or a status that is not the contract's |
+| 8 | `TestARuntimeKeyIsRefusedOnEveryControlPlaneRoute`, `TestAnAdminKeyWorksOnTheDataPlane` (integration), as amended | Any admin operation answering a runtime key with anything but `403 insufficient_scope`, or an admin key refused on the data plane (NFR-S4) |
+| — | `TestEndpointErrorMatrix` (integration) | A route answering a code its row of the endpoint × error matrix does not list; every reachable code is provoked at least once |
+| — | `TestT08EveryRefusalChangesNothing` (integration) | For every catalogue code reachable on the data plane, a refusal that moved the hash, the expiry, a record or an event (`IP-05` DoD 3). The admin-only codes are listed by name as `IP-09`'s |
+| — | `TestPostgresOutageSparesCachedTenants` (integration) | With Postgres cut, a cached tenant refused, an uncached one answered with anything but `503 control_plane_unavailable`, the pool wait rising, or no recovery (`IP-04` DoD 1) |
+| — | `TestT09KillDuringConsume` (integration) | A `SIGKILL` of the built binary at a random point of a consume of 30 against 100 leaving anything but 100 or 70, or a same-key retry on the next process that does not settle at 70; 200 kills in CI (`IP-05` DoD 4) |
+| — | `TestT10RestartChangesNothing` (integration) | A restart after a kill under traffic that changes any hash, expiry or record, including a hash whose window has closed (`IP-05` DoD 5) |
+| — | `TestAMissingBalanceIs503AndCounted` (integration) | An absent hash answered with anything but `503` on any of the four routes, or not counted (`IP-05` DoD 6) |
+| — | `TestT02FiftyDeliveriesOverHTTP` (integration) | Fifty concurrent uses of one key making more than one deduction, or a replay without `replayed: true` and `Idempotent-Replay: true` (`IP-06` DoD 1, 2, 3) |
+| — | `TestValidationAggregates`, `TestBodyAndMetadataCaps`, `TestGateRefusalsAndTheirOrder`, `TestScriptOutcomesBecomeResponses` | A request with several bad fields not named in one `validation_failed`, a float amount or unknown field accepted, an oversized body or metadata answered with the wrong code, or the gates refusing in another order |
+| — | `TestTokenParsingAndVerification`, `TestUnknownPrefixAndWrongSecretAreIndistinguishable`, `TestKeyCacheMissIsBounded`, `TestLastUsedIsBatchedAndAtMostOncePerMinute` | A malformed, revoked, expired or mislabelled key accepted, a timing difference between an unknown prefix and a wrong secret, an unbounded miss path, or `last_used_at` written on the request path (ADR-0018) |
+| — | `TestRevocationReachesTheCacheOffThePath` (integration), `TestTheFirstSightOfATenantIsBounded` | A revoked key accepted after the invalidation, or a cold `external_id` costing more than one limiter token |
+
+Five things are recorded here because the phase surfaced them.
+
+- **go-redis ignored the deadline the caller set.** `IP-04`'s client left `ContextTimeoutEnabled`
+  off, so a store that accepted and never answered held a request for go-redis's own read timeout,
+  five seconds, rather than `QUOTACORE_DATASCRIPT_TIMEOUT`. Item 5's test found it.
+- **The snapshot compared its version outside its lock.** The subscriber and the ticker both
+  reconcile, and the race detector caught the read under `TestT09KillDuringConsume`; an invalidation
+  could also lower the version a reconcile had just raised. Both writes are now monotonic under the
+  lock.
+- **Reloading a cached tenant on the same plan leaked a plan reference**, so evicting the tenant never
+  retired the plan or refunded its bytes. `TestReloadingATenantKeepsOnePlanReference` holds it.
+- **Concurrent first sights of one tenant or one key each spent a miss token**, so a burst of cold
+  traffic was refused by the limiter that bounds Postgres. Both miss paths now share one read per
+  identifier.
+- **`POST /v1/check` lists no `413`.** An oversized `metadata` on a check is `400 validation_failed`,
+  as the matrix row allows; the other two metered routes answer `413 payload_too_large`.
 
 **Exit criteria.** A customer can enforce against a running service, and every refusal names a
 remedy.
 
-**Deferred.** Nothing. The four routes are the product.
+**Deferred.** Nothing in scope. Counting `quotacore_rolled_over_total`,
+`quotacore_rollover_stale_total` and `quotacore_ceiling_violation_total`, and a `/readyz` that is true
+when enforcement can serve, are `IP-13`'s; the event queue behind the sink is `IP-12`'s.
 
 ---
 
@@ -1170,7 +1231,7 @@ separate phases.
 
 ## IP-11 — Idempotency detection and reconciliation
 
-**Status** `BLOCKED`, gated on `IP-07` and `IP-12`.
+**Status** `BLOCKED`, gated on `IP-12`; `IP-07` closed on 2026-10-19.
 
 **Objective.** The control plane's half of the idempotency claim: notice when a data-plane record
 and the ledger disagree, rather than preventing it again.
@@ -1266,7 +1327,7 @@ happened.
 
 ## IP-13 — Observability
 
-**Status** `BLOCKED`, gated on `IP-07`.
+**Status** `NOT STARTED`; `IP-07` closed on 2026-10-19 and nothing else gates this phase.
 
 **Objective.** Every metric, log and probe the specification names, with cardinality that stays
 bounded and alerts that name a runbook.

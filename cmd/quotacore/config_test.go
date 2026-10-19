@@ -201,3 +201,50 @@ func TestReadinessReportsEveryUnsatisfiedTerm(t *testing.T) {
 		t.Errorf("Unsatisfied = %v, want empty", s.Unsatisfied())
 	}
 }
+
+func TestLoadAppliesTheEnforcementPathDefaults(t *testing.T) {
+	c, err := Load(env(baseEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.RequestTimeout != 2*time.Second || c.MaxBodyBytes != 65536 || c.MetadataMaxBytes != 4096 ||
+		c.KeyCacheEntries != 10000 || !c.RateLimitEnabled || c.RateLimitRuntimeRPS != 2000 ||
+		c.RateLimitBurst != 4000 || c.RateLimiterMaxKeys != 100000 {
+		t.Errorf("IP-07 defaults differ from deployment.md section 4: %+v", c)
+	}
+}
+
+func TestLoadAcceptsOverridesForIP07Keys(t *testing.T) {
+	e := baseEnv()
+	e["QUOTACORE_REQUEST_TIMEOUT"] = "500ms"
+	e["QUOTACORE_MAX_BODY_BYTES"] = "8192"
+	e["QUOTACORE_METADATA_MAX_BYTES"] = "1024"
+	e["QUOTACORE_KEY_CACHE_ENTRIES"] = "50"
+	e["QUOTACORE_RATELIMIT_ENABLED"] = "false"
+	e["QUOTACORE_RATELIMIT_RUNTIME_RPS"] = "10"
+	e["QUOTACORE_RATELIMIT_RUNTIME_BURST"] = "20"
+	e["QUOTACORE_RATE_LIMITER_MAX_KEYS"] = "7"
+	c, err := Load(env(e))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.RequestTimeout != 500*time.Millisecond || c.MaxBodyBytes != 8192 || c.MetadataMaxBytes != 1024 ||
+		c.KeyCacheEntries != 50 || c.RateLimitEnabled || c.RateLimitRuntimeRPS != 10 ||
+		c.RateLimitBurst != 20 || c.RateLimiterMaxKeys != 7 {
+		t.Errorf("override values not carried through: %+v", c)
+	}
+	for key, bad := range map[string]string{
+		"QUOTACORE_REQUEST_TIMEOUT":       "soon",
+		"QUOTACORE_MAX_BODY_BYTES":        "0",
+		"QUOTACORE_KEY_CACHE_ENTRIES":     "-1",
+		"QUOTACORE_RATELIMIT_RUNTIME_RPS": "fast",
+		"QUOTACORE_RATELIMIT_ENABLED":     "maybe",
+		"QUOTACORE_METADATA_MAX_BYTES":    "999999",
+	} {
+		e := baseEnv()
+		e[key] = bad
+		if _, err := Load(env(e)); err == nil || !strings.Contains(err.Error(), "QUOTACORE_") {
+			t.Errorf("%s=%q: err = %v, want a refusal naming the key", key, bad, err)
+		}
+	}
+}
