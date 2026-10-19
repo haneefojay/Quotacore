@@ -16,12 +16,12 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-00` | Close the blocking questions | — | `COMPLETE`, closed 2026-09-27 |
 | `IP-01` | Repository, toolchain and CI foundation | `IP-00` | `COMPLETE`, closed 2026-09-27 |
 | `IP-02` | The OpenAPI contract | `IP-01` | `COMPLETE`, started and closed 2026-09-28 |
-| `IP-03` | Cycle engine and boundary matrix | `IP-01` | `COMPLETE` |
+| `IP-03` | Cycle engine and boundary matrix | `IP-01` | `COMPLETE`, started and closed 2026-09-28 |
 | `IP-04` | Data-plane skeleton, keyspace and snapshot cache | `IP-02`, `IP-03` | `COMPLETE`, started and closed 2026-09-28 |
-| `IP-05` | The atomic scripts | `IP-03`, `IP-04` | `COMPLETE` |
-| `IP-06` | Idempotency prevention in the data plane | `IP-05` | `BLOCKED` |
-| `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `BLOCKED` |
-| `IP-08` | Control-plane schema and migrations | `IP-02` | `BLOCKED` |
+| `IP-05` | The atomic scripts | `IP-03`, `IP-04` | `COMPLETE`, started and closed 2026-09-29 |
+| `IP-06` | Idempotency prevention in the data plane | `IP-05` | `COMPLETE`, started and closed 2026-09-30 |
+| `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `NOT STARTED` |
+| `IP-08` | Control-plane schema and migrations | `IP-02` | `IN PROGRESS`, opened 2026-10-19 |
 | `IP-09` | Control-plane API and API keys | `IP-08` | `BLOCKED` |
 | `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `BLOCKED` |
 | `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `BLOCKED` |
@@ -881,7 +881,8 @@ once — and that is a property of the store, not of a process.
 
 ## IP-07 — Data-plane endpoints
 
-**Status** `BLOCKED`, gated on `IP-05` and `IP-06`.
+**Status** `NOT STARTED`. Both dependencies, `IP-05` and `IP-06`, are `COMPLETE`; the row read `BLOCKED`
+until 2026-10-19, which was stale.
 
 **Objective.** The four runtime routes, with the request lifecycle the specification annotates, and
 with the codes and labels the catalogue assigns.
@@ -932,7 +933,9 @@ remedy.
 
 ## IP-08 — Control-plane schema and migrations
 
-**Status** `BLOCKED`, gated on `IP-02`.
+**Status** `IN PROGRESS`, opened 2026-10-19. `IP-02` closed on 2026-09-28 and nothing else gates this
+phase; the status was set before any file the phase owns was written, which is what
+[AGENTS.md](../../AGENTS.md) requires. The row read `BLOCKED` until then, which was stale.
 
 **Objective.** The Postgres schema, applied by embedded up-only migrations, with the constraints
 that make misuse unrepresentable rather than merely discouraged.
