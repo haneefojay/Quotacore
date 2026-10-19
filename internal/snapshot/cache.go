@@ -67,8 +67,12 @@ func (c *tenantCache) add(t *Tenant) {
 	entry := &cacheEntry{id: id, tenant: t, bytes: tenantBytes(t)}
 	if existing, ok := c.byID[id]; ok {
 		old := existing.Value.(*cacheEntry)
-		if old.tenant.Plan != t.Plan {
-			c.release(old.tenant.Plan)
+		// intern took a reference for the new entry whether or not the plan
+		// changed, so the old entry's reference is always released; skipping it
+		// when the plan was the same kept that plan alive forever.
+		c.release(old.tenant.Plan)
+		if old.tenant.ExternalID != t.ExternalID && c.byExtern[old.tenant.ExternalID] == id {
+			delete(c.byExtern, old.tenant.ExternalID)
 		}
 		c.tenantMem += entry.bytes - old.bytes
 		existing.Value = entry

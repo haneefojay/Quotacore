@@ -12,6 +12,24 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **The data plane (`IP-07`).** `POST /v1/consume`, `POST /v1/check`, `GET /v1/balance` and
+  `POST /v1/refund` serve the contract: decoding that names every bad field in one
+  `validation_failed`, `Idempotency-Key` enforcement, the scripts behind them, `Idempotent-Replay` on
+  a replay, and an event handed to a sink after the response (a no-op until `IP-12`).
+- Bearer authentication on every `/v1` route, in ADR-0018's format, with a constant-time SHA-256
+  verify, a bounded key cache refreshed by the configuration invalidation, a rate-limited miss path,
+  and `last_used_at` written off the path at most once a minute. A runtime key is `403
+  insufficient_scope` on every control-plane route.
+- The error envelope, written by one function, with each status read from the contract and every
+  catalogue code pre-registered on `quotacore_errors_total`; `X-Request-Id` on every response and in
+  every log line of its request; and a per-key protective rate limit that answers `429 rate_limited`
+  with `Retry-After`, distinct from `429 quota_exceeded`.
+- `QUOTACORE_REQUEST_TIMEOUT`, `QUOTACORE_MAX_BODY_BYTES`, `QUOTACORE_METADATA_MAX_BYTES`,
+  `QUOTACORE_KEY_CACHE_ENTRIES` and the rate-limit settings, as deployment.md lists them.
+- Integration tests for the eight DoD items and the obligations `IP-04`, `IP-05` and `IP-06` deferred:
+  the endpoint × error matrix, T-01, T-02 and T-08 over HTTP, T-09 and T-10 against the built
+  binary, a dead datastore and a Postgres outage through a TCP proxy.
+
 - **The control-plane schema (`IP-08`).** Six up-only migrations in `internal/db/migrations` create
   the eight tables of [data-model.md](docs/architecture/data-model.md) §2, and
   `TestTheSchemaIsTheDataModel` compares the migrated catalogue with the document's own `sql` blocks.
@@ -188,7 +206,11 @@ exists, because a future implementer needs to know which statements are new.
   balance route reports the stored cycle as one consistent set, and omits an archived feature whose
   hash has expired (request-lifecycle §2). `rejected` means a `5xx` (observability §1.1).
   `QUOTACORE_AMOUNT_MAX` and `QUOTACORE_MAX_FEATURE_KEY_LEN` are fixed by the contract.
-- **`IP-07` is `IN PROGRESS`**, opened 2026-10-19 after `IP-08` closed. The IP-07 scope line said
+- **`IP-07` is `COMPLETE`**, started and closed 2026-10-19, with Definition-of-Done items 2 and 8
+  amended so the ledger half of a check is `IP-12`'s and the admin handlers and revoke route are
+  `IP-09`'s. `IP-13` is now `NOT STARTED`. CI's smoke test now expects the data plane to ask for a
+  credential in the envelope, and `GET /v1/consume` to be `405`.
+- **`IP-07` was opened `IN PROGRESS`** on 2026-10-19 after `IP-08` closed. The IP-07 scope line said
   `POST /v1/balance`; it is `GET`, as the contract and every other document say.
 
 - **`IP-08` is `COMPLETE`**, started and closed 2026-10-19, with Definition-of-Done items 4, 5, 6 and
@@ -458,6 +480,17 @@ exists, because a future implementer needs to know which statements are new.
   point-in-time records they are.
 
 ### Fixed
+
+- **A silent datastore held a request for five seconds** (`IP-04`). go-redis ignores a context's
+  deadline unless `ContextTimeoutEnabled` is set, so `QUOTACORE_DATASCRIPT_TIMEOUT` did not bound a
+  store that accepted and never answered. It is set now.
+- **The snapshot compared its configuration version outside its lock** (`IP-04`), a data race between
+  the subscriber and the ticker, and an invalidation could lower a version a reconcile had raised.
+- **Reloading a cached tenant on the same plan leaked a plan reference** (`IP-04`), so the plan was
+  never retired or its bytes refunded once the tenant was evicted.
+- **Concurrent first sights of one tenant each spent a miss token** (`IP-04`), so a burst of cold
+  traffic was refused by the limiter that bounds Postgres. Concurrent misses for one identifier now
+  share one read.
 
 - `make generate` regenerated nothing: it ran `ogen-check`, which only compares. A new `ogen` target
   writes the generated files, and `generate` runs it.

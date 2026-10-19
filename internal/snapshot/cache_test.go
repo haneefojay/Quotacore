@@ -168,3 +168,20 @@ func TestSnapshotMemoryWithinNFRT7(t *testing.T) {
 		t.Fatalf("interned plans = %d, want 1", len(s.cache.plans))
 	}
 }
+
+// TestReloadingATenantKeepsOnePlanReference: reloading a tenant on the same
+// plan must not leave the plan with a reference nothing holds, or evicting
+// the tenant never retires the plan or refunds its bytes.
+func TestReloadingATenantKeepsOnePlanReference(t *testing.T) {
+	c := newTenantCache(10, 1<<30)
+	for i := 0; i < 3; i++ {
+		c.add(&Tenant{ID: "a", ExternalID: "acme", Plan: &Plan{ID: "p", Key: "k"}})
+	}
+	if refs := c.plans["p"].refs; refs != 1 {
+		t.Fatalf("after three loads of one tenant the plan has %d references, want 1", refs)
+	}
+	c.evictOldest()
+	if _, ok := c.plans["p"]; ok || c.planMem != 0 {
+		t.Errorf("evicting the only tenant left the plan cached (%d bytes)", c.planMem)
+	}
+}
