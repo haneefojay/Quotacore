@@ -120,7 +120,9 @@ webhooks in v0.3, opt-in. Nothing else, ever.
 
 The `consume` path, in order, with the failure behaviour that matters:
 
-1. **Authenticate and authorise.** Named key, `runtime` scope, constant-time Argon2id verify.
+1. **Authenticate and authorise.** Named key, `runtime` scope, constant-time SHA-256 verify
+   ([ADR-0018](docs/decisions/0018-api-key-format-and-verifier.md); this line said Argon2id until
+   2026-10-19).
 2. **Validate.** Body schema, then `external_id` and `feature_key` against the snapshot. Rejection
    is `422` or `404`, before any state is touched.
 3. **Resolve configuration.** Snapshot lookup, O(1), in memory. A miss triggers one synchronous

@@ -261,7 +261,9 @@ The client generates one key per **logical operation** and reuses it across ever
 that operation, including retries.
 *Consequence:* a client that generates a fresh key per attempt receives no protection. The
 requirement is documented in the API reference, generated automatically by the v0.5 SDKs, and
-enforced with `400 validation_failed` when absent.
+enforced with `400 missing_idempotency_key` when absent. (Amended 2026-10-19: this said
+`400 validation_failed`; the catalogue, the contract and `IP-06` name the dedicated code, and the
+behaviour, a `400` that changes nothing, is unchanged.)
 *Verified by:* T-02, and the `Endpoint × error matrix` contract test for `missing_idempotency_key`.
 
 ### DR-027 — A repeat with a matching fingerprint replays the recorded result

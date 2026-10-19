@@ -37,7 +37,7 @@ one of them, and a contract test enforces that they do not.
 | `plan_key` | string | `^[a-z0-9][a-z0-9_-]{0,62}$` | Immutable |
 | `tenant.external_id` | string | `^[A-Za-z0-9._:-]{1,128}$` | Customer-chosen, unique, excludes `@` (DR-034) |
 | `unit` | string | `^[a-z][a-z0-9_]{0,31}$` | Immutable once assigned (INV-F2) |
-| `Idempotency-Key` | string | 8–255 chars, `[A-Za-z0-9._:-]` | Client-generated, stable per logical operation |
+| `Idempotency-Key` | string | 8–255 chars, `[A-Za-z0-9._:-]` | Client-generated, stable per logical operation. The contract's pattern is the same grammar (amended 2026-10-19, `IP-07`; it had said a ULID only) |
 | `X-Request-Id` | string | ULID or UUID | Adopted if valid, otherwise minted (NFR-S10) |
 
 Every identifier is opaque. A client that parses a `tenant_id` to extract meaning from it is
@@ -93,20 +93,25 @@ display a cycle that ends an hour early or late, and the customer will notice.
 ## 5. Authentication and authorisation
 
 ```
-Authorization: Bearer qc_live_9f2c1a4e7b8d…
+Authorization: Bearer qc_runtime_9f2c1a4e7b8d.kZ3nQ7xR2vT9wY4bH6mP1sD8fG5jL0cA…
 ```
 
 | Aspect | Rule |
 | --- | --- |
-| Format | `qc_live_<prefix>.<secret>` for runtime keys, `qc_admin_<prefix>.<secret>` for admin keys. The scope is visible in the token, so a mismatch is a 400-line debugging session avoided |
-| Storage | Only an Argon2id hash and the public prefix are stored (ADR-0012) |
+| Format | `qc_runtime_<prefix>.<secret>` for runtime keys, `qc_admin_<prefix>.<secret>` for admin keys, with a hexadecimal prefix and a base64url secret (ADR-0018). The scope is visible in the token, so a mismatch is a 400-line debugging session avoided. The label is cosmetic: the scope is read from the stored key, and a label that disagrees with it is `401 api_key_invalid` |
+| Storage | Only a SHA-256 digest of the secret and the public prefix are stored (ADR-0018) |
 | Recovery | None. A lost key is replaced. There is no endpoint that returns a key, and none will be added (INV-K3) |
 | Scopes | `runtime` for `/v1/*` data plane; `admin` for `/v1/admin/*`. An `admin` key also works on the data plane |
 | Expiry | Optional at issue time. Enforced on every request |
-| Revocation | Immediate. No cache delay, because the cache stores the hash and the state, and revocation bumps the version (K-2) |
+| Revocation | Immediate on the instance that served the revoke, and within the propagation bound (NFR-D3) on every other, because each instance's cache re-reads its keys off the path on every invalidation and refresh tick (K-2) |
 | Bootstrap | One admin key on first start, printed once at `warn`. The service **refuses to start** if it would run with an unacknowledged default key (NFR-S9) |
 | Cross-tenant | A runtime key is **not** bound to one tenant in the MVP. A key is a credential for the whole instance, and `external_id` in the request selects the tenant. Consequence, stated plainly: possession of a runtime key gives access to every tenant on the instance. This is why key issuance is an admin action, is audited, and is a per-customer decision |
 | Logging | Only the prefix appears, never the secret (DR-043) |
+
+> **Amended 2026-10-19 (`IP-07`, [ADR-0018](../decisions/0018-api-key-format-and-verifier.md)).** The
+> format row said `qc_live_<prefix>.<secret>`, which disagreed with the contract's
+> `qc_runtime_<prefix>.<secret>`; the storage row said Argon2id; and the revocation row said "no cache
+> delay", which holds on the serving instance and, across instances, only within the propagation bound.
 
 That last row is the most security-relevant decision in the API surface, so it is documented as a
 consequence rather than buried: this is a single-tenant-per-instance product (ADR-0013), and a

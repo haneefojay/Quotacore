@@ -105,11 +105,15 @@ large fraction of requests, which would be the single largest performance defect
 | Logging | `log/slog`, structured JSON | In the standard library since 1.21, structured, and one fewer dependency. Meets the log requirements in [observability](../architecture/observability.md#2-structured-logs) |
 | Time zones | `time/tzdata`, embedded | NFR-OPS8 |
 | Randomness | `crypto/rand` | API keys are credentials; a predictable generator would be a P0 |
-| Password hashing | `argon2.IDKey` from `x/crypto` | The maintained Argon2 implementation, and ADR-0012 requires Argon2id |
+| Key verification | `crypto/sha256` and `crypto/subtle` | ADR-0018: a SHA-256 digest of a 256-bit random secret, compared in constant time. Standard library, no dependency |
 | Metrics | Prometheus `client_golang` | The ecosystem expects it, and the exposition format is de facto |
 | Tracing | OpenTelemetry, optional | Off by default; the `request_id` is the correlation key and tracing is not a dependency |
 | UUID | `github.com/google/uuid` or a small local v7 implementation | UUIDv7 for index locality. Trivial enough that a dependency may not be worth it |
 | Configuration | Environment variables with a small typed reader | A configuration library would be larger than the configuration |
+
+> **Amended 2026-10-19.** The key-verification row said `argon2.IDKey`, and that ADR-0012 required
+> Argon2id. It did not: ADR-0012 chose SHA-256, and [ADR-0018](../decisions/0018-api-key-format-and-verifier.md)
+> restates that choice. No Argon2 dependency is taken.
 
 ## What was rejected, and why
 

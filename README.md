@@ -52,7 +52,7 @@ permanent, not a roadmap item.
 
 ## Status
 
-**Specification complete; implementation started.** 63 documents, 17 accepted
+**Specification complete; implementation started.** 64 documents, 17 accepted
 decisions, 49 domain rules, 34 error codes, 15 named correctness tests. Every blocking question is
 answered — the four former blockers plus
 [Q-21](docs/product/assumptions-and-open-questions.md#2-open-questions), the eviction question that
@@ -91,7 +91,7 @@ Start with [PROJECT.md](PROJECT.md), then follow the reading order it gives you.
 | Root | 11 | [PROJECT.md](PROJECT.md) — orientation, status, and what to read next |
 | Product | 9 | [foundation-and-personas.md](docs/product/foundation-and-personas.md) |
 | Architecture | 12 | [overview.md](docs/architecture/overview.md) |
-| Decisions | 17 | [TECHNICAL-DECISIONS.md](TECHNICAL-DECISIONS.md) |
+| Decisions | 18 | [TECHNICAL-DECISIONS.md](TECHNICAL-DECISIONS.md) |
 | Research | 8 | [competitive-landscape.md](docs/research/competitive-landscape.md) |
 
 The complete index, with what each document settles and who should read it, is
@@ -103,7 +103,7 @@ The complete index, with what each document settles and who should read it, is
 ├── PROJECT.md             what this is, status, reading order
 ├── PRD.md                 requirements, metrics, scope boundary
 ├── ARCHITECTURE.md        system shape, components, runtime flow
-├── TECHNICAL-DECISIONS.md index of all 17 ADRs
+├── TECHNICAL-DECISIONS.md index of all 18 ADRs
 ├── SECURITY.md            threat model, controls, known gaps
 ├── ROADMAP.md             v0.1 → v0.5, gates, and what is deliberately late
 ├── AGENTS.md              how to work in this repository, and the traps

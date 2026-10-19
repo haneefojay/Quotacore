@@ -229,7 +229,7 @@ CREATE TABLE api_keys (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name          text NOT NULL,
   prefix        text NOT NULL,                    -- public, for display and audit
-  key_hash      bytea NOT NULL,                    -- Argon2id, never reversible
+  key_hash      bytea NOT NULL,                    -- sha256(secret), never reversible
   scope         key_scope NOT NULL,
   state         key_state NOT NULL DEFAULT 'active',
   expires_at    timestamptz,
@@ -247,7 +247,8 @@ to the key that leaked, which is the entire operational purpose of a credential 
 (DR-043, K-1).
 
 There is no `key_hash_index` beyond the primary key: authentication looks up by `prefix`, which is
-unique and indexed, then verifies the Argon2id hash. The hash is deliberately not indexed, because
+unique and indexed, then verifies the SHA-256 digest ([ADR-0018](../decisions/0018-api-key-format-and-verifier.md);
+this said Argon2id until 2026-10-19). The hash is deliberately not indexed, because
 indexing a verifier invites a timing-oracle design and a scan.
 
 ### 2.7 Usage events (the ledger)

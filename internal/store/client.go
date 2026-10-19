@@ -36,6 +36,11 @@ func Open(opts Options) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
+	// go-redis ignores a context's deadline unless told otherwise and waits out
+	// its own three-second read timeout instead, so a datastore that accepts
+	// and never answers would hold a request far past DataScriptTimeout. The
+	// deadline the caller sets is the bound (NFR-L4, IP-07 DoD 5).
+	base.ContextTimeoutEnabled = true
 	return &Store{
 		client:  redis.NewClient(base),
 		timeout: opts.DataScriptTimeout,

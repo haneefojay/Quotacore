@@ -6,7 +6,7 @@ OGEN_VERSION ?= v1.24.0
 OGEN ?= go run github.com/ogen-go/ogen/cmd/ogen@$(OGEN_VERSION)
 
 .PHONY: build binary test race vet lint check-docs license-check sbom ci \
-        generate generate-check docs docs-check ogen-check
+        generate generate-check docs docs-check ogen ogen-check
 
 build:
 	$(GO) build ./...
@@ -32,7 +32,11 @@ lint:
 # Regenerate both derived artefacts of api/openapi.yaml: ogen's types, and the HTML page at
 # /docs. Both are committed, so this is the target a developer runs after editing the contract
 # and the target CI runs to prove nothing is stale.
-generate: ogen-check docs
+generate: ogen docs
+
+# Regenerate ogen's types into api/. The only way the oas_*_gen.go files change.
+ogen:
+	$(OGEN) --config api/.ogen/ogen.yml --package api --target api --clean $(CONTRACT)
 
 # `ogen-check` is named for what it verifies rather than for what it does, because running a
 # generator and checking its output are different jobs. It regenerates into a scratch directory and

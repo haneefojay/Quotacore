@@ -15,10 +15,7 @@ import (
 	// cannot shift a customer's boundaries retroactively (NFR-OPS8, IP-03 DoD 7).
 	_ "time/tzdata"
 
-	"github.com/quotacore/quotacore/internal/api"
 	"github.com/quotacore/quotacore/internal/db"
-	"github.com/quotacore/quotacore/internal/observability"
-	"github.com/quotacore/quotacore/internal/script"
 	"github.com/quotacore/quotacore/internal/snapshot"
 	"github.com/quotacore/quotacore/internal/store"
 )
@@ -96,53 +93,26 @@ func run() error {
 	}
 	cancelPing()
 
-	snap := snapshot.New(snapshot.Options{
-		LimitEntries:        cfg.ConfigCacheEntries,
-		ByteCap:             int64(cfg.ConfigCacheMB) << 20,
-		MissRate:            cfg.ConfigRefreshMissRate,
-		RefreshInterval:     cfg.ConfigRefreshInterval,
-		ControlPlaneTimeout: cfg.ControlPlaneTimeout,
-		Client:              snapshotClient{data},
-		Loader:              db.NewLoader(dbConn, data),
-	})
-	metrics := observability.New(observability.Options{HitRatio: snap.HitRatio})
-	snap.WithMetrics(metrics)
-	snap.Start(ctx)
-	defer snap.Close()
-
-	// The three scripts are loaded once at startup so the first request does not
-	// pay for it (ADR-0002, NFR-S8). A failure here is a warning rather than a
-	// refusal to start: the runner reloads all three and retries a call exactly
-	// once whenever the store answers NOSCRIPT, so a store that was unreachable
-	// at startup heals itself on the first request that reaches it. Refusing to
-	// start would turn a transient store outage into an outage of the process,
-	// which is the opposite of what fail-closed means.
-	runner, err := script.New(script.Options{Client: data.Client(), Timeout: cfg.DataScriptTimeout})
-	if err != nil {
-		return err
-	}
-	loadCtx, cancelLoad := context.WithTimeout(ctx, cfg.ControlPlaneTimeout)
-	if err := script.Load(loadCtx, runner.Client()); err != nil {
-		log.Warn("scripts were not in the store at startup; the first request will put them back", "error", err)
-	}
-	cancelLoad()
-	// The pool wait is the mechanism by which a control-plane problem could
-	// reach the data plane, so it is watched from the first second
-	// (observability.md section 1.4).
-	db.StartPoolObserver(ctx, dbConn, metrics, 10*time.Second)
-
-	handler := api.NewRouter(api.RouterOptions{Ready: state.ReadyFuncLogging(func(msg string, terms []string) {
+	app, err := assemble(ctx, cfg, log, dbConn, data, state.ReadyFuncLogging(func(msg string, terms []string) {
 		if msg == "ready" {
 			log.Info("readiness changed", "ready", true)
 			return
 		}
 		log.Warn("readiness changed", "ready", false, "unsatisfied", terms)
-	})})
+	}), nil)
+	if err != nil {
+		return err
+	}
+	defer app.Close()
+	handler := app.Handler
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      cfg.RequestTimeout + 5*time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	errc := make(chan error, 1)
 	go func() {

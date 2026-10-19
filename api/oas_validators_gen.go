@@ -2562,7 +2562,7 @@ func (s IdempotencyKey) Validate() error {
 		MaxLengthSet:  false,
 		Email:         false,
 		Hostname:      false,
-		Regex:         regexMap["^[0-9A-HJKMNP-TV-Z]{26}$"],
+		Regex:         regexMap["^[A-Za-z0-9._:-]{8,255}$"],
 		MinNumeric:    0,
 		MinNumericSet: false,
 		MaxNumeric:    0,

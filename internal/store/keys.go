@@ -42,10 +42,11 @@ const (
 )
 
 // ErrBadKeyPart is returned when a key component would break the hash tag or
-// the key grammar. A feature key, an idempotency key or a tenant identifier
-// containing a brace or a colon is refused here so that a key injection cannot
-// reach the datastore, and so that a brace in a name cannot open a second tag
-// that splits the tenant's slot (request-lifecycle.md section 6).
+// the key grammar. A feature key or a tenant identifier containing a brace or a
+// colon, or an idempotency key containing a brace, is refused here so that a
+// key injection cannot reach the datastore, and so that a brace in a name
+// cannot open a second tag that splits the tenant's slot (request-lifecycle.md
+// section 6).
 var ErrBadKeyPart = errors.New("key component would break the hash tag")
 
 const tagOpen, tagClose, colon = "{", "}", ":"
@@ -61,7 +62,7 @@ func TenantKey(tenantID string, kind KeyKind, name string) (string, error) {
 	if kind == "" || strings.IndexByte(string(kind), ':') >= 0 {
 		return "", fmt.Errorf("%w: kind %q", ErrBadKeyPart, kind)
 	}
-	if err := checkName(name); err != nil {
+	if err := checkName(name, kind == KindIdempotency); err != nil {
 		return "", err
 	}
 	return namespace + ":{t:" + tenantID + "}:" + string(kind) + ":" + name, nil
@@ -124,12 +125,21 @@ func KeyExpiry(end *time.Time) (exp time.Time, ok bool) {
 // caught instead of silently splitting the tenant across slots.
 func HashTag(tenantID string) string { return tagOpen + "t:" + tenantID + tagClose }
 
-func checkName(name string) error {
+// checkName refuses a name that could open a second hash tag. A colon is
+// refused too, except in an idempotency name: the contract admits one there
+// (`order:8841:charge`, api-conventions.md section 2), and the name
+// is the key's last segment, so a colon in it cannot be mistaken for a
+// separator. A brace is refused everywhere, because a brace is what moves a key
+// out of the tenant's slot.
+func checkName(name string, colonAllowed bool) error {
 	if name == "" {
 		return fmt.Errorf("%w: empty name", ErrBadKeyPart)
 	}
-	if strings.IndexAny(name, "{}:") >= 0 {
-		return fmt.Errorf("%w: name %q contains a brace or a colon", ErrBadKeyPart, name)
+	if strings.ContainsAny(name, "{}") {
+		return fmt.Errorf("%w: name %q contains a brace", ErrBadKeyPart, name)
+	}
+	if !colonAllowed && strings.Contains(name, colon) {
+		return fmt.Errorf("%w: name %q contains a colon", ErrBadKeyPart, name)
 	}
 	return nil
 }

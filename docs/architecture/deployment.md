@@ -51,12 +51,11 @@ quotacore 0.1.0
   feature  llm.tokens.output  (metered, unit: tokens)
   plan     starter            (1 entitlement)
   tenant   local-dev          (plan: starter, timezone: UTC)
-  key      qc_live_9f2c1a4e7b8d…   ← shown once
+  key      qc_runtime_9f2c1a4e7b8d.kZ3n…   ← shown once
 
   cycle    2026-09-27T00:00:00Z → 2026-10-01T00:00:00Z
-  try      curl -s localhost:8080/v1/balance \
-             -H "Authorization: Bearer qc_live_9f2c1a4e7b8d…" \
-             -d '{"tenant_external_id":"local-dev"}'
+  try      curl -s 'localhost:8080/v1/balance?tenant_external_id=local-dev' \
+             -H "Authorization: Bearer qc_runtime_9f2c1a4e7b8d.kZ3n…"
 ```
 
 No account, no signup, no email, no cloud console, no dashboard, no telemetry. The README's
@@ -114,9 +113,14 @@ reading the source.
 | `QUOTACORE_SHUTDOWN_GRACE` | `30s` | NFR-A5 |
 | `QUOTACORE_MAX_BODY_BYTES` | `65536` | 4 KiB of that is the `metadata` cap (NFR-T6) |
 | `QUOTACORE_METADATA_MAX_BYTES` | `4096` | `413 payload_too_large` above it |
-| `QUOTACORE_MAX_FEATURE_KEY_LEN` | `64` | Format-enforced |
+| `QUOTACORE_MAX_FEATURE_KEY_LEN` | `64` | Fixed by the contract's `FeatureKey` pattern, and not read by the service |
 | `QUOTACORE_MAX_ENTITLEMENTS_PER_PLAN` | `100` | NFR-T5 |
-| `QUOTACORE_AMOUNT_MAX` | `9007199254740991` | `2^53 − 1`. The Lua double bound, enforced identically in the API, the DDL and the script |
+| `QUOTACORE_AMOUNT_MAX` | `9007199254740991` | `2^53 − 1`. The Lua double bound, enforced identically in the API, the DDL and the script. Fixed by the contract, and not read by the service |
+
+> **Amended 2026-10-19 (`IP-07`).** The last two rows read as tunables. Both values are pinned by
+> `api/openapi.yaml`, and a deployment that changed them would enforce a contract other than the one
+> it serves at `/openapi.json`, so the service does not read either variable. The rows stay so a
+> reader looking for the knob finds why there is none.
 
 ### 4.3 Cache and worker
 

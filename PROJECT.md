@@ -17,7 +17,7 @@
 | Specification frozen | 2026-09-27 |
 | Owner | Project owner |
 | Language and stack | Go 1.27, PostgreSQL 16+, Redis-compatible store (Valkey by default) |
-| Decisions | 17 accepted, none superseded |
+| Decisions | 17 accepted, and ADR-0012 superseded by ADR-0018 on 2026-10-19 |
 | Open questions | 21 logged, none blocking — [register](docs/product/assumptions-and-open-questions.md) |
 
 **Current phase.** The specification is complete and internally consistent, and every blocking
@@ -81,7 +81,7 @@ Each is a testable property with a test behind it, not a slogan.
 | --- | --- |
 | [PRD.md](PRD.md) | Requirements, personas, success metrics, scope boundary |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System shape, components, data model, runtime flow |
-| [TECHNICAL-DECISIONS.md](TECHNICAL-DECISIONS.md) | Index of all 17 ADRs with rationale and revisit triggers |
+| [TECHNICAL-DECISIONS.md](TECHNICAL-DECISIONS.md) | Index of all 18 ADRs with rationale and revisit triggers |
 | [SECURITY.md](SECURITY.md) | Threat model, controls, gaps, incident response |
 | [ROADMAP.md](ROADMAP.md) | Release sequencing and what gates each phase |
 | [AGENTS.md](AGENTS.md) | How to work in this repository: reading order by task, change recipes, traps, definition of done |
@@ -91,7 +91,7 @@ Each is a testable property with a test behind it, not a slogan.
 
 ## Documentation map
 
-63 documents. `docs/README.md` is the full index with reading paths. `docs/roadmaps/roadmap-index.md`
+64 documents. `docs/README.md` is the full index with reading paths. `docs/roadmaps/roadmap-index.md`
 is the execution plan: 28 phases, with the specification gate now passed.
 
 ```

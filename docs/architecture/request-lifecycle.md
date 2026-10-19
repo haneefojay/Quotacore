@@ -24,15 +24,23 @@ request volume.
 ### Step 2 — Authenticate  · target ≤ 100 µs
 
 Extract the bearer token, take its public prefix, and look up the key in the **bounded in-process
-key cache** by prefix. Verify the Argon2id hash in constant time. Update `last_used_at`
-asynchronously, off the path.
+key cache** by prefix. Verify the SHA-256 digest of the secret in constant time
+([ADR-0018](../decisions/0018-api-key-format-and-verifier.md)). Update `last_used_at` asynchronously,
+off the path, at most once a minute per key.
 
 **Why the hash is verified per request and not just at cache fill.** A cached *verified* key is
 what a 24-hour key TTL, a revoked key, or a copied key would defeat. Verification is the
-mechanism; the cache only avoids the database. Argon2id is deliberately expensive, which is
-precisely why the cache is bounded and eviction is a metric.
+mechanism; the cache only avoids the database. The cache is bounded
+(`QUOTACORE_KEY_CACHE_ENTRIES`), and a miss is one bounded, rate-limited read by prefix, as DR-039
+permits for configuration. Revocation reaches the cache off the path: every invalidation message and
+every refresh tick re-reads the cached prefixes in one query.
 
-**Forbidden:** a Postgres query to re-read the key on the request path. This is the single most
+> **Amended 2026-10-19 (`IP-07`).** This step said the stored hash was Argon2id, "deliberately
+> expensive". ADR-0018 keeps ADR-0012's SHA-256, because a slow hash on every request cannot fit the
+> first claim's budget and a 256-bit random secret does not need one.
+
+**Forbidden:** a Postgres query to re-read the key on the request path, beyond the one bounded read
+on a cache miss. This is the single most
 common way the two-plane boundary is eroded, by a well-meaning "let me look up the key's scope
 fresh" change.
 
@@ -166,7 +174,7 @@ only where the label set is bounded.
 | --- | --- |
 | `POST /v1/refund` | Same path. The script reverses direction, adds the ceiling check `balance + amount <= limit + bonus` (DR-019), and can return `409 refund_exceeds_grant`. No `quota_exceeded` is possible on this path |
 | `POST /v1/check` | Steps 1 to 6 identical. The script performs the transition (so the reported window is current) and the denial check, then **stops**. No deduction, no idempotency record, no ledger append. A denial is reported as `allowed: false` in a `200`, not as a `429` (DR-024) |
-| `GET /v1/balance` | Steps 1 to 6, then a single `HMGET` of the balance hash. No script, no mutation, no rollover. A tenant in a cycle that has ended reports the **stored** window until a write or a `check` advances it; the response therefore always includes the `limit` that *will* apply, and the docs state that the window is refreshed by any write or `check` |
+| `GET /v1/balance` | Steps 1 to 6, then one pipelined round trip of `HMGET`s, one per requested feature, all in the tenant's slot. No script, no mutation, no rollover. A tenant in a cycle that has ended reports the **stored** window and the stored `limit`, `bonus` and `balance`, as one consistent set, until a write or a `check` advances it; the configured limit applies from that transition, and the docs state that the window is refreshed by any write or `check`. A missing hash for an active feature is the DR-045 fault. A missing hash for an archived feature is not: it expired after the feature's last cycle, and the entry is omitted (amended 2026-10-19, `IP-07`) |
 | Admin endpoints | No snapshot, no script. A Postgres transaction, an audit row in the same transaction, then an invalidation publish (NFR-D3) |
 | `POST /v1/admin/plans/{id}/apply` | The count of assigned tenants is taken **before** any write, from the same transaction that would perform the re-anchor. Above the threshold the transaction writes the audit row for the refusal and nothing else, and returns `409 confirmation_required` with the token (DR-046). The confirming call repeats the count, re-checks the plan's `resource_version`, consumes the token and then re-anchors. Postgres unreachable means no count and no token, so the call is `503 control_plane_unavailable` and the operator retries; there is no partial application to reason about |
 | `GET /v1/admin/plans/{id}/impact` | A single indexed count plus a `MIN` over the assigned tenants' boundaries. No write, no audit row, no token, and no invalidation publish, because nothing changed. It is a read of the same two numbers the `409` path computes, which is why the two cannot disagree |
