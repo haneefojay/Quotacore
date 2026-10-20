@@ -57,7 +57,18 @@ type Config struct {
 	EventRetentionDays int
 	AuditRetentionDays int
 	RetentionInterval  time.Duration
+
+	// The IP-11 keys: the startup mode of consistency-and-recovery.md
+	// section 4.1, and how often the reconciliation pass runs (S1).
+	StartupMode       string
+	ReconcileInterval time.Duration
 }
+
+// The startup modes (deployment.md section 4.1).
+const (
+	ModeNormal   = "normal"
+	ModeReadOnly = "readonly"
+)
 
 // maxRefreshInterval bounds QUOTACORE_CONFIG_REFRESH_INTERVAL. A snapshot can
 // be stale for at most one interval, and a stale anchor must never outlive the
@@ -99,6 +110,9 @@ func Load(getenv Getenv) (Config, error) {
 		EventRetentionDays: 90,
 		AuditRetentionDays: 400,
 		RetentionInterval:  time.Hour,
+
+		StartupMode:       ModeNormal,
+		ReconcileInterval: 5 * time.Minute,
 	}
 	if c.DatabaseURL == "" {
 		return c, fmt.Errorf("QUOTACORE_DATABASE_URL is required and is not set")
@@ -256,6 +270,9 @@ func Load(getenv Getenv) (Config, error) {
 	if err := loadLedger(getenv, &c); err != nil {
 		return c, err
 	}
+	if err := loadReconcile(getenv, &c); err != nil {
+		return c, err
+	}
 	proxies, err := admin.ParseProxies(getenv("QUOTACORE_TRUSTED_PROXIES"))
 	if err != nil {
 		return c, fmt.Errorf("QUOTACORE_TRUSTED_PROXIES: %w", err)
@@ -324,6 +341,35 @@ func loadLedger(getenv Getenv, c *Config) error {
 	}
 	return nil
 }
+
+// loadReconcile reads the two IP-11 keys. A mode that is neither value is
+// refused rather than read as normal, because starting an instance that
+// writes during a rebuild is the failure the mode exists to prevent.
+func loadReconcile(getenv Getenv, c *Config) error {
+	if raw := getenv("QUOTACORE_STARTUP_MODE"); raw != "" {
+		if raw != ModeNormal && raw != ModeReadOnly {
+			return fmt.Errorf("QUOTACORE_STARTUP_MODE is %q, which is neither %s nor %s", raw, ModeNormal, ModeReadOnly)
+		}
+		c.StartupMode = raw
+	}
+	if raw := getenv("QUOTACORE_RECONCILE_INTERVAL"); raw != "" {
+		d, err := parseDuration(raw, "QUOTACORE_RECONCILE_INTERVAL")
+		if err != nil {
+			return err
+		}
+		if d < time.Minute {
+			return fmt.Errorf("QUOTACORE_RECONCILE_INTERVAL is %q, which is shorter than a minute", raw)
+		}
+		c.ReconcileInterval = d
+	}
+	return nil
+}
+
+// Settle is how old a ledger row must be before the reconciliation pass reads
+// it, and how long the pass waits before confirming a disagreement: the larger
+// of a minute and ten flush intervals (IP-11 D3), so an event still in another
+// instance's queue is never reported.
+func (c Config) Settle() time.Duration { return max(time.Minute, 10*c.EventFlushInterval) }
 
 func valueOr(getenv Getenv, key, fallback string) string {
 	if v := getenv(key); v != "" {

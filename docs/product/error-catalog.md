@@ -111,6 +111,12 @@ caller get charged for the failure?
 > complete deduction" when the store dies mid-request, and a reply lost after the command ran is the
 > same case. What holds is that nothing is partial, and a same-key retry is safe.
 
+> **Amended 2026-10-20 (`IP-11`).** `service_unavailable` also means the service is in read-only
+> recovery mode (`QUOTACORE_STARTUP_MODE=readonly`, or an instance that has lost its rebuild
+> fence): every route that would write a tenant's balance or idempotency record answers it, with a
+> `retry_after_ms`, and nothing is changed. The client's action is the same, a retry with the same
+> `Idempotency-Key`, so no code is added for a state a client handles identically.
+
 > **Amended 2026-10-20 (`IP-09`).** `api_key_not_found` is new, because a revoke of an id that
 > names no key had no code: `resource_version_conflict` was the only refusal the keys cell named,
 > and an API key carries no `version` for it to conflict on. `rate_limited` now names the admin
@@ -377,6 +383,13 @@ key, restoring a single net charge (DR-049).
 is worded as "charged once, and a double charge caused by store loss is reversed" rather than
 "charged once, unconditionally". A duplicate detected here is a correctness alarm that triggers a
 remedy, not an informational counter that reports one.
+**Note, 2026-10-20 (`IP-11`):** "the duplicate `event_id`" is read as DR-049's IP-12 note reads it:
+a second deduction under one idempotency key. The refund is not issued under the client's key,
+which still holds the first deduction's record; it runs under `#reversal/<event_id>`, and the
+client's key is carried on the reversal's ledger row, so the events route filtered by that key
+shows the deduction, the duplicate and the reversal together (DR-049's IP-11 note). The store is
+rebuilt only where the ledger determines a balance exactly; anything else stays `503` until an
+operator decides (consistency-and-recovery.md section 4.1).
 
 ---
 

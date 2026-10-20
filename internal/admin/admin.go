@@ -347,6 +347,9 @@ type Options struct {
 	// Now is the drain's clock; a request's own instant is its accepted
 	// time.
 	Now func() time.Time
+	// ReadOnly reports whether the instance is in read-only mode (IP-11
+	// D5); nil is never.
+	ReadOnly func() bool
 }
 
 // StatusInfo is what GET /v1/admin/status reports beyond its probes.
@@ -384,6 +387,7 @@ type Service struct {
 	threshold   int64
 	cnfTTL      time.Duration
 	now         func() time.Time
+	readOnly    func() bool
 }
 
 func New(opts Options) *Service {
@@ -400,6 +404,10 @@ func New(opts Options) *Service {
 		threshold:   opts.ConfirmThreshold,
 		cnfTTL:      opts.ConfirmationTTL,
 		now:         opts.Now,
+		readOnly:    opts.ReadOnly,
+	}
+	if s.readOnly == nil {
+		s.readOnly = func() bool { return false }
 	}
 	if s.events == nil {
 		s.events = dataplane.NopSink{}
@@ -448,28 +456,42 @@ func (s *Service) Handlers() map[string]http.HandlerFunc {
 		"createPlan":  s.createPlan,
 		"getPlan":     s.getPlan,
 		"updatePlan":  s.updatePlan,
-		"applyPlan":   s.applyPlan,
+		"applyPlan":   s.writable(s.applyPlan),
 		"planImpact":  s.planImpact,
 		"archivePlan": s.archivePlan,
 		"deletePlan":  s.deletePlan,
 
 		"listTenants":   s.listTenants,
-		"createTenant":  s.createTenant,
+		"createTenant":  s.writable(s.createTenant),
 		"getTenant":     s.getTenant,
 		"updateTenant":  s.updateTenant,
 		"suspendTenant": s.suspendTenant,
 		"resumeTenant":  s.resumeTenant,
 		"deleteTenant":  s.deleteTenant,
 
-		"grantTenant":          s.grant,
-		"setTenantBalance":     s.setBalance,
-		"forceRollover":        s.forceRollover,
-		"upsertTenantOverride": s.upsertOverride,
-		"clearTenantOverride":  s.clearOverride,
+		"grantTenant":          s.writable(s.grant),
+		"setTenantBalance":     s.writable(s.setBalance),
+		"forceRollover":        s.writable(s.forceRollover),
+		"upsertTenantOverride": s.writable(s.upsertOverride),
+		"clearTenantOverride":  s.writable(s.clearOverride),
 
 		"listUsageEvents": s.listEvents,
 		"listAudit":       s.listAudit,
 		"status":          s.serveStatus,
+	}
+}
+
+// writable refuses an operation that writes a tenant's balances while the
+// instance is read-only, before anything is committed (IP-11 D5). The store's
+// own guard would refuse the balance write anyway; refusing here first keeps a
+// Postgres commit from landing with its balance half refused.
+func (s *Service) writable(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.readOnly() {
+			readOnly(w, r)
+			return
+		}
+		h(w, r)
 	}
 }
 

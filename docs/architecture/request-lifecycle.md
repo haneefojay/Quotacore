@@ -120,7 +120,9 @@ in this order and without yielding:
    opportunity: the script returns a state-missing marker, the service answers
    `503 service_unavailable`, increments `quotacore_balance_key_missing_total`, and the
    tenant-feature joins the rebuild queue. Balances are materialised at provisioning and at
-   plan-assignment time, and at no other moment (DR-045, NFR-D7).
+   plan-assignment time, and at no other moment (DR-045, NFR-D7). (Amended 2026-10-20, `IP-11`:
+   there is no persisted queue and this step writes nothing; the tenant-feature is found by
+   `quotacore rebuild`'s enumeration, DR-045's note.)
 3. **Cycle transition.** The four-step transition in
    [cycle-engine.md](cycle-engine.md#5-the-transition), including the monotonicity guard, the reset
    to `limit`, `bonus = 0`, and a `PERSIST`, because a balance hash never expires (INV-C3; amended

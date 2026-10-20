@@ -19,6 +19,7 @@ import (
 	"github.com/quotacore/quotacore/internal/db"
 	"github.com/quotacore/quotacore/internal/ledger"
 	"github.com/quotacore/quotacore/internal/observability"
+	"github.com/quotacore/quotacore/internal/reconcile"
 )
 
 // The integration tests of IP-12: the ledger the real writer produces, read
@@ -609,11 +610,13 @@ func TestListUsageEventsReadsWhatTheWriterWrote(t *testing.T) {
 // boundary crossings leaves a ledger in which every cycle's last balance_after
 // is its last opening plus the deltas after it, and the current cycle's
 // result is the hash's balance (D1, DR-042, data-model section 2.7).
-func TestTheLedgerReconcilesEveryCycle(t *testing.T) {
-	s := newStack(t)
-	seed := time.Now().UnixNano()
-	rng := rand.New(rand.NewSource(seed))
-	t.Logf("seed %d", seed)
+// workload is IP-12's reconciling dataset: three features (hourly, monthly
+// and never) on two plans, n tenants spread over the zones, and ops random
+// consumes, refunds, checks, grants, sets, force-rollovers, plan changes, one
+// apply-now and hand-made boundary crossings; then a check on every
+// tenant-feature, so every hash is in its current window.
+func (s *stack) workload(t *testing.T, rng *rand.Rand, zones []string, n, ops int) ([]tenant, []string, []string) {
+	t.Helper()
 	hourly, monthly, never := uniq("rh"), uniq("rm"), uniq("rn")
 	for _, k := range []string{hourly, monthly, never} {
 		s.createFeature(k)
@@ -633,9 +636,9 @@ func TestTheLedgerReconcilesEveryCycle(t *testing.T) {
 	// one, and their hashes are seeded full: a cycle with no opening row
 	// opens at the limit.
 	var tenants []tenant
-	for i := range 4 {
+	for i := range n {
 		limit := int64(500 + 250*(i%2))
-		tn := s.tenantOn(planIDs[i%2], "UTC", monthlyAnchor, ent{hourly, limit, "hourly", false},
+		tn := s.tenantOn(planIDs[i%2], zones[i%len(zones)], monthlyAnchor, ent{hourly, limit, "hourly", false},
 			ent{monthly, limit * 2, "monthly", false}, ent{never, limit * 3, "never", false})
 		for _, f := range features {
 			s.seedCurrent(tn, f, tn.ents[f].limit)
@@ -670,7 +673,7 @@ func TestTheLedgerReconcilesEveryCycle(t *testing.T) {
 		s.seed(tn, f, stored{Balance: bal, Limit: lim, Bonus: bonus, Index: idx - 1, Start: prevStart, End: &prevEnd})
 	}
 	applied := false
-	for range 300 {
+	for range ops {
 		tn := tenants[rng.Intn(len(tenants))]
 		f := features[rng.Intn(len(features))]
 		tp := "/v1/admin/tenants/" + tn.ID
@@ -702,56 +705,40 @@ func TestTheLedgerReconcilesEveryCycle(t *testing.T) {
 		}
 	}
 
-	type cycleKey struct {
-		feature string
-		start   time.Time
-		index   int64
-	}
-	opening := map[string]bool{"cycle_rolled_over": true, "plan_changed": true, "force_rolled_over": true}
+	// A crossed hash was moved back by hand, with no event, which nothing in
+	// the service does; a check rolls each one forward again through the
+	// transition, as the next real request would.
 	for _, tn := range tenants {
-		rows := s.ledger(tn)
-		cycles := map[cycleKey][]ledgerRow{}
-		var order []cycleKey
-		for _, r := range rows {
-			k := cycleKey{r.Feature, r.Start, r.Index}
-			if _, ok := cycles[k]; !ok {
-				order = append(order, k)
-			}
-			cycles[k] = append(cycles[k], r)
-		}
-		for _, k := range order {
-			rs := cycles[k]
-			var base int64
-			from := 0
-			found := false
-			for i, r := range rs {
-				if opening[r.Type] {
-					base, from, found = r.Balance, i+1, true
-				}
-			}
-			if !found {
-				base = rs[0].Balance - rs[0].Delta
-				// No opening row: the cycle opened at the effective limit,
-				// which is what the first row's balance before it was.
-			}
-			sum := base
-			for _, r := range rs[from:] {
-				sum += r.Delta
-			}
-			if last := rs[len(rs)-1].Balance; sum != last {
-				t.Errorf("tenant %s cycle %+v: opening %d plus the deltas after it is %d, the last balance_after is %d (seed %d): %v",
-					tn.External, k, base, sum, last, seed, shapes(rs))
-			}
-		}
-		// The current cycle's result is the hash's balance.
 		for _, f := range features {
-			index, start := s.hashWindow(tn, f)
-			rs := cycles[cycleKey{f, start, index}]
-			if len(rs) == 0 {
-				continue
+			s.rolled(f, tn.External)
+		}
+	}
+	return tenants, features, plans
+}
+
+func TestTheLedgerReconcilesEveryCycle(t *testing.T) {
+	s := newStack(t)
+	seed := time.Now().UnixNano()
+	rng := rand.New(rand.NewSource(seed))
+	t.Logf("seed %d", seed)
+	tenants, features, _ := s.workload(t, rng, []string{"UTC"}, 4, 300)
+	// Every tenant-feature's history reconciles row by row and ends at its
+	// hash, read by the verifier the service itself runs (IP-11 D1).
+	s.flush()
+	reconciler := db.NewReconciler(s.seedDB)
+	for _, tn := range tenants {
+		for _, f := range features {
+			sub := reconcile.Subject{TenantID: tn.ID, Feature: f}
+			rows, _, err := reconciler.Rows(context.Background(), sub, time.Time{})
+			if err != nil {
+				t.Fatal(err)
 			}
-			if last := rs[len(rs)-1].Balance; last != s.balance(tn, f) {
-				t.Errorf("tenant %s %s: the ledger ends at %d, the hash holds %d (seed %d)", tn.External, f, last, s.balance(tn, f), seed)
+			hash, err := balances{s.app.Data}.Hash(context.Background(), sub)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v := reconcile.Verify(sub, rows, nil, &hash); len(v.Findings) != 0 {
+				t.Errorf("tenant %s %s does not reconcile (seed %d): %s", tn.External, f, seed, mustJSON(v.Findings))
 			}
 		}
 	}

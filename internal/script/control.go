@@ -233,3 +233,71 @@ func decodeControl(op Operation, raw any) (AdminOutcome, error) {
 	}
 	return res, nil
 }
+
+// ErrExists is a rebuild of a hash the store already holds, whole or not. The
+// rebuild script wrote nothing (IP-11 D7).
+var ErrExists = errors.New("the balance hash exists")
+
+// Restore is one hash a rebuild creates: a window and the three balances the
+// ledger records for it.
+type Restore struct {
+	TenantID   string
+	FeatureKey string
+	Window     cycle.Window
+	Balance    int64
+	Limit      int64
+	Bonus      int64
+}
+
+// Rebuild creates r's hash unless the store already holds one, which is
+// ErrExists (IP-11 D7). It is create-only by construction: the script checks
+// and writes in one execution, so a request or a second rebuild cannot slip
+// a write in between.
+func (r *Runner) Rebuild(ctx context.Context, w Restore) error {
+	for _, n := range []int64{w.Balance, w.Limit, w.Bonus} {
+		if n < 0 || n > bound {
+			return fmt.Errorf("the rebuild script: %w: %d is negative or above 2^53", ErrInvalidArgument, n)
+		}
+	}
+	key, err := Rewrite{TenantID: w.TenantID, FeatureKey: w.FeatureKey, Window: w.Window, Limit: w.Limit}.validate(Rebuild)
+	if err != nil {
+		return err
+	}
+	argv := []any{
+		strconv.FormatInt(w.Balance, 10),
+		strconv.FormatInt(w.Limit, 10),
+		strconv.FormatInt(w.Bonus, 10),
+		strconv.FormatInt(w.Window.Index, 10),
+		strconv.FormatInt(w.Window.Start.UnixMilli(), 10),
+		windowEndArg(w.Window),
+	}
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+	raw, err := r.client.EvalSha(ctx, rebuildBody.digest, []string{key}, argv...).Result()
+	if isNoScript(err) {
+		if loadErr := Load(ctx, r.client); loadErr != nil {
+			return fmt.Errorf("the rebuild script was not in the store and could not be put back: %w", loadErr)
+		}
+		raw, err = r.client.EvalSha(ctx, rebuildBody.digest, []string{key}, argv...).Result()
+	}
+	if err != nil {
+		return err
+	}
+	table, ok := raw.([]any)
+	if !ok || len(table) != 7 {
+		return fmt.Errorf("the rebuild script answered %v rather than 7 strings", raw)
+	}
+	fields, err := asStrings(Rebuild, table)
+	if err != nil {
+		return err
+	}
+	switch fields[0] {
+	case "applied":
+		return nil
+	case "exists":
+		return fmt.Errorf("the rebuild script: %w", ErrExists)
+	case "invalid":
+		return fmt.Errorf("the rebuild script: %w", ErrInvalidArgument)
+	}
+	return fmt.Errorf("the rebuild script answered the decision %q", fields[0])
+}

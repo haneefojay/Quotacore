@@ -41,8 +41,13 @@ type Event struct {
 	// re-anchor (data-model.md section 2.7).
 	CycleStart time.Time
 	ClientKey  string // the Idempotency-Key the caller sent
-	Metadata   json.RawMessage
-	OccurredAt time.Time
+	// ReconcilesKey is the customer's key a reconciliation reversal pair
+	// carries in place of ClientKey: the duplicate it appends and the refund
+	// that reverses it (DR-049, IP-11 D4). Nothing on the request path sets
+	// it.
+	ReconcilesKey string
+	Metadata      json.RawMessage
+	OccurredAt    time.Time
 }
 
 // EventSink takes events off the request path. Enqueue must not block and must

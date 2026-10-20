@@ -241,7 +241,7 @@ advance(now):
 | # | From | Trigger | To | Guard | Effect |
 | --- | --- | --- | --- | --- | --- |
 | C-1 | uninitialised | tenant provisioned, or plan assigned (UC-05) | current | tenant active, feature in plan | materialise allowance; `window` computed from anchor. **Not** a data-plane trigger: an absent hash at request time is a `503` fault, not an initialisation (DR-045) |
-| C-1a | uninitialised | data-plane access with the hash absent | unchanged | — | **rejected** with `503 service_unavailable`; `balance_key_missing_total` rises; the tenant-feature joins the rebuild queue (DR-045) |
+| C-1a | uninitialised | data-plane access with the hash absent | unchanged | — | **rejected** with `503 service_unavailable`; `balance_key_missing_total` rises; the tenant-feature joins the rebuild queue (DR-045). Amended 2026-10-20 (`IP-11`): there is no persisted queue; the tenant-feature is found by `quotacore rebuild`'s enumeration, which writes it only if the ledger determines it exactly (DR-045's note) |
 | C-2 | current | access at or after `window_end` | current(n+1) | `n+1 > cycle_index` | reset to limit, clear bonus, new window |
 | C-3 | current | access with `n < cycle_index` | unchanged | — | **rejected**, not applied. A stale writer cannot re-grant a past allowance |
 | C-4 | current | admin set / grant | current | ceiling respected | balance or bonus changes, no window change |
@@ -301,7 +301,9 @@ advance(now):
   charge (DR-048).
 - INV-I4 Absence after total store loss is a **distinct** state from absence by expiry. I-4 is a new
   operation; I-6 is a lost one, and it is detected by reconciliation and reversed. Treating them
-  alike is what made the second claim unprovable.
+  alike is what made the second claim unprovable. (Amended 2026-10-20, `IP-11`: the reversal is
+  the in-service pass's, under the key `#reversal/<event_id>`, with the client's key carried on the
+  reversal's ledger row; see DR-049's note.)
 
 ---
 

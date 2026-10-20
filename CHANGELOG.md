@@ -12,6 +12,25 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **Idempotency detection and reconciliation (`IP-11`).** `internal/reconcile` checks a
+  tenant-feature's ledger row by row and against its balance hash, with no I/O of its own. An
+  in-service pass, every `QUOTACORE_RECONCILE_INTERVAL` under one advisory lock, reverses each
+  duplicate deduction once under a derived idempotency key, verifies what changed since its
+  checkpoint, confirms each suspect with a second read, records it in `reconcile_findings`, and
+  counts it once in `quotacore_event_reconcile_mismatch_total`. It never corrects a balance.
+- Read-only mode (`QUOTACORE_STARTUP_MODE=readonly`): the store's own hook refuses every tenant-key
+  write, every route that can write one answers `503 service_unavailable`, and status reports
+  `mode`. A Postgres advisory-lock fence, held shared by each normal instance and exclusively by a
+  rebuild, keeps a normal instance from writing beside a rebuild.
+- The binary's first local operations: `quotacore verify-tenant`, `verify-all`, `reconcile-report`
+  and `rebuild`. `rebuild` classifies each tenant-feature from the ledger as exact, unverified,
+  unreconcilable or present, writes only the exact ones with the create-only `rebuild.lua`, and
+  writes the rest only on an audited `--accept` or `--set`.
+- Migration `00011`: `usage_events.reconciles_key`, the dead-letter resolution, the findings and
+  their checkpoint, and the ledger's own loss record (`usage_event_gaps`, `ledger_sessions`), so a
+  crashed writer or a dropped event makes the cycles it covers unverified rather than exact.
+- Integration tests for the six DoD items, T-11 and T-14.
+
 - **The usage ledger, its writer and its retention (`IP-12`).** `internal/ledger` is a bounded queue
   the request path hands each event to without waiting, and one writer per process that appends in
   batches through its own two-connection pool. A full queue drops and counts (`queue_full`); a lost
@@ -262,6 +281,21 @@ exists, because a future implementer needs to know which statements are new.
   different `QUOTACORE_IDEMPOTENCY_TTL` — by a test on each boundary.
 
 ### Changed
+
+- **`IP-11` is `COMPLETE`**, opened and closed 2026-10-20 with 6 of 6 DoD items met. `IP-16` now
+  waits on `IP-15` only. Items 3, 5 and 6 carry a dated note dividing them with `IP-15`'s restore
+  drill, and `IP-14` gains the four local operations by a dated note. Dated `IP-11` notes on DR-045
+  and DR-049, consistency-and-recovery §4.1, §4.5, §5 and §6 with a new §4.6 (the dispute runbook),
+  error-catalog's `service_unavailable` and FS-22, state-machines C-1a, INV-I4 and I-6,
+  data-model §2.7 and §2.12 to §2.15, deployment's `QUOTACORE_STARTUP_MODE` and
+  `QUOTACORE_RECONCILE_INTERVAL`, request-lifecycle step 2, observability §1.5 and §5,
+  testing-strategy T-11 and T-14, UC-16 step 4 and security-model §2. The contract gains
+  `Status.mode`, and the events route's key filter also matches a reversal's `reconciles_key`.
+
+### Changed
+
+- **`IP-11` is `IN PROGRESS`**, opened 2026-10-20 before any file it owns exists. Nothing gated it:
+  `IP-07` closed on 2026-10-19 and `IP-12` on 2026-10-20.
 
 - **`IP-12` is `COMPLETE`**, opened 2026-10-20 before any file it owns existed and closed the same day
   with 8 of 8 DoD items met. `IP-11` and `IP-14` are now `NOT STARTED`. A force-rollover reopens the
@@ -616,6 +650,15 @@ exists, because a future implementer needs to know which statements are new.
   point-in-time records they are.
 
 ### Fixed
+
+- **`TestTheLedgerReconcilesEveryCycle` was flaky.** Its seeded checks could meet the bounded-miss
+  limiter and be answered `503`; they now retry a `503` for up to five seconds.
+- **Two integration tests failed when every package ran at once.** `go test ./...` runs packages
+  in parallel against one store. `TestConfigNamespaceAndInvalidationRoundTrip` read a config version
+  that `cmd/quotacore`'s stacks bump; it now keeps its keys in a database of its own and waits for
+  its own invalidation on the server-wide channel. `TestTheScriptsWorkIsNotProportionalToTheTenant`
+  took the median of 11 timings, which other packages' load could inflate; it now takes the fastest
+  of 21.
 
 - **An idle tenant was locked out a day after its window closed.** Every balance hash was written
   with `EXPIREAT window_end + 24h`, only provisioning and a re-anchor may create one (DR-045), and no

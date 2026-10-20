@@ -52,7 +52,10 @@ func TestTheWriterCanOnlyAppend(t *testing.T) {
 
 	// Every statement in the appender, by its leading words.
 	allowed := regexp.MustCompile(`^(?:WITH\b[\s\S]*\bINSERT INTO usage_events\b|INSERT INTO (?:usage_events|usage_event_dead_letters)\b|` +
-		`SELECT\b|DELETE FROM usage_event_dead_letters\b|UPDATE usage_event_dead_letters\b|SAVEPOINT\b|ROLLBACK TO SAVEPOINT\b)`)
+		`SELECT\b|DELETE FROM usage_event_dead_letters\b|UPDATE usage_event_dead_letters\b|SAVEPOINT\b|ROLLBACK TO SAVEPOINT\b|` +
+		// The loss record (IP-11 D8): the writer's session row and its gap
+		// tallies, neither of them the ledger.
+		`INSERT INTO (?:ledger_sessions|usage_event_gaps)\b|UPDATE ledger_sessions\b)`)
 	statement := regexp.MustCompile(`(?i)^\s*(?:WITH|INSERT|SELECT|UPDATE|DELETE|MERGE|TRUNCATE|ALTER|DROP|CREATE|SAVEPOINT|ROLLBACK|COPY)\b`)
 	path := filepath.Join(dir, "..", "db", "ledger.go")
 	f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)

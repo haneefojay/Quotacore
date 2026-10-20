@@ -179,6 +179,11 @@ func (s *Service) RunDrain(ctx context.Context, every time.Duration) {
 // DrainOnce finishes every pending re-anchor it can reach now, a chunk at a
 // time, and reports how many it finished.
 func (s *Service) DrainOnce(ctx context.Context) int {
+	if s.readOnly() {
+		// A re-anchor writes balances, which read-only mode forbids; the
+		// drain resumes when the instance is back in normal mode (IP-11 D5).
+		return 0
+	}
 	total := 0
 	for ctx.Err() == nil {
 		began := time.Now()

@@ -24,12 +24,12 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-08` | Control-plane schema and migrations | `IP-02` | `COMPLETE`, 2026-10-19 |
 | `IP-09` | Control-plane API and API keys | `IP-08` | `COMPLETE`, opened 2026-10-19, closed 2026-10-20 |
 | `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `COMPLETE`, opened and closed 2026-10-20 |
-| `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `NOT STARTED` |
+| `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-12` | Usage ledger, writer and archiver | `IP-08` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-13` | Observability | `IP-07` | `NOT STARTED` |
 | `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `NOT STARTED` |
 | `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `BLOCKED` |
-| `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `BLOCKED` on `IP-11`, `IP-15` |
+| `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `BLOCKED` on `IP-15` |
 
 ---
 
@@ -879,7 +879,7 @@ the `.lua` files, so they hold the script surface rather than one call site. The
 | — | `TestTheRunnerSendsTwoKeysAndSevenValues`, `TestTheScriptsReadTheArgumentsTheRunnerSends`, `TestScriptsCallOnlyTheCommandsTheyNeed` | The scripts and the runner disagreeing about the keys, the argument order or the new `GET`/`SET`, which is the failure a silent `ARGV` shift produces |
 | — | `TestDecodeReadsEveryShapeAScriptCanAnswerWith`, `TestDecodeRefusesAnythingItDoesNotUnderstand`, `TestTheTwoNamedRefusalsAreRecognisable` | A `replayed` or `reused` reply read as a real one, or of the wrong arity, accepted as if it were state |
 
-Two things are recorded here because the phase surfaced them.
+Three things are recorded here because the phase surfaced them.
 
 - **The window is pinned in three places, and now asserted across all three.** The Go constant
   `script.IdempotencyWindow`, the Lua `local DAY = 86400`, and `cmd/quotacore`'s hard refusal of a
@@ -1367,8 +1367,10 @@ separate phases.
 
 ## IP-11 — Idempotency detection and reconciliation
 
-**Status** `NOT STARTED`; `IP-07` closed on 2026-10-19 and `IP-12` on 2026-10-20, so nothing gates
-this phase.
+**Status** `COMPLETE`, opened and closed 2026-10-20. `IP-07` closed on 2026-10-19 and `IP-12` on
+2026-10-20, so nothing gated this phase. All 6 DoD items are met, each closed by a test in the
+evidence table below; items 3, 5 and 6 carry a dated note on how they divide with `IP-15`'s restore
+drill.
 
 **Objective.** The control plane's half of the idempotency claim: notice when a data-plane record
 and the ledger disagree, rather than preventing it again.
@@ -1403,6 +1405,41 @@ and the ledger disagree, rather than preventing it again.
    reconstructed matches exactly. Accuracy in both directions, not just in the happy one.
 6. No tenant is granted a full allowance by any path at any point during a rebuild (DR-045). This is
    the assertion the restore drill exists for, and it is the one most likely to be weakened.
+   > **Amended 2026-10-20 (`IP-11`) — items 3, 5 and 6 are steps 5 and 6 of the restore drill.**
+   > The same properties are `IP-15` DoD 5. This phase proves each against the real code, in
+   > `cmd/quotacore`'s integration suite, with `quotacore rebuild` called as the binary calls it and
+   > the fleet as in-process instances on one database; `IP-15` runs the drill nightly against the
+   > Compose stack with the real binary. Neither weakens the other's assertion.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The rows
+marked `(integration)` need real valkey and Postgres 16 and run in CI's `service` job; the ones in
+`cmd/quotacore` read the rows the real writer appended, after a flush of the sink, and never poll
+with a consume.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestT11EveryCycleReconcilesAndAMismatchIsReported` (integration), `TestTheIdentityHoldsInAnyOrderTheRowsChain`, `TestAForceRolloverReopensItsCycle`, `TestAReanchorStartsACycleAtIndexZero`, `TestACycleWithNoOpeningRowOpensAtTheLimit`, `TestAClosedCycleChainsToTheNextOpening`, `TestALastRowWithNoWindowIsNamed`, with `TestTheLedgerReconcilesEveryCycle` (integration) moved onto the verifier | Over six tenants in three zones and 600 seeded operations: any finding from `verify-all` or the pass. Then an event dropped mid-cycle, at the end of a closed cycle and at the end of the open one, a `balance_after` altered in place and a hash balance altered in the store: any of the five not found under its own kind and tenant-feature, found twice, counted other than once in `quotacore_event_reconcile_mismatch_total`, or any balance corrected (DR-042, INV-C4, T-11) |
+| 2 | `TestAMutationWithNoLedgerEventIsDetected` (integration), `TestDetectionNeverPrevents` (integration), `TestTheReconcilerCannotMoveABalance`, `TestADuplicateDeductionIsReversedOnce` (integration), `TestAReversalSurvivesACrashBetweenItsHalves` (integration), `TestADuplicateRefundIsReferredNotReversed` (integration) | A consume whose event never reached the ledger not confirmed, recorded and counted once; an event still queued in a stalled writer reported; the pass beside T-02's fifty deliveries charging twice or moving a balance; the reconciler importing a store, script, data-plane or SQL package; a duplicate deduction reversed other than once, or again after a crash between the refund and its record; a duplicate refund answered with a charge (DR-030, DR-049, IP-06 item 7) |
+| 3 | `TestReadOnlyRefusesEveryTenantWrite` (integration), `TestTheRebuildRunsReadOnlyThroughout` (integration), `TestTheGuardRefusesEveryTenantWrite` | Any of eleven routes that can write a tenant key answered other than `503 service_unavailable` by a read-only instance, or any key, value or expiry changed; status or readiness not saying so; the pass or retention running; a rebuild starting beside a normal instance, a normal instance starting beside a rebuild, or an instance that lost its fence still writing after the rebuild's grace; any script or `Provision` reaching the store from a read-only process (D5, D6) |
+| 4 | `TestADisputedDeductionIsAnsweredFromTheLedgerAndAudit` (integration), `TestT14AStoreLossInsideTheWindowIsReversedOnce` (integration) | With the store gone: the key filter not returning the original, the duplicate and its reversal; the history not chaining row to row or not ending at the balance the store held; an administrative row without exactly one audit row under its request; answering the dispute writing a key. T-14's retry inside the window not reversed exactly once (UC-16, DR-048, DR-049, consistency-and-recovery §4.6) |
+| 5 | `TestTheRebuildIsAccurateInBothDirections` (integration), `TestTheRebuildReadsTheSixFieldsFromTheLastCycle`, `TestTheRebuildKeepsAnUntouchedCycle`, `TestALossOrARejectedEventIsNeverExact`, `TestRetentionBoundsWhatIsExact`, `TestAFeatureWithNoRowsOpensAtItsLimit`, `TestAPresentHashIsVerifiedNotRewritten` | After a store loss: a flagged tenant-feature that was not faulty, a faulty one not flagged, a written hash differing from the lost one in any of six fields or carrying an expiry, a flagged one written, or an unreconcilable one with no finding. A crashed writer's session not making the cycles it covers unverified; a `never` feature older than retention called exact (D7, D8, S9) |
+| 6 | `TestNoPathGrantsAFullAllowanceDuringARebuild` (integration) | While a read-only fleet serves and a rebuild runs: any sample of a tenant key above its balance before the loss, a flagged hash appearing by any route or job, a second concurrent rebuild writing, or the surviving hash rewritten; then `--accept` or `--set` writing other than its one tenant-feature, unaudited, or a `--set` breaking the cycle's reconciliation (DR-045, testing-strategy §9 step 6) |
+| — | `TestLoadReadsTheReconciliationKeys`, `TestTheRebuildFlagsAreRead`, `TestLoadNamesAllNineScripts`, `TestTheControlScriptsReadTheArgumentsTheRunnerSends` | A reconciliation key or rebuild flag not read, or a write without `--reason` accepted; `rebuild.lua` not loaded or not sent the arguments it reads (S1, D7) |
+
+Three things are recorded here because the phase surfaced them.
+
+- **`TestTheLedgerReconcilesEveryCycle` was flaky.** Its seeded checks could meet the bounded-miss
+  limiter and be answered `503`, which the test read as a failure. Its checks now retry a `503` for
+  up to five seconds, and the workload it seeds is shared with T-11.
+- **Balance hashes expired.** An idle tenant's hash could expire and be re-provisioned at the full
+  limit, which DR-045 forbids. The fix shipped first, on its own (PR #7), and balance hashes no
+  longer expire.
+
+- **Two earlier tests failed when every package ran at once.** `go test ./...` runs the packages in
+  parallel against one store, and this phase's suite is long enough to overlap them.
+  `TestConfigNamespaceAndInvalidationRoundTrip` (`IP-04`) read a config version the stacks bump, and
+  now keeps its keys in a database of its own; `TestTheScriptsWorkIsNotProportionalToTheTenant`
+  (`IP-05`) now takes the fastest of 21 timings rather than the median of 11.
 
 **Exit criteria.** A customer disputing a deduction gets an answer from the ledger, and the
 reconciliation says which tenants cannot be answered.
@@ -1620,6 +1657,13 @@ or a copy-pasted `curl`.
 7. The CLI and the server are one binary, and a single binary is what the reference image ships
    (NFR-OPS6).
 
+   > **Amended 2026-10-20 (`IP-11`) — four local operations already exist.** `verify-tenant`,
+   > `verify-all`, `reconcile-report` and `rebuild` are local operations of the binary, which
+   > [observability.md](../architecture/observability.md) §5 and
+   > [consistency-and-recovery.md](../architecture/consistency-and-recovery.md) §4.1 send an
+   > operator to. They belong in item 1's mapping table as local operations, and this phase folds
+   > the minimal dispatch `IP-11` added (no argument still serves) into its own.
+
 **Exit criteria.** The whole administrative surface is reachable from one executable, and CI proves
 it.
 
@@ -1667,6 +1711,9 @@ procedure that has actually been performed.
 5. The restore drill in [testing-strategy.md](../architecture/testing-strategy.md) §9 passes
    end to end, including its step 6 — no tenant is granted a full allowance by any path at any
    point (DR-045). The drill runs nightly against a real stack.
+   > **Amended 2026-10-20 (`IP-11`).** Steps 5 and 6 are `IP-11` DoD 3, 5 and 6, which that phase
+   > proves in `cmd/quotacore`'s integration suite. This item is the same assertion against the
+   > Compose stack with the real `quotacore rebuild`, run nightly, and adds T-14 end to end.
 6. The data store's memory projection for the idempotency window is measured, not estimated, and it
    is the figure in [deployment.md](../architecture/deployment.md) §5. The measurement is the per-record
    footprint of an idempotency entry at the sustained-throughput figure in NFR-T1, held in a scratch

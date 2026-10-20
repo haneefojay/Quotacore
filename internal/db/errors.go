@@ -135,6 +135,20 @@ var constraints = map[string]constraintRule{
 	// and only with one of the two reasons, so any refusal is a bug.
 	"usage_event_dead_letters_pkey":   {err: &Error{Code: api.ErrorCodeInternalError, Reason: "primary key"}},
 	"usage_event_dead_letters_reason": {err: &Error{Code: api.ErrorCodeInternalError, Reason: "dead-letter reason"}},
+	// Reconciliation's tables and the ledger's loss record (IP-11) are
+	// written by the service alone, from values it computed, so any refusal
+	// is a bug.
+	"usage_event_dead_letters_resolution": {err: &Error{Code: api.ErrorCodeInternalError, Reason: "dead-letter resolution"}},
+	"reconcile_findings_pkey":             {err: &Error{Code: api.ErrorCodeInternalError, Reason: "primary key"}},
+	"reconcile_findings_fingerprint":      {err: &Error{Code: api.ErrorCodeInternalError, Reason: "finding fingerprint"}},
+	"reconcile_findings_kind":             {err: &Error{Code: api.ErrorCodeInternalError, Reason: "finding kind"}},
+	"reconcile_findings_found_by":         {err: &Error{Code: api.ErrorCodeInternalError, Reason: "finding source"}},
+	"reconcile_checkpoint_pkey":           {err: &Error{Code: api.ErrorCodeInternalError, Reason: "primary key"}},
+	"reconcile_checkpoint_one_row":        {err: &Error{Code: api.ErrorCodeInternalError, Reason: "checkpoint row"}},
+	"usage_event_gaps_pkey":               {err: &Error{Code: api.ErrorCodeInternalError, Reason: "primary key"}},
+	"usage_event_gaps_reason":             {err: &Error{Code: api.ErrorCodeInternalError, Reason: "gap reason"}},
+	"usage_event_gaps_events":             {err: &Error{Code: api.ErrorCodeInternalError, Reason: "gap size"}},
+	"ledger_sessions_pkey":                {err: &Error{Code: api.ErrorCodeInternalError, Reason: "primary key"}},
 
 	// Unique keys a caller chooses.
 	"features_key_key":        {err: ErrFeatureKeyExists},

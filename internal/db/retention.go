@@ -38,6 +38,10 @@ type RetentionOptions struct {
 	ReplayLimit int
 	Logger      *slog.Logger
 	Metrics     *observability.Ledger
+	// Paused reports whether the instance is read-only, when no tick runs,
+	// so nothing deletes a ledger row a rebuild is reading (IP-11 D5); nil is
+	// never.
+	Paused func() bool
 }
 
 func (o *RetentionOptions) defaults() {
@@ -81,6 +85,10 @@ func RunRetention(ctx context.Context, db *sql.DB, opt RetentionOptions) {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
+		}
+		if opt.Paused != nil && opt.Paused() {
+			timer.Reset(opt.Interval)
+			continue
 		}
 		p, err := PruneOnce(ctx, db, time.Now(), opt)
 		if err != nil && ctx.Err() == nil {
