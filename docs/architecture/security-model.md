@@ -49,7 +49,12 @@ Three rules follow from these boundaries:
    appends and cannot mutate balances. Amended 2026-10-20 (`IP-12`): that sentence is a source
    check — `internal/ledger` imports no data-store, script or SQL package, and its SQL in
    `internal/db` touches only `usage_events`, which it only inserts into, and the dead-letter
-   table (`TestTheWriterCanOnlyAppend`).
+   table (`TestTheWriterCanOnlyAppend`). Amended 2026-10-20 (`IP-11`): the reconciler detects and
+   never corrects. `internal/reconcile` imports no data-store, script, data-plane or SQL package,
+   and the one store write it can cause is a duplicate's reversal, which it hands to an interface
+   whose only method it calls is the refund (`TestTheReconcilerCannotMoveABalance`); its SQL
+   appends to `usage_events` and never updates or deletes a row of it. `quotacore rebuild` writes
+   a balance hash only through a create-only script, and only under the exclusive rebuild fence.
 2. **The data store is trusted, and that trust is total.** It is why a script execution is
    authoritative and why the ceiling invariant is enforced there rather than in Go. Anything that
    can write to Redis can mint free service, so the host's access to Redis is the security

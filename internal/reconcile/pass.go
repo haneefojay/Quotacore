@@ -350,38 +350,70 @@ func (p *Pass) verify(ctx context.Context, r *Ran) error {
 		}
 	}
 	r.Suspects = len(suspects)
-	if len(suspects) > 0 {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(p.o.Settle):
+	confirmed, recorded, err := p.confirm(ctx, suspects, "pass")
+	r.Confirmed, r.Recorded = confirmed, recorded
+	if err != nil {
+		return err
+	}
+	return p.o.Ledger.SaveCheckpoint(ctx, next)
+}
+
+// confirm reads each suspect again one settle period later and records the
+// findings that are still there against the same hash.
+func (p *Pass) confirm(ctx context.Context, suspects map[Subject]read, by string) ([]Finding, int, error) {
+	if len(suspects) == 0 {
+		return nil, 0, nil
+	}
+	select {
+	case <-ctx.Done():
+		return nil, 0, ctx.Err()
+	case <-time.After(p.o.Settle):
+	}
+	var confirmed []Finding
+	recorded := 0
+	for sub, first := range suspects {
+		again, err := p.read(ctx, sub, first.since)
+		if err != nil {
+			return confirmed, recorded, err
 		}
-		for sub, first := range suspects {
-			again, err := p.read(ctx, sub, first.since)
-			if err != nil {
-				return err
-			}
-			if again.hash != first.hash {
-				// The balance moved: whatever moved it will be a row, and
-				// the next pass reads it.
+		if again.hash != first.hash {
+			// The balance moved: whatever moved it will be a row, and the
+			// next pass reads it.
+			continue
+		}
+		for fp, f := range again.found {
+			if _, same := first.found[fp]; !same {
 				continue
 			}
-			for fp, f := range again.found {
-				if _, same := first.found[fp]; !same {
-					continue
-				}
-				r.Confirmed = append(r.Confirmed, f)
-				created, err := p.record(ctx, f, "pass")
-				if err != nil {
-					return err
-				}
-				if created {
-					r.Recorded++
-				}
+			confirmed = append(confirmed, f)
+			created, err := p.record(ctx, f, by)
+			if err != nil {
+				return confirmed, recorded, err
+			}
+			if created {
+				recorded++
 			}
 		}
 	}
-	return p.o.Ledger.SaveCheckpoint(ctx, next)
+	return confirmed, recorded, nil
+}
+
+// Verify checks whole tenant-features on demand, for `quotacore
+// verify-tenant` and `verify-all` (IP-11 D2b, S4): every row against the
+// hash, with the pass's confirmation, recording what it confirms as found by
+// verify. It returns the confirmed findings and how many were new.
+func (p *Pass) Verify(ctx context.Context, subs []Subject) ([]Finding, int, error) {
+	suspects := map[Subject]read{}
+	for _, sub := range subs {
+		got, err := p.read(ctx, sub, time.Time{})
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(got.found) > 0 {
+			suspects[sub] = got
+		}
+	}
+	return p.confirm(ctx, suspects, "verify")
 }
 
 func (p *Pass) read(ctx context.Context, sub Subject, since time.Time) (read, error) {

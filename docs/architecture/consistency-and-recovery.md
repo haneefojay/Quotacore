@@ -121,6 +121,45 @@ mid-cycle tenant that is indistinguishable from free service (DR-045).
    from the ledger as-is, or set the balance and record a `set` event with a reason.
 7. Switch back to normal mode.
 
+> **Amended 2026-10-20 (`IP-11`).** Steps 2 to 6 are now commands, and "read-only for the whole
+> rebuild" is a property of the fleet rather than a runbook step.
+>
+> - **Step 2.** `QUOTACORE_STARTUP_MODE=readonly` refuses every write to a tenant's keys (balance
+>   hashes and idempotency records) with `503 service_unavailable`, and nothing else: reads, key
+>   revocation, feature and plan edits, suspension and the pagination cursor still work, because
+>   they write Postgres or no tenant key. The re-anchor drain, the reconciliation pass and the
+>   retention job do not run, `/readyz` is not ready, and `GET /v1/admin/status` reports `mode`.
+>   Every instance in normal mode holds a shared Postgres advisory lock, the **fence**; a rebuild
+>   that writes takes it exclusive, so it refuses to start beside a normal instance, a normal
+>   instance refuses to start beside it, and an instance whose fence connection drops serves
+>   read-only until it holds the fence again. The rebuild waits two fence checks after taking it
+>   before it reads anything.
+> - **Step 3** applies only when Postgres was lost too, because a restore truncates the very
+>   ledger the rebuild reads; the operator then passes `--ledger-restored-at <instant>`, and every
+>   cycle is unverified, since everything after that instant is gone.
+> - **Step 4** is `quotacore rebuild`, a dry run that prints a JSON report, or with `--apply` a
+>   write. It enumerates every tenant's effective entitlements from Postgres, and for each
+>   tenant-feature whose hash is absent reads the whole ledger, the unresolved dead letters, the
+>   writer's recorded gaps and any crashed writer's session (section 6), and classifies the
+>   ledger's last cycle: **exact** (it reconciles and determines all six fields, no loss is
+>   recorded in it, and its rows are inside retention), **unverified** (it reconciles, but a
+>   recorded loss covers it), or **unreconcilable** (the identity or chain fails, a rejected dead
+>   letter names it, a relimit emptied its balance so the limit is unknown, its rows name no
+>   window, or it opened before the retention horizon with no opening row, which is every `never`
+>   feature older than the retention). `--apply` writes only exact hashes, through a create-only
+>   script that writes nothing where any hash exists, records an `unreconcilable` finding for each
+>   unreconcilable one, and writes one `tenant.rebuild` audit row per tenant written. A hash that
+>   is present is verified and never rewritten. A flagged tenant-feature stays absent and keeps
+>   answering `503`.
+> - **Step 5** compares the ledger with itself, not with the limit: every row against the one
+>   before, and the hash against the last row, as section 5 describes.
+> - **Step 6** is two flags of the same command, each for one tenant-feature and each audited
+>   with a required `--reason`: `--accept <tenant>:<feature>` writes the ledger's estimate, which
+>   is ADR-0016's bounded fail-open margin chosen explicitly for that tenant, and
+>   `--set <tenant>:<feature>=<n>` writes `n` and appends a `set` row whose delta is `n` less the
+>   estimate, so the cycle still reconciles.
+> - **Step 7** is a restart of every instance with `normal`.
+
 **What is guaranteed.** For a tenant whose only activity in the current cycle was consumption and
 refund, the ledger reconstructs the balance exactly, because `balance = opening + Σ delta` within
 a cycle (DR-042) and `balance_after` is stored on every event.
@@ -170,6 +209,12 @@ already closes.
 **Rehearsal.** Automated in CI, weekly: flush the data store, rebuild from a seeded ledger, assert
 every reconciliation, then replay a pre-loss request and assert exactly one reversal (T-14). A
 recovery procedure that has never been run is a hypothesis.
+
+> **Amended 2026-10-20 (`IP-11`).** The reversal in step 4 of the list above is issued by the
+> in-service pass (section 5) under the key `#reversal/<event_id>`, with the client's key carried
+> on the row as `reconciles_key` (DR-049's note). Each property of this section is proved against
+> the real code by IP-11's integration tests; the drill itself, run nightly against the Compose
+> stack with the real binary, is `IP-15`'s.
 
 ### 4.2 Postgres lost — restore from backup
 
@@ -227,6 +272,12 @@ has already ended.
 
 ### 4.5 Ledger gap detected
 
+> **Amended 2026-10-20 (`IP-11`).** Every drop is now also recorded by tenant and feature in
+> `usage_event_gaps` ([data-model.md](data-model.md#214-usage-event-gaps)), so step 1 reads the
+> table rather than reconstructing the window from alert timestamps, and the reconciliation pass
+> verifies each named tenant-feature on its next run. The table is a record that something is
+> missing, kept outside the ledger, so step 3 still holds.
+
 **Symptom.** `quotacore_event_sink_dropped_total` is non-zero, or a customer's history shows a
 jump.
 
@@ -241,6 +292,23 @@ jump.
    is its primary purpose.
 4. If the customer needs a complete history, export the runtime balances for the window with a
    documented, clearly-labelled procedure. Honest, derived, and marked as such.
+
+### 4.6 A customer disputes a deduction
+
+> **Added 2026-10-20 (`IP-11`).** The answer comes from the ledger and the audit trail, never from
+> the fast store, so it is the same after a store loss.
+>
+> 1. `GET /v1/admin/tenants/{id}/events?idempotency_key=<key>` returns every row under the
+>    client's key: the deduction, and if a store loss let a retry apply it twice, the second
+>    deduction and its reversal, a `refunded` row with `source: system`.
+> 2. `GET /v1/admin/tenants/{id}/events` for the cycle returns its rows. Each row's
+>    `balance_after` less its `delta` is the row before's `balance_after`; the cycle opens at its
+>    `cycle_rolled_over`, `plan_changed` or `force_rolled_over` row, or at the limit when none
+>    opened it, and its deltas sum to the last `balance_after`.
+> 3. `GET /v1/admin/audit?tenant_external_id=<id>` attributes every administrative row: each
+>    `granted`, `set`, `plan_changed` and `force_rolled_over` row, and each reversal, shares its
+>    `request_id` with exactly one audit row, which names the actor and the reason.
+> 4. `quotacore verify-tenant <id>` confirms the tenant's history reconciles and ends at its hash.
 
 ## 5. Reconciliation
 
@@ -276,6 +344,30 @@ partial ledger write or a replay bug produces.
 A tenant failing verification is a **P1 incident**, not a dashboard item. It means either an
 invariant is broken or a procedure was performed incorrectly, and both require a human.
 
+> **Amended 2026-10-20 (`IP-11`).** Reconciliation is now also a bounded process, and the four
+> commands exist. **The pass** runs in every instance every `QUOTACORE_RECONCILE_INTERVAL`, one
+> instance at a time under an advisory lock. It reverses each unresolved duplicate (DR-049), then
+> verifies only the tenant-features whose ledger rows arrived since its checkpoint, or that a
+> recorded gap names, reading a row only once it is older than the settle period (the larger of a
+> minute and ten flush intervals). A disagreement is confirmed only when a second read one settle
+> period later finds the same hash and the same disagreement, so an event still in another
+> instance's queue is never reported. Each confirmed finding is a `reconcile_findings` row
+> ([data-model.md](data-model.md#213-reconciliation-findings-and-checkpoint)) and raises
+> `quotacore_event_reconcile_mismatch_total` once. It never corrects a balance. It is bounded by
+> what changed, so it is not the full scan forever this section rejects; the full scans stay on
+> demand. **The commands** are local operations of the binary: `verify-tenant` and `verify-all`
+> verify whole histories with the same confirmation and record what they find, `reconcile-report
+> [--since]` prints the findings, and `rebuild` is section 4.1's step 4. Each prints JSON and exits
+> 1 when a person must look.
+>
+> The four-way check above lists one comparison twice. It is read as four legs: the hash's
+> balance equals the last row's `balance_after`; every row follows from the one before inside a
+> cycle (the identity) and across a boundary, where an opening row's starting balance is the
+> closed cycle's last `balance_after` (the chain, which is how an event dropped at the end of a
+> closed cycle is found); and the hash's window is the last row's, or a later one it opened at the
+> limit with nothing to record (Q-22). A tenant-feature that changed and then fell silent is found
+> by its next event or by `verify-all`.
+
 ## 6. Restart and shutdown behaviour
 
 | Event | Behaviour | Why it is safe |
@@ -283,7 +375,7 @@ invariant is broken or a procedure was performed incorrectly, and both require a
 | `SIGTERM` | Drain for 30 s, then exit. In-flight requests complete | A script execution is atomic; there is no half-applied state to lose (NFR-A5) |
 | `SIGKILL` | Immediate | Identical outcome. The process holds no authoritative state (NFR-D6) |
 | Crash mid-request | The script either completed or did not | Atomicity |
-| Crash during the ledger write | At most one event lost; the drop counter is not incremented, because the process died | The gap is detectable by verification, not by a counter. Stated as a known imprecision in the metric's meaning |
+| Crash during the ledger write | At most one event lost; the drop counter is not incremented, because the process died | The gap is detectable by verification, not by a counter. Stated as a known imprecision in the metric's meaning. Amended 2026-10-20 (`IP-11`): since IP-12 a crash loses up to the queue (`QUOTACORE_EVENT_QUEUE_SIZE`). Each writer keeps a `ledger_sessions` row it refreshes every five seconds with the instant before which everything it accepted is settled, and closes after a clean drain; a session left open and stale is a crash, and the rebuild treats every cycle from its settled instant to its last sight as unverified |
 | Crash during an admin transaction | Postgres rolls back; the fast store was not written | Ordering: Postgres first, fast store second |
 | Crash between the Postgres commit and the fast-store write in `apply-now` or a plan change | Configuration is committed with a pending re-anchor per tenant; the tenants are served their previous state until drained | Amended 2026-10-20 (`IP-10`): this said "self-correcting", and the scripts would leave such a tenant `STALE` indefinitely. The pending rows are drained by any instance, at start and on each refresh tick; the reverse order would be unrecoverable |
 | Commit failure after a grant, set, force-rollover or immediate override applied its script (`IP-10`) | The balance changed and its audit row did not commit | Logged at `error` with the request id. The reverse order would audit a change that may not have happened, which is worse: an audit row must never describe something that did not occur |

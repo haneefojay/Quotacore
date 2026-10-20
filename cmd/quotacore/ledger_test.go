@@ -610,11 +610,13 @@ func TestListUsageEventsReadsWhatTheWriterWrote(t *testing.T) {
 // boundary crossings leaves a ledger in which every cycle's last balance_after
 // is its last opening plus the deltas after it, and the current cycle's
 // result is the hash's balance (D1, DR-042, data-model section 2.7).
-func TestTheLedgerReconcilesEveryCycle(t *testing.T) {
-	s := newStack(t)
-	seed := time.Now().UnixNano()
-	rng := rand.New(rand.NewSource(seed))
-	t.Logf("seed %d", seed)
+// workload is IP-12's reconciling dataset: three features (hourly, monthly
+// and never) on two plans, n tenants spread over the zones, and ops random
+// consumes, refunds, checks, grants, sets, force-rollovers, plan changes, one
+// apply-now and hand-made boundary crossings; then a check on every
+// tenant-feature, so every hash is in its current window.
+func (s *stack) workload(t *testing.T, rng *rand.Rand, zones []string, n, ops int) ([]tenant, []string, []string) {
+	t.Helper()
 	hourly, monthly, never := uniq("rh"), uniq("rm"), uniq("rn")
 	for _, k := range []string{hourly, monthly, never} {
 		s.createFeature(k)
@@ -634,9 +636,9 @@ func TestTheLedgerReconcilesEveryCycle(t *testing.T) {
 	// one, and their hashes are seeded full: a cycle with no opening row
 	// opens at the limit.
 	var tenants []tenant
-	for i := range 4 {
+	for i := range n {
 		limit := int64(500 + 250*(i%2))
-		tn := s.tenantOn(planIDs[i%2], "UTC", monthlyAnchor, ent{hourly, limit, "hourly", false},
+		tn := s.tenantOn(planIDs[i%2], zones[i%len(zones)], monthlyAnchor, ent{hourly, limit, "hourly", false},
 			ent{monthly, limit * 2, "monthly", false}, ent{never, limit * 3, "never", false})
 		for _, f := range features {
 			s.seedCurrent(tn, f, tn.ents[f].limit)
@@ -671,7 +673,7 @@ func TestTheLedgerReconcilesEveryCycle(t *testing.T) {
 		s.seed(tn, f, stored{Balance: bal, Limit: lim, Bonus: bonus, Index: idx - 1, Start: prevStart, End: &prevEnd})
 	}
 	applied := false
-	for range 300 {
+	for range ops {
 		tn := tenants[rng.Intn(len(tenants))]
 		f := features[rng.Intn(len(features))]
 		tp := "/v1/admin/tenants/" + tn.ID
@@ -708,9 +710,18 @@ func TestTheLedgerReconcilesEveryCycle(t *testing.T) {
 	// transition, as the next real request would.
 	for _, tn := range tenants {
 		for _, f := range features {
-			s.check(f, tn.External)
+			s.rolled(f, tn.External)
 		}
 	}
+	return tenants, features, plans
+}
+
+func TestTheLedgerReconcilesEveryCycle(t *testing.T) {
+	s := newStack(t)
+	seed := time.Now().UnixNano()
+	rng := rand.New(rand.NewSource(seed))
+	t.Logf("seed %d", seed)
+	tenants, features, _ := s.workload(t, rng, []string{"UTC"}, 4, 300)
 	// Every tenant-feature's history reconciles row by row and ends at its
 	// hash, read by the verifier the service itself runs (IP-11 D1).
 	s.flush()

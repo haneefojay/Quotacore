@@ -14,7 +14,7 @@ import (
 // arguments their runner sends.
 
 func controlBodies() []body {
-	return []body{grantBody, setBody, relimitBody, reanchorBody, rolloverBody}
+	return []body{grantBody, setBody, relimitBody, reanchorBody, rolloverBody, rebuildBody}
 }
 
 func transitionBlock(t *testing.T, b body) string {
@@ -40,7 +40,7 @@ func TestTheSixScriptsShareOneTransitionBlock(t *testing.T) {
 				"decide differently from a request when a tenant's allowance resets (INV-C2)", b.op)
 		}
 	}
-	for _, b := range []body{reanchorBody, rolloverBody} {
+	for _, b := range []body{reanchorBody, rolloverBody, rebuildBody} {
 		if strings.Contains(b.text, blockOpen) {
 			t.Errorf("%s.lua carries the transition block, and it overwrites by design rather than rolling", b.op)
 		}
@@ -85,10 +85,10 @@ func TestTheControlScriptsKeepTheSourceRules(t *testing.T) {
 }
 
 // TestTheControlScriptsReadTheArgumentsTheRunnerSends: the three adjusting
-// scripts read the data plane's first six, reanchor reads six of its own and
-// rollover four. A script reading fewer than it is sent fails open.
+// scripts read the data plane's first six, reanchor reads six of its own,
+// rollover four and rebuild six. A script reading fewer than it is sent fails open.
 func TestTheControlScriptsReadTheArgumentsTheRunnerSends(t *testing.T) {
-	want := map[Operation]int{Grant: 6, Set: 6, Relimit: 6, Reanchor: 6, Rollover: 4}
+	want := map[Operation]int{Grant: 6, Set: 6, Relimit: 6, Reanchor: 6, Rollover: 4, Rebuild: 6}
 	argvUse := regexp.MustCompile(`ARGV\[(\d+)\]`)
 	for _, b := range controlBodies() {
 		highest := 0
@@ -104,9 +104,9 @@ func TestTheControlScriptsReadTheArgumentsTheRunnerSends(t *testing.T) {
 	}
 }
 
-// TestLoadNamesAllEightScripts: the load loop puts every embedded body in the
-// store, the control plane's included, once each.
-func TestLoadNamesAllEightScripts(t *testing.T) {
+// TestLoadNamesAllNineScripts: the load loop puts every embedded body in the
+// store, the control plane's and the rebuild's included, once each.
+func TestLoadNamesAllNineScripts(t *testing.T) {
 	seen := map[Operation]bool{}
 	for _, b := range allBodies() {
 		if b.text == "" || len(b.digest) != 40 || seen[b.op] {
@@ -114,7 +114,7 @@ func TestLoadNamesAllEightScripts(t *testing.T) {
 		}
 		seen[b.op] = true
 	}
-	for _, op := range []Operation{Consume, Check, Refund, Grant, Set, Relimit, Reanchor, Rollover} {
+	for _, op := range []Operation{Consume, Check, Refund, Grant, Set, Relimit, Reanchor, Rollover, Rebuild} {
 		if !seen[op] {
 			t.Errorf("the %s script is not loaded", op)
 		}

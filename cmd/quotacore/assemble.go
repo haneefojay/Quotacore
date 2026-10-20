@@ -66,6 +66,9 @@ type assembleOptions struct {
 	// appender replaces the ledger's Postgres appender, so a test can stall
 	// it or lose an acknowledgement (IP-12 DoD 3, 4, 8).
 	appender func(*db.Ledger) ledger.Appender
+	// heartbeat is how often the writer refreshes its session and writes its
+	// gaps; zero is the ledger's own five seconds (IP-11 D8).
+	heartbeat time.Duration
 	// noWriter leaves the ledger's writer unstarted, so events queue and are
 	// never written (IP-12 DoD 8).
 	noWriter bool
@@ -162,9 +165,10 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		Logger:        log,
 		// The loss record (IP-11 D8). A request can spend up to its timeout
 		// between its accepted instant and its enqueue.
-		Sessions: db.NewLedger(ledgerConn),
-		Host:     hostname(),
-		Lag:      cfg.RequestTimeout + time.Second,
+		Sessions:  db.NewLedger(ledgerConn),
+		Host:      hostname(),
+		Heartbeat: opt.heartbeat,
+		Lag:       cfg.RequestTimeout + time.Second,
 	})
 	var events dataplane.EventSink = sink
 	if observe != nil {
