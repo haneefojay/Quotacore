@@ -507,6 +507,12 @@ disputes a deduction is the first time anyone evaluates the tool.
 3. Operator sums the deltas for a cycle and compares with the reported balance; they agree.
 4. For a specific disputed charge, the operator supplies the customer's `Idempotency-Key` and
    receives the recorded outcome, proving whether it was applied once or twice.
+   (Amended 2026-10-20, `IP-11`: after a store loss the second deduction was kept out of the
+   ledger by its unique index until reconciliation reversed it. The reversal appends it, and its
+   reversal, with the client's key carried on both rows, so the key filter returns the deduction,
+   the second deduction and the `refunded` reversal with `source: system`, and the cycle's deltas
+   still sum to the balance. The procedure is
+   [consistency-and-recovery.md](../architecture/consistency-and-recovery.md#46-a-customer-disputes-a-deduction).)
 
 **Alternative flows**
 - Events that the sink could not deliver are visible as a gap, with the documented sink-drop

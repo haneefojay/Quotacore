@@ -87,8 +87,8 @@ func (r Row) Before() int64 { return r.After - r.Delta }
 
 // Cycle is the cycle a row or a hash is in.
 type Cycle struct {
-	Start time.Time
-	Index int64
+	Start time.Time `json:"cycle_start"`
+	Index int64     `json:"cycle_index"`
 }
 
 func (c Cycle) String() string {
@@ -122,20 +122,20 @@ type Hash struct {
 
 // Subject names a tenant-feature.
 type Subject struct {
-	TenantID string
-	Feature  string
+	TenantID string `json:"tenant_id"`
+	Feature  string `json:"feature_key"`
 }
 
 // Finding is one disagreement, with what was expected and what was found.
 type Finding struct {
 	Subject
-	Kind     string
-	Cycle    *Cycle
-	Expected *int64
-	Actual   *int64
+	Kind     string `json:"kind"`
+	Cycle    *Cycle `json:"cycle,omitempty"`
+	Expected *int64 `json:"expected,omitempty"`
+	Actual   *int64 `json:"actual,omitempty"`
 	// Row is the event_id the finding is about, when there is one.
-	Row    string
-	Detail string
+	Row    string `json:"event_id,omitempty"`
+	Detail string `json:"detail"`
 }
 
 // Fingerprint names the disagreement, so a pass that finds it again records

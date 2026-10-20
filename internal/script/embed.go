@@ -1,7 +1,8 @@
 // Package script is the data plane's enforcement: the three Lua scripts that
 // decide and apply a balance change as one indivisible step, and the Go code
 // that loads them and runs them. It also holds the five control-plane scripts
-// the admin routes run (IP-10): grant, set, relimit, reanchor and rollover.
+// the admin routes run (IP-10): grant, set, relimit, reanchor and rollover,
+// and the create-only rebuild script `quotacore rebuild` runs (IP-11 D7).
 // None of them is on the request path, and three of them open with the same
 // transition block as the data plane's, so there is still one rollover.
 //
@@ -38,7 +39,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// The eight bodies. They are package-level constants, not files opened at
+// The nine bodies. They are package-level constants, not files opened at
 // runtime, and a test asserts the store's copy of each is byte-identical to the
 // one named here.
 //
@@ -66,8 +67,11 @@ var reanchorSource string
 //go:embed rollover.lua
 var rolloverSource string
 
+//go:embed rebuild.lua
+var rebuildSource string
+
 // Operation names one of the scripts. It is a closed set: three data-plane
-// operations and five control-plane ones, and no mode flag, because one script
+// operations, five control-plane ones and the rebuild, and no mode flag, because one script
 // per operation is what performance.md §5 requires and a mode flag inside one
 // script would put both decisions in the body a reviewer has to read twice.
 type Operation string
@@ -82,6 +86,8 @@ const (
 	Relimit  Operation = "relimit"
 	Reanchor Operation = "reanchor"
 	Rollover Operation = "rollover"
+
+	Rebuild Operation = "rebuild"
 )
 
 // body is one embedded script together with the digest the store knows it by.
@@ -103,12 +109,15 @@ var (
 	relimitBody  = newBody(Relimit, relimitSource)
 	reanchorBody = newBody(Reanchor, reanchorSource)
 	rolloverBody = newBody(Rollover, rolloverSource)
+
+	rebuildBody = newBody(Rebuild, rebuildSource)
 )
 
 // allBodies is every script Load puts in the store: the data plane's three
-// first, then the control plane's five.
+// first, then the control plane's five, then the rebuild's.
 func allBodies() []body {
-	return []body{consumeBody, checkBody, refundBody, grantBody, setBody, relimitBody, reanchorBody, rolloverBody}
+	return []body{consumeBody, checkBody, refundBody, grantBody, setBody, relimitBody, reanchorBody, rolloverBody,
+		rebuildBody}
 }
 
 func newBody(op Operation, text string) body {
@@ -116,7 +125,7 @@ func newBody(op Operation, text string) body {
 	return body{op: op, text: text, digest: hex.EncodeToString(sum[:])}
 }
 
-// Load puts the eight scripts in the store's script cache. It is called once at
+// Load puts the nine scripts in the store's script cache. It is called once at
 // start-up and again by the runner whenever the store answers NOSCRIPT, so a
 // store that was flushed or restarted recovers without a restart of this
 // process (ADR-0002).

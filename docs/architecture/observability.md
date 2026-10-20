@@ -99,6 +99,16 @@ directly, so a graph shows "p99 under 5 ms" without interpretation.
 | `quotacore_event_dead_lettered_total` | counter | **By `reason`: `duplicate_idempotency_key`, `rejected`.** Events the ledger refused and the writer kept in the dead-letter table rather than losing (INV-U3). Added 2026-10-20 (`IP-12`) |
 | `quotacore_event_dead_letters` | gauge | **By `reason`.** Dead-letter rows outstanding, refreshed on each retention tick. A `rejected` row that stays is one whose replay keeps failing. Added 2026-10-20 (`IP-12`) |
 
+> **Amended 2026-10-20 (`IP-11`).** Both reconciliation counters are now emitted, by the
+> in-service pass. `duplicate_reversal_total` rises once per reversal committed, never on a replay
+> of one, under the refund key `#reversal/<event_id>` (DR-049's note). `event_reconcile_mismatch_total`
+> rises once per confirmed disagreement between the hash and the ledger, of the kinds `identity`,
+> `chain`, `hash_balance` and `hash_cycle`, when its `reconcile_findings` row is first inserted, so
+> a disagreement found again by a later pass or by `verify-all` is not counted twice. It has no
+> label: the kind, the tenant and the feature are in the finding row and the `error` log line,
+> because they are query material and never labels (section 1.7). An absent hash is a
+> `hash_missing` finding and not a mismatch; `balance_key_missing_total` is its alert.
+
 `event_sink_dropped_total` and `event_duplicate_detected_total` are the two metrics that mean
 money. Both are P0-adjacent, both are asserted zero in tests, and both are described in the
 operator runbook with the recovery procedure rather than with a suggestion to investigate.
@@ -242,6 +252,14 @@ Severity definitions: **P0** money or data is wrong now. **P1** a stated guarant
 | Clock skew | Skew above the threshold | P1 | Boundaries are wrong. Fix NTP |
 | Audit write failure | Any audit insert error | P1 | The audit guarantee in NFR-D4 is broken. Investigate immediately |
 | No traffic | `quotacore_http_requests_total` flat for 15 min | P3 | Probably correct. Check the customer's integration before assuming a fault |
+
+> **Amended 2026-10-20 (`IP-11`).** *Reconciliation mismatch*: `quotacore reconcile-report` prints
+> what the pass found, with its kind, tenant and feature, and `verify-tenant` reads that tenant's
+> whole history; nothing is corrected automatically. The pass verifies only what changed, so an
+> event dropped on a tenant-feature that then falls silent is found by its next event or by
+> `verify-all`, not by the next pass. *Duplicate reversal issued*: a reversal the ceiling refused,
+> and a duplicate refund, are not reversed; each is a `reconcile_findings` row (`reversal_refused`,
+> `duplicate_refund`) for a person, and its dead letter is resolved `referred`.
 
 **Two alert-design rules.** First, no alert fires on a business outcome: a spike in
 `outcome="denied"` is a customer's usage pattern, not our problem, and alerting on it trains

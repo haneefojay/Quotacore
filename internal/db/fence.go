@@ -134,6 +134,11 @@ func (f *Fence) Release() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.conn != nil {
+		// Unlocked explicitly: closing a pooled connection returns it to the
+		// pool, still holding the lock.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, _ = f.conn.ExecContext(ctx, `SELECT pg_advisory_unlock_shared($1)`, fenceKey)
+		cancel()
 		f.conn.Close()
 		f.conn, f.pid = nil, 0
 	}

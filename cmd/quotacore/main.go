@@ -42,6 +42,14 @@ func (c snapshotClient) SubscribeInvalidations(ctx context.Context) (snapshot.In
 }
 
 func main() {
+	// An argument names a local operation (IP-11 D2b); none serves.
+	if len(os.Args) > 1 {
+		if !isCommand(os.Args[1:]) {
+			fmt.Fprintf(os.Stderr, "unknown command %q; the commands are verify-tenant, verify-all, reconcile-report and rebuild, and no argument serves\n", os.Args[1])
+			os.Exit(exitError)
+		}
+		os.Exit(runCommand(os.Args[1:], os.Stdout, os.Stderr))
+	}
 	if err := run(); err != nil {
 		slog.Error("refusing to start", "error", err)
 		os.Exit(1)

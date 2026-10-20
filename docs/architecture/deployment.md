@@ -98,7 +98,7 @@ reading the source.
 | `QUOTACORE_LOG_FORMAT` | `json` | `text` for a human at a terminal |
 | `QUOTACORE_TLS_CERT`, `QUOTACORE_TLS_KEY` | *(none)* | Unset means plaintext, which logs a `warn` |
 | `QUOTACORE_TRUSTED_PROXIES` | *(none)* | CIDR list. Without it, `X-Forwarded-For` is ignored, so a rate limiter behind a proxy sees the proxy |
-| `QUOTACORE_STARTUP_MODE` | `normal` | `readonly` is used by the data-store recovery runbook and blocks every write to the fast store |
+| `QUOTACORE_STARTUP_MODE` | `normal` | `readonly` is used by the data-store recovery runbook and blocks every write to the fast store. Amended 2026-10-20 (`IP-11`): it blocks every write to a **tenant's** keys, the balance hashes and idempotency records, answering `503 service_unavailable`, and nothing else, so reads, key revocation and the pagination cursor still work; the re-anchor drain, the reconciliation pass and retention do not run, and `/readyz` is not ready. Any other value refuses to start. A `normal` instance holds the rebuild fence and refuses to start while a rebuild holds it ([consistency-and-recovery.md](consistency-and-recovery.md#41-data-store-lost-or-corrupted--total-loss)) |
 | `QUOTACORE_MIGRATE` | `true` | `false` runs no migration at start-up, for operators who gate deploys and run migrations separately (ADR-0011) |
 | `QUOTACORE_BOOTSTRAP_ADMIN_KEY` | *(none)* | Used only when the `api_keys` table is empty (ADR-0012). Ignored, with a warning, once a key exists. A malformed key refuses start. Mint one with `printf 'qc_admin_%s.%s\n' "$(openssl rand -hex 8)" "$(openssl rand -base64 32 \| tr '+/' '-_' \| tr -d '=')"` (ADR-0018) |
 | `QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK` | *(none)* | NFR-S9. The service **refuses to start** if a bootstrap key is set without a non-empty acknowledgement. Any non-empty value acknowledges; the variable exists so that starting with a key is something the operator did on purpose rather than something a deployment inherited |
@@ -148,6 +148,7 @@ reading the source.
 | `QUOTACORE_EVENT_RETENTION_DAYS` | `90` | Q-09 |
 | `QUOTACORE_AUDIT_RETENTION_DAYS` | `400` | Q-09 |
 | `QUOTACORE_RETENTION_INTERVAL` | `1h` | Batched, with a statement timeout |
+| `QUOTACORE_RECONCILE_INTERVAL` | `5m` | Added 2026-10-20 (`IP-11`). How often the reconciliation pass runs in each instance, one instance at a time; refused under `1m`. The pass's settle period is derived, not set: the larger of a minute and ten flush intervals ([consistency-and-recovery.md](consistency-and-recovery.md#5-reconciliation)) |
 
 > **Amended 2026-10-20 (`IP-12`).** The service now reads all six. A queue or batch size below 1, a
 > batch larger than the queue, a flush interval outside 1 ms to 10 s, a negative retention or a

@@ -53,6 +53,25 @@ func (s *stack) check(feature, external string) response {
 	return s.do(http.MethodPost, "/v1/check", s.runtime, metered(feature, 1, external))
 }
 
+// rolled checks until the check answers 200, which rolls the feature's hash
+// into the current window. A burst of plan changes invalidates the
+// snapshot's tenants faster than the bounded-miss limiter refills, so a check
+// right after one can be refused with 503 and a retry_after_ms (DR-039).
+func (s *stack) rolled(feature, external string) {
+	s.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		r := s.check(feature, external)
+		if r.Status == http.StatusOK {
+			return
+		}
+		if r.Status != http.StatusServiceUnavailable || time.Now().After(deadline) {
+			s.t.Fatalf("check %s for %s: %d %s", feature, external, r.Status, r.Body)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // provisioned creates a feature, a plan on it and a tenant on the plan, all
 // over the API.
 func (s *stack) provisioned(limit int64) (string, string, tenant) {

@@ -247,6 +247,7 @@ func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
 	if aopt.settle <= 0 {
 		aopt.settle = 200 * time.Millisecond
 	}
+	aopt.heartbeat = 100 * time.Millisecond
 	aopt.fenceEvery = o.fenceEvery
 	if aopt.fenceEvery <= 0 {
 		aopt.fenceEvery = 100 * time.Millisecond

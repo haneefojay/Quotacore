@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	neturl "net/url"
 	"os"
 	"testing"
 	"time"
@@ -37,7 +38,14 @@ func TestConfigNamespaceAndInvalidationRoundTrip(t *testing.T) {
 		return
 	}
 	ctx := context.Background()
-	s, err := Open(Options{URL: url, DataScriptTimeout: 250 * time.Millisecond})
+	// Every stack in cmd/quotacore bumps the config version, and go test runs
+	// the packages at once, so this test keeps its keys in a database of its own.
+	u, err := neturl.Parse(url)
+	if err != nil {
+		t.Fatalf("parse %q: %v", url, err)
+	}
+	u.Path = "/15"
+	s, err := Open(Options{URL: u.String(), DataScriptTimeout: 250 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -73,16 +81,24 @@ func TestConfigNamespaceAndInvalidationRoundTrip(t *testing.T) {
 		t.Fatalf("subscribe: %v", err)
 	}
 	defer sub.Close()
-	if err := s.PublishInvalidation(ctx, 2); err != nil {
+	// The channel is the server's, not the database's, so another package's
+	// invalidations can arrive first; this one's version is one nothing else
+	// publishes.
+	if err := s.PublishInvalidation(ctx, 987654321); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	select {
-	case payload := <-sub.Messages():
-		want := "{\"version\":\"2\"}"
-		if payload != want {
-			t.Errorf("payload = %q, want %q (the shape data-model.md section 3.4 states)", payload, want)
+	want := "{\"version\":\"987654321\"}"
+	var seen []string
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case payload := <-sub.Messages():
+			if payload == want {
+				return
+			}
+			seen = append(seen, payload)
+		case <-deadline:
+			t.Fatalf("no payload %q arrived within 3s (the shape data-model.md section 3.4 states); saw %q", want, seen)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("no invalidation arrived within 3s")
 	}
 }
