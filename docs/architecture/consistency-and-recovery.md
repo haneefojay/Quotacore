@@ -32,6 +32,14 @@ Everything else follows from that sentence, including the things that are *not* 
 The three "no" rows are the design, not oversights. Each is chosen so that the "yes" rows can be
 absolute. A system that claimed all of them would be claiming something it could not deliver.
 
+> **Amended 2026-10-20 (`IP-10`).** "Correct cycle advance, monotonically" holds under one
+> anchor. A plan change or an apply-now commits a new anchor, the tenant's new pins and a pending
+> re-anchor in one Postgres transaction; the balance hashes are rewritten after it by a
+> compare-and-set on the window each was read with, inline while the request has time and by
+> every instance's background drain otherwise. Until a tenant is drained it is served under its
+> previous numbering, which may be stale but is never a fresh allowance, and a rewrite that runs
+> twice changes it once.
+
 ## 2. Why a stale configuration cannot produce a wrong cycle
 
 This is the subtle interaction between the two planes, and it is why the cycle state lives in the
@@ -47,6 +55,16 @@ A stale snapshot can supply a stale **limit**, a stale **interval**, a stale **a
 | Anchor | A boundary is computed from the previous anchor | A changed anchor is applied by a plan change, which is itself a hard reset and a re-anchor, so a stale anchor produces a *stale but valid* window that converges on the next refresh |
 | Tenant state | A suspended tenant is not denied, or a deleted tenant is | Bounded by the propagation interval. This is the worst of them, and it is a **security** property, which is why the propagation bound is tight, published, and alerted on |
 | Feature state | An archived feature is still consumable | Same bound, same reasoning |
+
+> **Amended 2026-10-20 (`IP-10`).** The interval and anchor rows assumed an interval could change
+> under a running tenant. It cannot: a tenant's cadence is pinned until its next re-anchor, so a
+> stale snapshot can supply a stale interval only across a re-anchor, together with a stale
+> anchor. A stale anchor is bounded by the refresh interval, which is refused at or above one
+> hour, so a stale snapshot can never outlive the shortest first window under a new anchor. A
+> request computed under the stale anchor therefore meets either the hash not yet rewritten, which
+> it agrees with, or the hash rewritten into the new anchor's first window, which has not closed;
+> the transition rolls only once the stored window has closed, so it answers stale and changes
+> nothing (C-3).
 
 The key point: **a stale configuration can produce a stale *decision*, never an inconsistent
 *state*.** Two requests can be answered differently, but the balance after each is a legal state
@@ -67,6 +85,8 @@ and unacceptable for a balance read.
 | Clock skew | Boundaries shift | unaffected | unaffected | Operator action. NTP. Alerted (NFR-D8) |
 | Process killed mid-request | No state change; the script is atomic | unaffected | at most one dropped event | Automatic |
 | Process killed during an apply-now | Postgres transaction rolls back; the fast store is untouched until commit | recovers | unaffected | Automatic. This is why `apply-now` writes Postgres first and the fast store second |
+| Data store unreachable during a plan change or an apply-now (`IP-10`) | The change commits with its pending re-anchors; the tenants are served their previous state, or `503` while the store is down | unaffected | the `plan_changed` events wait for the rewrite | Automatic. Every instance drains pending re-anchors at start and on each refresh tick |
+| Data store unreachable during a grant, set, force-rollover or immediate override (`IP-10`) | `503 service_unavailable`; the transaction rolls back and no audit row is written | unaffected | nothing to hand over | Retry. Nothing was applied |
 | Disk full on the data store | `503` (write errors surface) | grows | grows | Operator action. Alerts fire on disk usage before this happens |
 | Bad data written by an operator | Depends on the field | — | — | `force-rollover` with an audit record. The monotonic sanity ceiling turns an unbounded index into an alert rather than a permanent freeze |
 
@@ -249,7 +269,8 @@ invariant is broken or a procedure was performed incorrectly, and both require a
 | Crash mid-request | The script either completed or did not | Atomicity |
 | Crash during the ledger write | At most one event lost; the drop counter is not incremented, because the process died | The gap is detectable by verification, not by a counter. Stated as a known imprecision in the metric's meaning |
 | Crash during an admin transaction | Postgres rolls back; the fast store was not written | Ordering: Postgres first, fast store second |
-| Crash between the Postgres commit and the fast-store write in `apply-now` | Configuration is committed; the runtime store lags by the propagation bound | Self-correcting. The reverse order would be unrecoverable |
+| Crash between the Postgres commit and the fast-store write in `apply-now` or a plan change | Configuration is committed with a pending re-anchor per tenant; the tenants are served their previous state until drained | Amended 2026-10-20 (`IP-10`): this said "self-correcting", and the scripts would leave such a tenant `STALE` indefinitely. The pending rows are drained by any instance, at start and on each refresh tick; the reverse order would be unrecoverable |
+| Commit failure after a grant, set, force-rollover or immediate override applied its script (`IP-10`) | The balance changed and its audit row did not commit | Logged at `error` with the request id. The reverse order would audit a change that may not have happened, which is worse: an audit row must never describe something that did not occur |
 | Replay of the ledger into the fast store | Not a supported operation | The fast store is authoritative at runtime; replaying into it would fabricate state. The rebuild in 4.1 is the supported path and is a distinct, audited operation |
 
 That last row deserves emphasis. "Replaying" events into the live store is the operation most

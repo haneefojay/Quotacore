@@ -202,6 +202,16 @@ workload means the bound is too small and the propagation delay is worse than it
 cause a **stale limit**, never a wrong boundary, because boundaries are computed from the anchor
 inside the script at request time (INV-X8).
 
+> **Amended 2026-10-20 (`IP-10`).** Each tenant also carries its **pins**: for each feature it
+> holds, the cadence it was anchored on, and for a feature retired from its plan the limit it had
+> and when it lapses. The feature set and the cadence come from the pins, and the limit from the
+> override, else the plan as it is now, so "only a stale limit" holds for a plan edit. Across a
+> plan change or an apply-now a stale snapshot also carries a stale anchor; the refresh interval
+> is refused at or above one hour so that staleness never outlives the shortest first window under
+> the new anchor, and the script answers such a request stale and changes nothing
+> ([consistency-and-recovery.md](consistency-and-recovery.md#2-why-a-stale-configuration-cannot-produce-a-wrong-cycle)).
+> Tenants pinned alike share one interned set of pins, as they share a plan.
+
 **What is deliberately not cached.** Balances. They are always read from the store, because a
 cached balance is a wrong answer, and the entire point of the strong-consistency claim is that it
 is never served from memory.
@@ -236,6 +246,12 @@ Three deliberate properties:
 For a **plan edit**, propagation carries the plan; tenants on that plan are re-resolved lazily, so
 no per-tenant work is needed. For a **plan assignment or an override**, the affected tenant is
 refetched directly.
+
+> **Amended 2026-10-20 (`IP-10`).** A plan edit or an apply-now bumps the version of every tenant
+> on the plan, published in chunks of a thousand per `HSET`, because a plan edit can retire a
+> feature from each of them and an apply-now moves each one's anchor. A plan is interned by its id
+> and its version, so an edit is a new plan object rather than a change under tenants still
+> holding the old one.
 
 ## 5. Concurrency and the shapes it takes
 

@@ -221,6 +221,25 @@ exists, because a future implementer needs to know which statements are new.
 - **`IP-10` is `IN PROGRESS`**, opened 2026-10-20 after `IP-09` closed, before any file it owns
   exists.
 
+- **Plan lifecycle and cycle-boundary semantics, specified (`IP-10`).** Each tenant is pinned to the
+  cadence and feature set it was anchored on, so an interval edit or an added feature reaches an
+  existing tenant at its next re-anchor and a removed feature stays until the end of the window it
+  was removed in (E-3, E-4, DR-014's note, data-model §2.10). A plan change or an apply-now commits a
+  pending re-anchor that a drain finishes in the fast store, which replaces consistency-and-recovery's
+  "self-correcting" (§2.11, §1, §3, §6). A grant raises the bonus with the balance, so
+  `grant_exceeds_ceiling` is a `set` above `limit + bonus` or a grant past `2^53 − 1`; T-04's grant
+  line, UC-14's `51` line, the contract example and the catalogue's remedy are corrected. A `set`
+  takes `0` to `limit + bonus`, and DR-018's negative balance is `Q-23` (23 open questions).
+  Force-rollover refills the window the anchor puts the current instant in (C-5, UC-12, INV-C1,
+  INV-X4). An override's `immediate` re-limits the open cycle and keeps what was spent (cycle-engine
+  §7, data-model §2.5, UC-13). The confirmation token is also bound to the reason and to the count it
+  was issued against, its `409` writes no audit row (P-3b), and impact previews the plan as saved
+  (UC-19, api-conventions §10.1 and §10.2). T-5 allows a suspended tenant. The tenant balance routes
+  and the override clear gain `409 tenant_deleted`, and the clear gains `404 feature_not_found`.
+  Impact takes no query parameter and, reading only Postgres, answers `control_plane_unavailable`
+  rather than `service_unavailable`. `QUOTACORE_CONFIG_REFRESH_INTERVAL` is refused at or above one
+  hour.
+
 - The bootstrap admin key is one the operator mints and supplies, never one the service generates
   or prints. api-conventions §5, security-model §3, UC-15, J-1 and SECURITY.md said it was "printed
   once", which ADR-0018's environment-variable model never did; deployment.md §4.1 gains a recipe

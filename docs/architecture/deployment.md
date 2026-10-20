@@ -128,7 +128,7 @@ reading the source.
 | --- | --- | --- |
 | `QUOTACORE_CONFIG_CACHE_ENTRIES` | `50000` | NFR-T4. Eviction is a metric, not an OOM (NFR-T7) |
 | `QUOTACORE_CONFIG_CACHE_MB` | `64` | Memory bound, independent of entry count |
-| `QUOTACORE_CONFIG_REFRESH_INTERVAL` | `30s` | The backstop when pub/sub is unavailable |
+| `QUOTACORE_CONFIG_REFRESH_INTERVAL` | `30s` | The backstop when pub/sub is unavailable, and the tick on which pending re-anchors are drained. Refused at or above `1h` (amended 2026-10-20, `IP-10`): a snapshot is stale for at most one interval, and must never outlive the shortest first window under a new anchor |
 | `QUOTACORE_CONFIG_REFRESH_MISS_RATE_LIMIT` | `20/s` | A cold cache must not become a database load amplifier |
 | `QUOTACORE_KEY_CACHE_ENTRIES` | `10000` | Bounded credential cache; eviction is a metric |
 | `QUOTACORE_WORKER_ENABLED` | `true` | Q-13. Correctness does not depend on it (INV-WK1) |

@@ -662,8 +662,20 @@ paths:
         not move a boundary. `POST /v1/admin/plans/{id}/apply` is the route that changes that, and
         it is guarded by blast radius (DR-014).
 
+        What reaches an existing tenant, and when:
+
+        - A **limit** change binds at the tenant's own next boundary.
+        - An **interval** change, and a **feature added** to the plan, reach the tenant at its next
+          re-anchor (a plan change or an apply-now), because a live interval would renumber the
+          open cycle and an added feature has no balance yet (E-3, DR-045). Until then the tenant
+          keeps the cadence and the feature set it was anchored on.
+        - A **feature removed** stays the tenant's, at the limit it had, until the end of the
+          window the edit landed in; a removed `never` feature stays until the next re-anchor
+          (E-4, INV-E1). Adding it back before then keeps it.
+
         `entitlements` replaces the whole set, because a partial update of a bounded set is an
-        ambiguity, and a plan that is an offer should be edited as one.
+        ambiguity, and a plan that is an offer should be edited as one. An archived plan cannot
+        be edited: `400 validation_failed`.
       security:
         - bearerAuth: []
       x-required-scope: admin
@@ -767,11 +779,21 @@ paths:
         `409 confirmation_required` carrying a single-use token. Re-issue the identical request
         with `confirmation_token` and it applies.
 
-        The token is bound to the plan `resource_version` it was issued against, so a plan edited
-        in between is refused: the count the operator approved is no longer the count. There is
-        no `Idempotency-Key` on this route, deliberately. The handshake is already exactly-once
+        The token is honoured once, and only for the plan, the `resource_version` and the
+        `reason` it was issued for, and only while the plan's count has not grown past the one it
+        was issued against. Anything else, a plan edited in between included, is counted afresh:
+        above the threshold that is a new `409` with a new token, because the count the operator
+        approved is no longer the count. A `409` writes nothing and records no audit row; an
+        apply bumps the plan's version, so no token survives it. There is no `Idempotency-Key` on
+        this route, deliberately. The handshake is already exactly-once
         by construction, and adding a second exactly-once mechanism to one operation is a way to
         have two opinions about whether it happened.
+
+        Every tenant on the plan, suspended ones included, is re-anchored at the request's
+        instant in one transaction, and its balances are rewritten after it: inline while the
+        request has time, and by a background drain for any it did not reach. Until a tenant's
+        balances are rewritten it is served its previous state, never a fresh allowance. An
+        archived plan cannot be applied: `400 validation_failed`.
 
         To preview the numbers without provoking the error, call
         `GET /v1/admin/plans/{id}/impact` first.
@@ -870,11 +892,16 @@ paths:
     get:
       tags: [admin-plans]
       operationId: planImpact
-      summary: Preview how many tenants an edit would affect
+      summary: Preview how many tenants an apply would affect
       description: |
         Read-only. Nothing is re-anchored, no audit row records a mutation and no token is
         issued. The route exists so that the common case is a quiet read rather than a `409`
         (UC-19).
+
+        It describes an apply-now of the plan **as saved**: every non-deleted tenant on it, and
+        the earliest end of their current cycles over their features that reset, in the zone of
+        the tenant it belongs to. It is computed by the same function the `409` uses, so the two
+        agree.
       security:
         - bearerAuth: []
       x-required-scope: admin
@@ -894,7 +921,7 @@ paths:
         '500':
           $ref: '#/components/responses/ErrorInternal'
         '503':
-          $ref: '#/components/responses/ErrorUnavailable'
+          $ref: '#/components/responses/ErrorControlPlaneUnavailable'
 
   /v1/admin/tenants:
     get:
@@ -1205,15 +1232,20 @@ paths:
       operationId: grantTenant
       summary: Add bonus quota for the current cycle
       description: |
-        Raises `bonus` for the current cycle, subject to the `balance <= limit + bonus` ceiling,
-        and applies immediately. A grant is **cycle-scoped**: it does not survive the boundary,
-        because a bonus is a gesture and a limit is a contract (DR-019, DR-020).
+        Adds `amount` to both `balance` and `bonus` in the current cycle, after any rollover that
+        is due, and applies immediately. Because both rise together, `balance <= limit + bonus`
+        holds by construction and a grant to a full balance succeeds. A grant is
+        **cycle-scoped**: it does not survive the boundary, because a bonus is a gesture and a
+        limit is a contract (DR-019, DR-020).
 
-        A grant on a `never` entitlement increases the balance with no ceiling tied to a cycle
-        and no expiry, which is the one case where the ceiling does not apply.
+        A grant on a `never` entitlement increases the balance with no cycle to end it.
 
-        A grant that would break the ceiling is `409 grant_exceeds_ceiling`. To raise a limit
+        `409 grant_exceeds_ceiling` is a grant that would take the balance or the bonus past
+        `2^53 - 1`, the largest amount the service represents exactly (DR-022). To raise a limit
         durably, use an override, which is the correct remedy for a lasting increase.
+
+        A grant has no `version` and no `Idempotency-Key`, so a grant retried after a timeout is a
+        second grant; each is in the audit log with its reason.
       security:
         - bearerAuth: []
       x-required-scope: admin
@@ -1260,8 +1292,13 @@ paths:
       operationId: setTenantBalance
       summary: Set a balance to an exact value
       description: |
-        Overwrites the balance outright. It is the blunt instrument, and it is the right one when
-        a migration produced a number that is known to be wrong.
+        Overwrites the current cycle's balance outright, after any rollover that is due. It is the
+        blunt instrument, and it is the right one when a migration produced a number that is
+        known to be wrong.
+
+        `value` is `0` to `limit + bonus`. Above that is `409 grant_exceeds_ceiling`: grant first.
+        Setting `0`, or suspending the tenant, is how to stop a tenant until its boundary; a
+        negative balance is not representable in v0.1 (Q-23).
       security:
         - bearerAuth: []
       x-required-scope: admin
@@ -1308,8 +1345,11 @@ paths:
       operationId: forceRollover
       summary: Roll one feature's cycle over now
       description: |
-        Applies the allowance for the next cycle immediately, for one feature. It is audited with
-        a mandatory `reason`, and it is a `force_rolled_over` event in the ledger.
+        Refills one feature now: the balance becomes the effective limit and the bonus `0`, in
+        the cycle the tenant's anchor puts this instant in, whatever cycle the stored balance
+        was on. That also repairs a balance stuck on a cycle index that is ahead. It does not move
+        the anchor. A second call refills again. It is audited with a mandatory `reason`, and a
+        refill that changed the balance is a `force_rolled_over` event in the ledger.
 
         A `never` entitlement cannot be rolled, because there is no cycle to roll:
         `409 reset_not_supported`. Grant explicitly instead (DR-008).
@@ -1366,9 +1406,11 @@ paths:
         would inherit everything from the plan and would therefore be indistinguishable from not
         existing, so it is `400 validation_failed` (UC-13).
 
-        `apply_at` is `immediate` by default. It is a **mode, not a timestamp**: `next_boundary`
-        defers the new value to the tenant's next boundary, which is the only moment a boundary
-        change is meaningful.
+        `apply_at` is `immediate` by default. It is a **mode, not a timestamp**. For the limit,
+        `immediate` re-limits the open cycle and keeps what was spent: the balance moves by the
+        same difference as the limit, floored at zero. `next_boundary` writes the override only,
+        and the tenant's next boundary grants the new limit. An `interval` reaches the tenant at
+        its next re-anchor in either mode, because a live interval would renumber the open cycle.
 
         An override can raise a limit above the plan's. That is the mechanism for "custom limits
         for an enterprise customer". It cannot add a feature the plan does not include, which is
@@ -1429,7 +1471,10 @@ paths:
       operationId: clearTenantOverride
       summary: Clear a per-feature override
       description: |
-        Removes the override, so the plan value applies again (UC-13).
+        Removes the override, so the plan value applies again (UC-13). `immediate` re-limits the
+        open cycle to the plan's limit as an override's `immediate` does; `next_boundary` lets the
+        next boundary grant it. Clearing an override that does not exist changes nothing and is
+        still `204`.
 
         `apply_at` is in the body rather than a query parameter because it changes *when* money is
         owed, and a `DELETE` that silently means "now" would be a surprise in a billing system.
@@ -1470,7 +1515,9 @@ paths:
         '403':
           $ref: '#/components/responses/ErrorForbiddenScope'
         '404':
-          $ref: '#/components/responses/ErrorTenantNotFound'
+          $ref: '#/components/responses/ErrorNotFoundResource'
+        '409':
+          $ref: '#/components/responses/ErrorConflictTenantDeleted'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
         '429':
@@ -2290,12 +2337,14 @@ components:
     GrantExceedsCeiling:
       summary: A grant that would break the ceiling
       description: |
-        Raise the limit with an override first. A grant is cycle-scoped and a limit is a contract,
-        and a lasting increase is a limit change (DR-019, DR-020).
+        A `set` above `limit + bonus`. Grant first, or raise the limit with an override: a grant
+        is cycle-scoped and a limit is a contract, and a lasting increase is a limit change
+        (DR-019, DR-020). A grant itself raises the bonus with the balance, so it is refused only
+        past `2^53 - 1`, with that number as `ceiling`.
       value:
         error:
           code: grant_exceeds_ceiling
-          message: grant of 960000 would take the balance above limit plus bonus
+          message: the balance would pass limit plus bonus; raise the limit with an override first
           request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
           details:
             feature_key: llm.tokens.output
@@ -3454,12 +3503,28 @@ components:
             resource_version_conflict:
               $ref: '#/components/examples/ResourceVersionConflict'
 
+    ErrorConflictTenantDeleted:
+      x-status: 409
+      x-codes: [tenant_deleted]
+      description: |
+        The tenant is deleted, which is terminal, so nothing about it can change (T-7).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            tenant_deleted:
+              $ref: '#/components/examples/TenantDeleted'
+
     ErrorConflictQuota:
       x-status: 409
-      x-codes: [grant_exceeds_ceiling, reset_not_supported, resource_version_conflict]
+      x-codes: [grant_exceeds_ceiling, reset_not_supported, resource_version_conflict, tenant_deleted]
       description: |
-        A refused administrative change to a balance. Nothing was applied in any of the three
-        cases.
+        A refused administrative change to a balance. Nothing was applied in any of the four
+        cases. `tenant_deleted` is a tenant whose deletion is terminal (T-7).
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'
@@ -3589,6 +3654,26 @@ components:
           examples:
             not_implemented:
               $ref: '#/components/examples/NotImplemented'
+
+    ErrorControlPlaneUnavailable:
+      x-status: 503
+      x-codes: [control_plane_unavailable]
+      description: |
+        Postgres did not answer. A route that reads only the control plane cannot answer
+        `service_unavailable`, because it never touches the data store. Retryable with backoff and
+        jitter.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            control_plane_unavailable:
+              $ref: '#/components/examples/ControlPlaneUnavailable'
 
     ErrorUnavailable:
       x-status: 503
@@ -3752,8 +3837,10 @@ components:
     OverrideApplyAt:
       type: string
       description: |
-        A **mode, not a timestamp**. `immediate` applies now; `next_boundary` applies at the
-        tenant's next boundary, which is the only moment a boundary change is meaningful.
+        A **mode, not a timestamp**. `immediate` applies a limit now, re-limiting the open cycle
+        and keeping what was spent; `next_boundary` applies it at the tenant's next boundary. An
+        interval reaches the tenant at its next re-anchor in either mode, because that is the
+        only moment a cadence change is meaningful.
 
         It is a mode because the actual instant an override takes effect is always the tenant's
         next boundary, computed by the cycle engine and never stored. The name is a deliberate
@@ -4335,9 +4422,10 @@ components:
     PlanUpdate:
       type: object
       description: |
-        An edit to a plan's entitlements. It applies to new assignments immediately and to
-        existing tenants at their next boundary; it does not touch an open balance and it does not
-        move a boundary (DR-014).
+        An edit to a plan's entitlements. It applies to new assignments immediately; an existing
+        tenant takes a new limit at its next boundary and a new interval or an added feature at its
+        next re-anchor, and keeps a removed feature until the end of the window the edit landed
+        in. It does not touch an open balance and it does not move a boundary (DR-014).
       additionalProperties: false
       required: [version]
       properties:
@@ -4386,7 +4474,7 @@ components:
           type: string
           description: |
             Present only when re-issuing after `409 confirmation_required`. Single-use, bound to
-            the plan `resource_version` it was issued against, and expiring on
+            the plan, the `resource_version` and the `reason` it was issued against, and expiring on
             `QUOTACORE_CONFIRMATION_TTL`, because an abandoned token must not accumulate in a
             store that cannot evict (DR-048).
           pattern: '^cnf_[0-9A-HJKMNP-TV-Z]{26}$'
@@ -4409,8 +4497,9 @@ components:
           format: int64
           minimum: 0
           description: |
-            How many tenants were re-anchored, matching the `affected_tenants` the operator was
-            shown in the confirmation.
+            How many tenants were re-anchored, as committed. It is at most the `affected_tenants`
+            the operator was shown in the confirmation: a token is not honoured once the plan's
+            count has grown past it.
         applied_at:
           $ref: '#/components/schemas/Timestamp'
         version:
@@ -4421,8 +4510,8 @@ components:
     PlanImpact:
       type: object
       description: |
-        What an edit would affect, read-only. Nothing is re-anchored, no audit row records a
-        mutation and no token is issued (UC-19).
+        What an apply-now of the plan as saved would affect, read-only. Nothing is re-anchored, no
+        audit row records a mutation and no token is issued (UC-19).
       additionalProperties: false
       required: [plan_key, affected_tenants, earliest_cycle_end, exceeds_confirmation_threshold]
       properties:
@@ -4433,16 +4522,16 @@ components:
           format: int64
           minimum: 0
           description: |
-            How many tenants the edit would affect, which is the number
-            `exceeds_confirmation_threshold` compares against the configured threshold.
+            How many non-deleted tenants are on the plan, suspended ones included, which is the
+            number `exceeds_confirmation_threshold` compares against the configured threshold.
         earliest_cycle_end:
           oneOf:
             - $ref: '#/components/schemas/Timestamp'
             - type: 'null'
           description: |
-            The earliest `cycle_end` among affected tenants, or null when none are affected. It is
-            the same value `confirmation_required` reports, so the common case is a quiet read
-            rather than a `409`.
+            The earliest `cycle_end` among affected tenants' features that reset, in that tenant's
+            zone, or null when there is none. It is the same value `confirmation_required`
+            reports, so the common case is a quiet read rather than a `409`.
         exceeds_confirmation_threshold:
           type: boolean
           description: |

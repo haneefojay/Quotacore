@@ -160,6 +160,12 @@ plainly that a grant, not a forced apply, is the right tool for "give them more 
 operators are using a destructive tool for an additive intent, and the error messages should be
 improved.
 
+> **Amended 2026-10-20 (`IP-10`).** Step 1 said the edit's response names the affected count and
+> the earliest `cycle_end`. `PATCH` answers the plan; those two numbers are
+> `GET /v1/admin/plans/{id}/impact`'s, read before an apply. A limit edit lands at each tenant's
+> own boundary as step 1 says; an interval edit or an added feature lands at the next re-anchor
+> (E-3's note in [state-machines.md](state-machines.md#4-plan-entitlement)).
+
 ---
 
 ## J-5 — A customer disputes a charge (P-4, support)

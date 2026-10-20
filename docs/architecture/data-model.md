@@ -222,6 +222,12 @@ naming wart kept for the API's benefit, and it is the reason the enum type exist
 actual time an override takes effect is always the tenant's next boundary, computed by the cycle
 engine, never stored here.
 
+> **Amended 2026-10-20 (`IP-10`).** "Always the tenant's next boundary" is true of `next_boundary`
+> only. With `immediate`, an override's limit re-limits the open cycle when it is written: the
+> balance moves by the same difference as the limit, floored at zero, so what was spent stays
+> spent. An override's **interval** reaches the tenant at its next re-anchor in either mode,
+> because it is pinned (§2.10).
+
 ### 2.6 API keys
 
 ```sql
@@ -379,6 +385,66 @@ in the migration comment.
 > differ from the recorded hash refuses to start, which is the checksum rule ADR-0011 states and goose
 > does not implement.
 
+### 2.10 Tenant entitlement pins
+
+```sql
+CREATE TABLE tenant_entitlement_pins (
+  tenant_id     uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  feature_id    uuid NOT NULL REFERENCES features(id) ON DELETE RESTRICT,
+  interval      reset_interval NOT NULL,
+  retired_limit bigint,
+  retired_until timestamptz,
+  PRIMARY KEY (tenant_id, feature_id),
+  CONSTRAINT tenant_pins_retired_limit_range
+    CHECK (retired_limit IS NULL OR (retired_limit >= 0 AND retired_limit <= 9007199254740991)),
+  CONSTRAINT tenant_pins_retired_until_needs_limit
+    CHECK (retired_until IS NULL OR retired_limit IS NOT NULL)
+);
+
+CREATE INDEX tenant_entitlement_pins_feature_idx ON tenant_entitlement_pins (feature_id);
+```
+
+A pin is what a tenant was anchored on: for each feature it holds, the cadence its cycle index is
+counted in. A cycle index means something only under one anchor and one interval, so a plan edit
+changes the offer and a tenant keeps its cadence and its feature set until its next re-anchor
+(ADR-0006, E-3). The pins are written whenever a tenant is anchored: at creation (T-1), on a plan
+change (T-5) and on an apply-now (P-3), from the plan's entitlements with an override's interval
+in front. The limit is not pinned: it is the override's, else the plan's as it is now, which is
+how a limit edit reaches the tenant at its own next boundary (DR-014).
+
+A feature removed from the plan is **retired**, not dropped: `retired_limit` is the limit it had,
+which a roll inside its last window still needs, and `retired_until` is the end of the window the
+removal landed in, after which the tenant no longer has it (E-4, INV-E1). A retired `never` feature
+has no window end, so `retired_until` is null and it stays until the re-anchor. Adding the feature
+back before then un-retires the pin; a lapsed pin is deleted. A pin references its feature, so a
+retired pin keeps a feature `feature_in_use` until the tenant's next re-anchor.
+
+Migration `00009` pins every existing tenant to its plan's entitlements with its overrides'
+intervals, which is exact because no route could edit a plan or write an override before it.
+
+### 2.11 Pending re-anchors
+
+```sql
+CREATE TABLE pending_reanchors (
+  tenant_id     uuid PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+  anchor_at     timestamptz NOT NULL,
+  kind          text NOT NULL,
+  request_id    text NOT NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT pending_reanchors_kind CHECK (kind IN ('plan_change', 'apply_now'))
+);
+
+CREATE INDEX pending_reanchors_created_idx ON pending_reanchors (created_at);
+```
+
+A re-anchor committed in Postgres whose balance hashes have not been rewritten yet. The row is
+written in the transaction that moves the anchor and the pins, and deleted in the transaction that
+finishes the rewrite, so a crash between the two stores leaves work to do rather than a tenant
+served under the wrong numbering. The request drains its own tenants inline while it has time, and
+every instance drains the rest at start and on each refresh tick, a hundred tenants at a time
+([consistency-and-recovery.md](consistency-and-recovery.md#3-dependency-failure-matrix)). Every
+write that changes one tenant's balances drains that tenant first, under the same row lock.
+
 ---
 
 ## 3. Redis-compatible data model
@@ -397,7 +463,7 @@ multi-key script is single-slot (ADR-0002, A-11).
 | `qc:cfg:tenants` | hash | tenant → snapshot version, for invalidation diffing | none |
 | `qc:cfg:version` | string | monotonically increasing configuration version | none |
 | `qc:cfg:cursor_key` | string | the 32-byte key that signs admin list cursors, created once with `SET NX` so every instance signs alike (`IP-09`) | none |
-| `qc:admin:cnf:<token>` | hash | `plan_id`, `resource_version`, `affected_tenants`, `reason_hash` for a pending `apply-now` confirmation | `QUOTACORE_CONFIRMATION_TTL` |
+| `qc:admin:cnf:<token>` | hash | `plan_id`, `resource_version`, `affected_tenants`, `reason_hash` for a pending `apply-now` confirmation. `reason_hash` is the SHA-256 of the request's `reason`, so the reason itself never reaches the fast store; the token is read and deleted in one transaction, which is what makes it single-use (`IP-10`) | `QUOTACORE_CONFIRMATION_TTL` |
 
 There is deliberately **no** `qc:idem:fingerprint:<key>` key. The fingerprint is a field of the
 per-tenant idempotency record, which is what scopes it: a key that was not scoped to a tenant
@@ -443,6 +509,12 @@ else creates it (DR-045). This is what makes a lost hash survivable without bein
 whether it is removed by an operator's mistake or lost to total store loss, the consequence is a
 `503` plus a metric plus a rebuild, never a restored full allowance.
 
+> **Amended 2026-10-20 (`IP-10`).** "Its plan assignment changes" covers a plan change and an
+> apply-now, which re-anchor, and force-rollover refills a hash in place. In each case the hash is
+> rewritten by a control-plane script after the change commits, with six fields or none, and never
+> by a request (DR-045). The re-anchor's rewrite is a compare-and-set on the stored window, so two
+> drains of one tenant change it once (§2.11).
+
 ### 3.3 The idempotency record
 
 A single string holding the operation fingerprint followed by the seven values that answer the
@@ -487,7 +559,7 @@ the interval is a tuned value with a metric rather than a constant.
 | INV-X1 | The runtime balance never requires a Postgres read | Architecture rule DR-039, review-checked |
 | INV-X2 | Every applied mutation has exactly one event | Ledger writer, `delta <> 0` constraint, and the reconciliation test |
 | INV-X3 | Every administrative mutation has an audit row in the same transaction | Transaction scope in the admin store |
-| INV-X4 | `cycle_index` never decreases | The monotonic guard in the Lua transition, and the anchor being the only stored cycle state |
+| INV-X4 | `cycle_index` never decreases under one anchor | The monotonic guard in the Lua transition, and the anchor being the only stored cycle state. Amended 2026-10-20 (`IP-10`): a re-anchor restarts the index at 0 (C-7) and a force-rollover can lower it (C-5); both are audited control-plane writes, and no data-plane path writes a smaller index |
 | INV-X5 | `balance <= limit + bonus` at every instant, for every key | The ceiling check inside the atomic script (DR-019) |
 | INV-X6 | No runtime key expires before its cycle could legitimately need it | TTL is `window_end + 24h`, strictly greater than any rollover requirement |
 | INV-X7 | A deleted tenant has no runtime keys within one refresh interval | Soft delete publishes an invalidation and the script refuses unknown or deleted tenants |
