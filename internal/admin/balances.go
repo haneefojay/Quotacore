@@ -336,7 +336,10 @@ func (s *Service) upsertOverride(w http.ResponseWriter, r *http.Request) {
 		problem(w, r, p)
 		return
 	}
-	o, tenant, err := s.store.UpsertOverride(r.Context(), actor(r), id, in, s.rewrite, s.relimit(in.Feature, in.ApplyAt))
+	var moved relimited
+	o, tenant, err := s.store.UpsertOverride(r.Context(), actor(r), id, in, s.rewrite,
+		s.relimit(r, in.Feature, in.ApplyAt, &moved))
+	moved.hand(s, err == nil)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -367,8 +370,10 @@ func (s *Service) clearOverride(w http.ResponseWriter, r *http.Request) {
 		problem(w, r, p)
 		return
 	}
+	var moved relimited
 	tenant, cleared, err := s.store.ClearOverride(r.Context(), actor(r), id, feature, applyAt, s.rewrite,
-		s.relimit(feature, applyAt))
+		s.relimit(r, feature, applyAt, &moved))
+	moved.hand(s, err == nil)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -379,12 +384,34 @@ func (s *Service) clearOverride(w http.ResponseWriter, r *http.Request) {
 	noContent(w, r)
 }
 
+// relimited is what a re-limit handed the ledger: the rollover its transition
+// applied, which is in the store whatever the transaction does, and the move
+// of the balance, which is handed over only once the override commits.
+type relimited struct {
+	roll  *dataplane.Event
+	moved *dataplane.Event
+}
+
+func (m *relimited) hand(s *Service, committed bool) {
+	if m.roll != nil {
+		s.events.Enqueue(*m.roll)
+	}
+	if committed && m.moved != nil {
+		s.events.Enqueue(*m.moved)
+	}
+}
+
 // relimit is what an override write does to the open cycle once its row is
 // written: with `immediate`, the tenant's effective limit now binds the open
 // cycle and the balance moves by the same difference (D6). A feature the
 // tenant does not hold yet, which a plan reaches only at a re-anchor, has no
 // open cycle to re-limit.
-func (s *Service) relimit(feature, applyAt string) func(context.Context, *snapshot.LoadedTenant) error {
+//
+// The move is a change to the tenant's effective entitlement, so it is
+// written as U-5's plan_changed: the contract's event types have no other
+// that fits, and a distinct one is a contract change (IP-12, Q-24).
+func (s *Service) relimit(r *http.Request, feature, applyAt string,
+	moved *relimited) func(context.Context, *snapshot.LoadedTenant) error {
 	return func(ctx context.Context, t *snapshot.LoadedTenant) error {
 		if applyAt != "immediate" {
 			return nil
@@ -396,8 +423,18 @@ func (s *Service) relimit(feature, applyAt string) func(context.Context, *snapsh
 		if err != nil {
 			return err
 		}
-		if _, err := s.scripts.Relimit(ctx, h.request(0)); err != nil {
+		out, err := s.scripts.Relimit(ctx, h.request(0))
+		if err != nil {
 			return errDataStore{err: err}
+		}
+		rid := actor(r).RequestID
+		if ev, ok := dataplane.Rollover(rid, h.tenant.ID, feature, out.Outcome, h.at); ok && moved.roll == nil {
+			moved.roll = &ev
+		}
+		if delta, known := out.Delta(); known && delta != 0 && out.Decision == script.Applied {
+			moved.moved = &dataplane.Event{RequestID: rid, TenantID: h.tenant.ID, FeatureKey: feature,
+				Type: "plan_changed", Source: "admin", Amount: abs(delta), Delta: delta, Balance: out.Balance,
+				CycleIndex: out.Index, CycleStart: out.Start, OccurredAt: h.at}
 		}
 		return nil
 	}

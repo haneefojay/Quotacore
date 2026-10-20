@@ -884,3 +884,28 @@ func TestTheWriterKeepsUpWithTheFloor(t *testing.T) {
 		t.Errorf("%.0f appends a second, below the floor of 1 000", rate)
 	}
 }
+
+// TestAnImmediateOverrideIsWrittenAsAPlanChange closes a gap IP-10 left: an
+// override set or cleared with apply_at=immediate moves the open cycle's
+// balance by the change in limit (D6), and that move is a row, written as
+// U-5's plan_changed because the contract has no other type for it (Q-24);
+// across a boundary its transition's rollover is written first.
+func TestAnImmediateOverrideIsWrittenAsAPlanChange(t *testing.T) {
+	s := newStack(t)
+	f, _, tn := s.provisioned(1000)
+	tp := "/v1/admin/tenants/" + tn.ID
+	mustStatus(t, s.consume(s.runtime, f, 100, tn.External, newKey()), http.StatusOK)
+	mustStatus(t, s.adminDo(http.MethodPost, tp+"/overrides",
+		`{"feature_key":"`+f+`","limit_value":600,"interval":null,"apply_at":"immediate"}`), http.StatusOK)
+	if b := s.balance(tn, f); b != 500 {
+		t.Fatalf("balance after an immediate override to 600 = %d, want 500", b)
+	}
+	if r := s.adminDo(http.MethodDelete, tp+"/overrides/"+f, `{"apply_at":"immediate"}`); r.Status != http.StatusNoContent {
+		t.Fatalf("clearing the override = %d %s", r.Status, r.Body)
+	}
+	rows := s.ledger(tn)
+	if !sameShapes(rows, expect{"consumed", "api", -100, 900}, expect{"plan_changed", "admin", -400, 500},
+		expect{"plan_changed", "admin", 400, 900}) {
+		t.Errorf("the ledger is %v", shapes(rows))
+	}
+}
