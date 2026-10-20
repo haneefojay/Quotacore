@@ -574,6 +574,10 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Fixed
 
+- **`TestArchivingAFeaturePreservesItsBalance` failed about one run in fifteen** (`IP-09`). It
+  waited for the archive to reach the data plane by consuming, and a consume that landed before the
+  invalidation changed the very hash the test compares. It waits with a check, which writes nothing.
+
 - **The contract's `timezone` pattern refused `UTC`** (`IP-02`), its own default, because it
   required an `Area/Location` name. No route took a time zone until `IP-09`'s tenant create. The
   pattern admits `UTC`, and the generated types and reference page were regenerated.
