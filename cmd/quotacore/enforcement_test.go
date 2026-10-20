@@ -68,6 +68,16 @@ func TestT01TwoHundredConsumesOverHTTP(t *testing.T) {
 			if b := s.balance(tn, feature); b != 0 {
 				t.Errorf("final balance = %d, want 0", b)
 			}
+			// The ledger half (IP-05 DoD 1, IP-12): exactly the 100 that were
+			// allowed, summing to -100; a denial writes nothing.
+			rows := s2.ledger(tn)
+			var sum int64
+			for _, r := range rows {
+				sum += r.Delta
+			}
+			if len(rows) != 100 || sum != -100 {
+				t.Errorf("the ledger holds %d rows summing to %d, want 100 summing to -100", len(rows), sum)
+			}
 		})
 	}
 }
@@ -92,12 +102,16 @@ func TestCheckChangesNothingInsideACycle(t *testing.T) {
 			t.Errorf("check %d changed the state:\nbefore %+v\nafter  %+v", amount, before, after)
 		}
 	}
+	if rows := s.ledger(tn); len(rows) != 0 {
+		t.Errorf("checks inside a cycle wrote %v to the ledger", shapes(rows))
+	}
 }
 
-// TestCheckAcrossABoundaryOnlyRolls (IP-07 DoD 2 as amended, C6): a check
-// after the stored window has closed applies the transition any request
-// would, so the balance it reports is the new cycle's, and nothing else: no
-// deduction, no record, no event.
+// TestCheckAcrossABoundaryOnlyRolls (IP-07 DoD 2 as amended, C6, and IP-12
+// D3): a check after the stored window has closed applies the transition any
+// request would, so the balance it reports is the new cycle's, and nothing
+// else: no deduction, no record, and one event, the cycle_rolled_over that
+// opens the new cycle.
 func TestCheckAcrossABoundaryOnlyRolls(t *testing.T) {
 	s := newStack(t)
 	tn := s.tenant(externalID("roll"), "UTC", monthlyAnchor, ent{"roll.f", 1000, "monthly", false})
@@ -117,8 +131,21 @@ func TestCheckAcrossABoundaryOnlyRolls(t *testing.T) {
 	if !reflect.DeepEqual(after.Hash, want) {
 		t.Errorf("after the rolling check the hash is %v, want the transition only, %v", after.Hash, want)
 	}
-	if len(after.Records) != 0 || s.events.count() != events {
-		t.Errorf("a check wrote %d records and %d events", len(after.Records), s.events.count()-events)
+	if len(after.Records) != 0 {
+		t.Errorf("a check wrote %d records", len(after.Records))
+	}
+	if got := s.events.since(events); len(got) != 1 || got[0].Type != "cycle_rolled_over" {
+		t.Fatalf("a rolling check handed the sink %+v, want one cycle_rolled_over", got)
+	}
+	rows := s.ledger(tn)
+	if len(rows) != 1 {
+		t.Fatalf("the ledger holds %+v, want the one rollover", rows)
+	}
+	row := rows[0]
+	if row.Type != "cycle_rolled_over" || row.Source != "system" || row.Delta != 997 || row.Balance != 1000 ||
+		row.Index != cur.Index || !row.Start.Equal(cur.Start) || row.RequestID == "" || row.RequestID != r.Header.Get("X-Request-Id") {
+		t.Errorf("the rollover row = %+v, want system, +997 to 1000, index %d from %s, under the check's request id %s",
+			row, cur.Index, cur.Start, r.Header.Get("X-Request-Id"))
 	}
 }
 
@@ -300,6 +327,9 @@ func TestT02FiftyDeliveriesOverHTTP(t *testing.T) {
 	}
 	if s.events.count() != 1 {
 		t.Errorf("%d events handed to the ledger, want 1", s.events.count())
+	}
+	if rows := s.ledger(tn); !sameShapes(rows, expect{"consumed", "api", -30, 970}) || rows[0].ClientKey != key {
+		t.Errorf("the ledger after 50 deliveries is %v, want one deduction under the key", shapes(rows))
 	}
 }
 

@@ -30,9 +30,9 @@ var rewrites = regexp.MustCompile(`(?is)` +
 var triggers = regexp.MustCompile(`(?i)\bcreate\s+(or\s+replace\s+)?(rule|trigger)\b`)
 
 // retentionAllowed is the one place DR-044 and NFR-C6 permit a deletion: the
-// bounded background retention job, which is IP-12's. It is empty until that
-// file exists, and IP-12 adds exactly that file, not a pattern.
-var retentionAllowed = map[string]bool{}
+// bounded background retention job, which is IP-12's. IP-12 added exactly that
+// file, not a pattern.
+var retentionAllowed = map[string]bool{"internal/db/retention.go": true}
 
 func TestTheRewriteMatcherCatchesWhatItMust(t *testing.T) {
 	for _, s := range []string{

@@ -14,11 +14,12 @@
 -- from request text, so nothing a caller sends is ever parsed as Lua (ADR-0002,
 -- testing-strategy section 4).
 --
--- Replies with eight strings, always eight, in this order: decision,
+-- Replies with nine strings, always nine, in this order: decision,
 -- transition, balance, limit, bonus, cycle_index, window_start_ms,
--- window_end_ms. The decision is applied, denied, refused_ceiling,
--- state_missing, invalid, replayed or reused; the transition is current, rolled
--- or stale. The state_missing and invalid decisions leave the six values empty
+-- window_end_ms, closed_balance. The closed_balance is empty unless the
+-- transition is rolled, and a replay leaves it empty because it rolled nothing.
+-- The decision is applied, denied, refused_ceiling, state_missing, invalid,
+-- replayed or reused; the transition is current, rolled or stale. The state_missing and invalid decisions leave the six values empty
 -- rather than zero, so a caller that ignored the decision gets a parse failure
 -- and not a plausible balance; the reused decision does the same. A replayed
 -- decision carries the state that was recorded when the operation was first
@@ -54,8 +55,11 @@ local function field(v)
   return v
 end
 
+-- The ninth value is the balance a rollover discarded, empty unless the
+-- verdict is rolled. The caller records it as the closing of the cycle that
+-- ended, so the ledger shows every opening as a row (ADR-0016, DR-042, U-6).
 local function answer(decision, state)
-  local reply = { decision, '', '', '', '', '', '', '' }
+  local reply = { decision, '', '', '', '', '', '', '', '' }
   if state then
     reply[2] = state.verdict
     reply[3] = num(state.balance)
@@ -64,6 +68,7 @@ local function answer(decision, state)
     reply[6] = num(state.index)
     reply[7] = num(state.start)
     reply[8] = state.finish and num(state.finish) or ''
+    reply[9] = state.closed and num(state.closed) or ''
   end
   return reply
 end
@@ -118,6 +123,7 @@ local function transition()
     -- one, so a reduction takes effect and the re-grant is of the reduced
     -- figure (DR-018), and the bonus is spent (DR-020).
     state.verdict = 'rolled'
+    state.closed = state.balance
     state.balance = limit
     state.limit = limit
     state.bonus = 0
@@ -171,13 +177,13 @@ if existing then
       string.sub(existing, split + 1),
       '([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)')
     if verdict then
-      return { 'replayed', verdict, balance, limit, bonus, index, start, finish }
+      return { 'replayed', verdict, balance, limit, bonus, index, start, finish, '' }
     end
   end
   -- A key already used for a different operation, or a record this script
   -- cannot read back. Refuse, and touch nothing, so the record that is already
   -- there still answers the operation it belongs to (DR-028, INV-I2).
-  return { 'reused', '', '', '', '', '', '', '' }
+  return { 'reused', '', '', '', '', '', '', '', '' }
 end
 
 -- Record the outcome of a mutation that was applied, so a repeat of it is a
@@ -209,7 +215,9 @@ end
 -- One write, and the balance cannot go below zero between the check and the
 -- write because they are the same execution (INV-C2). An amount of zero is a
 -- valid request that changes no balance and records no event (DR-023).
-redis.call('HINCRBY', KEY, 'balance', -amount)
+-- The increment is formatted as an integer: Lua renders the negation of zero
+-- as -0, which HINCRBY refuses as not an integer.
+redis.call('HINCRBY', KEY, 'balance', num(-amount))
 -- The reply reports the balance the key holds now, not the one it held before
 -- this script ran, or a caller that spent the last unit would be told it still
 -- has one (INV-C2). The value is what HINCRBY computed, kept in step here rather

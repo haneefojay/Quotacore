@@ -815,7 +815,7 @@ func (a *Admin) ListEvents(ctx context.Context, id string, f admin.EventFilter, 
 	}
 	rows, err := a.db.QueryContext(ctx, `
 SELECT u.id, f.key, u.cycle_index, u.delta, u.balance_after, u.source, u.event_type, u.request_id,
-       u.idempotency_key, u.created_at, u.seq, n.interval::text
+       u.idempotency_key, u.created_at, u.seq, n.interval::text, u.cycle_start
   FROM usage_events u
   JOIN features f ON f.id = u.feature_id
   LEFT JOIN tenant_entitlement_pins n ON n.tenant_id = u.tenant_id AND n.feature_id = u.feature_id
@@ -840,10 +840,11 @@ SELECT u.id, f.key, u.cycle_index, u.delta, u.balance_after, u.source, u.event_t
 			requestID           string
 			clientKey, interval sql.NullString
 			created             time.Time
+			start               sql.NullTime
 			delta, balanceAfter int64
 		)
 		if err := r.Scan(&e.ID, &key, &e.Index, &delta, &balanceAfter, &source, &kind, &requestID, &clientKey,
-			&created, &e.Seq, &interval); err != nil {
+			&created, &e.Seq, &interval, &start); err != nil {
 			return e, err
 		}
 		e.TenantExternalID, e.FeatureKey, e.CycleIndex, e.Delta = external, api.FeatureKey(key), e.Index, delta
@@ -855,6 +856,9 @@ SELECT u.id, f.key, u.cycle_index, u.delta, u.balance_after, u.source, u.event_t
 		}
 		e.OccurredAt = ts(created)
 		e.Interval = interval.String
+		if start.Valid {
+			e.Start = start.Time
+		}
 		return e, nil
 	})
 	return out, err

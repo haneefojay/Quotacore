@@ -93,6 +93,7 @@ func TestNoProductBehaviour(t *testing.T) {
 		"internal/cycle":         true,
 		"internal/dataplane":     true,
 		"internal/envelope":      true,
+		"internal/ledger":        true,
 		"internal/db":            true,
 		"internal/observability": true,
 		"internal/snapshot":      true,

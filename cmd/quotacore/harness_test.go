@@ -30,6 +30,7 @@ import (
 	"github.com/quotacore/quotacore/internal/cycle"
 	"github.com/quotacore/quotacore/internal/dataplane"
 	"github.com/quotacore/quotacore/internal/db"
+	"github.com/quotacore/quotacore/internal/ledger"
 	"github.com/quotacore/quotacore/internal/store"
 )
 
@@ -103,6 +104,29 @@ func (c *capturedEvents) count() int {
 	return len(c.events)
 }
 
+// since is the events enqueued after the first n.
+func (c *capturedEvents) since(n int) []dataplane.Event {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]dataplane.Event(nil), c.events[n:]...)
+}
+
+// ledgerRow is one usage_events row as a test compares it.
+type ledgerRow struct {
+	ID         string
+	Feature    string
+	Type       string
+	Source     string
+	Delta      int64
+	Balance    int64
+	Index      int64
+	Start      time.Time
+	RequestID  string
+	ClientKey  string
+	Metadata   string
+	OccurredAt time.Time
+}
+
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -144,6 +168,10 @@ type stackOptions struct {
 	adminStore func(*db.Admin) admin.Store
 	// logs, when set, is where the stack logs, so two stacks can share one.
 	logs *syncBuffer
+	// appender wraps the ledger's Postgres appender, e.g. to stall it.
+	appender func(*db.Ledger) ledger.Appender
+	// noWriter leaves the ledger writer unstarted.
+	noWriter bool
 }
 
 func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
@@ -203,6 +231,11 @@ func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
 	if o.adminStore != nil {
 		aopt.adminStore = o.adminStore(db.NewAdmin(conn))
 	}
+	aopt.appender = o.appender
+	aopt.noWriter = o.noWriter
+	// Retention's first tick waits an hour in a test, so it never prunes a
+	// test's rows unless the test calls it.
+	aopt.retentionFirstRun = time.Hour
 	app, err := assemble(ctx, cfg, log, conn, data, func() bool { return true }, events, aopt)
 	if err != nil {
 		t.Fatal(err)
@@ -210,6 +243,9 @@ func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
 	t.Cleanup(app.Close)
 	reg := prometheus.NewRegistry()
 	if err := app.Plane.Register(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Ledger.Metrics().Register(reg); err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(app.Handler)
@@ -607,6 +643,47 @@ func hostOf(t *testing.T, raw string) string {
 	return u.Host
 }
 
+// ledger flushes the sink and returns the tenant's usage_events rows in the
+// order they were written.
+func (s *stack) ledger(tn tenant) []ledgerRow {
+	s.t.Helper()
+	s.flush()
+	rows, err := s.seedDB.QueryContext(context.Background(), `
+SELECT u.id::text, f.key, u.event_type::text, u.source::text, u.delta, u.balance_after, u.cycle_index,
+       coalesce(u.cycle_start, 'epoch'), coalesce(u.request_id, ''), coalesce(u.idempotency_key, ''),
+       coalesce(u.metadata::text, ''), u.created_at
+  FROM usage_events u JOIN features f ON f.id = u.feature_id
+ WHERE u.tenant_id = $1 ORDER BY u.seq`, tn.ID)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []ledgerRow
+	for rows.Next() {
+		var r ledgerRow
+		if err := rows.Scan(&r.ID, &r.Feature, &r.Type, &r.Source, &r.Delta, &r.Balance, &r.Index, &r.Start,
+			&r.RequestID, &r.ClientKey, &r.Metadata, &r.OccurredAt); err != nil {
+			s.t.Fatal(err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		s.t.Fatal(err)
+	}
+	return out
+}
+
+// flush waits until every event enqueued so far is written, dropped or
+// dead-lettered, so a test reads the ledger table without polling it.
+func (s *stack) flush() {
+	s.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := s.app.Ledger.Flush(ctx); err != nil {
+		s.t.Fatalf("flush the ledger: %v", err)
+	}
+}
+
 func (s *stack) counter(name string, labels ...string) float64 {
 	s.t.Helper()
 	families, err := s.reg.Gather()
@@ -623,6 +700,9 @@ func (s *stack) counter(name string, labels ...string) float64 {
 				if i >= len(labels) || l.GetValue() != labels[i] {
 					continue metric
 				}
+			}
+			if m.Gauge != nil {
+				return m.GetGauge().GetValue()
 			}
 			return m.GetCounter().GetValue()
 		}

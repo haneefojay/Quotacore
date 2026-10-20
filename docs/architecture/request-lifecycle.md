@@ -160,6 +160,18 @@ gap; a double charge is neither (FS-10, A-16).
 **Forbidden:** waiting for the write, making the write part of the response, or silently
 swallowing the failure without a counter.
 
+> **Amended 2026-10-20 (`IP-12`) — what a write error does.** "On a full queue or a write error, the
+> event is dropped" is now three cases. A full queue drops the event (`reason="queue_full"`). A
+> transient write error — a lost connection, a timeout — holds the batch and retries it with backoff,
+> so the events already taken survive a short Postgres outage and new ones drop only as the queue
+> fills. A row the ledger refuses outright, including a second deduction under one idempotency key,
+> is kept in the dead-letter table, visible and, unless it is a duplicate, replayed (INV-U3,
+> [data-model.md](../architecture/data-model.md#212-usage-event-dead-letters)); only a row that
+> cannot even be dead-lettered is dropped as `reason="error"`. An event still queued when the
+> process stops after its grace is dropped as `reason="shutdown"`. When the request rolled a window,
+> the rollover's own `cycle_rolled_over` event is enqueued first, so it precedes the request's event
+> in the ledger's order.
+
 ### Step 10 — Observe  · off-path
 
 Emit the metrics, one structured log line, and an optional trace span. Cardinality rules in

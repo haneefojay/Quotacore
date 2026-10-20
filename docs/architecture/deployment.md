@@ -149,6 +149,34 @@ reading the source.
 | `QUOTACORE_AUDIT_RETENTION_DAYS` | `400` | Q-09 |
 | `QUOTACORE_RETENTION_INTERVAL` | `1h` | Batched, with a statement timeout |
 
+> **Amended 2026-10-20 (`IP-12`).** The service now reads all six. A queue or batch size below 1, a
+> batch larger than the queue, a flush interval outside 1 ms to 10 s, a negative retention or a
+> retention interval under a minute refuses to start. A retention of `0` keeps that table's rows
+> indefinitely. A transient write error holds the batch and retries it with backoff, so a Postgres
+> outage fills the queue and drops *new* events as `queue_full` rather than losing the ones already
+> taken; a row the ledger refuses outright is dead-lettered
+> ([data-model.md](data-model.md#212-usage-event-dead-letters)). The writer has its own pool of two
+> connections, so a slow ledger cannot take the admin pool or the snapshot's miss read
+> ([performance.md](performance.md#5-the-ways-this-becomes-slow)).
+>
+> **Retention and long cycles.** Deletion is by age only. A cycle longer than
+> `QUOTACORE_EVENT_RETENTION_DAYS` — a yearly or `never` entitlement under the 90-day default —
+> loses its earliest rows, and a rebuild of that cycle from the ledger
+> ([consistency-and-recovery.md](consistency-and-recovery.md#41-data-store-lost-or-corrupted--total-loss))
+> is then not exact. Where exact rebuild matters, set the event retention above the longest interval
+> in use: 366 days covers a yearly plan.
+>
+> **Exporting before retention deletes (Q-20).** The ledger table is the interface; there is no
+> export pipeline in v0.1. A deployment that must keep events longer than the retention copies
+> them out with one documented query, run on its own schedule before the job's cutoff:
+>
+> ```text
+> COPY (SELECT id, seq, tenant_id, feature_id, cycle_start, cycle_index, delta, balance_after,
+>              source, event_type, request_id, idempotency_key, metadata, created_at
+>         FROM usage_events WHERE created_at >= :from AND created_at < :to ORDER BY seq)
+>   TO STDOUT WITH (FORMAT csv, HEADER)
+> ```
+
 ### 4.5 Rate limiting
 
 | Variable | Default | Notes |

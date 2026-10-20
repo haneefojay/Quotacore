@@ -204,6 +204,9 @@ type Event struct {
 	Seq      int64
 	Index    int64
 	Interval string
+	// Start is the cycle_start the writer stored with the row, zero for a row
+	// written before IP-12 (S5).
+	Start time.Time
 }
 
 // EventPage is a page of one tenant's ledger, with the anchor and zone the
@@ -354,6 +357,16 @@ type StatusInfo struct {
 	Cache func() contract.CacheStats
 	// ProbeTimeout bounds each dependency probe (S9).
 	ProbeTimeout time.Duration
+	// Ledger reports the ledger queue and writer; nil reports an empty queue,
+	// a stopped writer and no drops.
+	Ledger LedgerStatus
+}
+
+// LedgerStatus is what status reads from the ledger sink (IP-12 D8).
+type LedgerStatus interface {
+	Depth() int
+	State() string
+	Dropped() int64
 }
 
 // Service serves the admin routes.
