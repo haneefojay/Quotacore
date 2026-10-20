@@ -41,7 +41,7 @@ deliberately to stay inside the common subset.
 | `EVALSHA`, `EVAL`, `SCRIPT LOAD` | The atomic transition | Yes. Core to the protocol and the reason this design is portable at all |
 | `HGET`, `HSET`, `HMGET`, `HINCRBY` | The balance hash | Yes. Long-standing, no module dependency |
 | `GET`, `SET` with `EX` | The idempotency record | Yes |
-| `EXPIREAT`, `PTTL` | Cycle garbage collection | Yes |
+| `PERSIST`, `PTTL` | Holding a balance hash without an expiry (`EXPIREAT` until 2026-10-20, INV-C3) | Yes |
 | `PUBLISH`, `SUBSCRIBE` | Configuration invalidation | Yes |
 | `PING`, `INFO`, `DBSIZE` | Health and status | Yes |
 | `SCAN` | Keyspace inspection, CLI only | Yes |

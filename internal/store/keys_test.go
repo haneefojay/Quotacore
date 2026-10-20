@@ -4,7 +4,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -118,24 +117,5 @@ func TestKeyBuilderRejectsUnsafeParts(t *testing.T) {
 	}
 	if _, err := TenantKey(tenant, KeyKind("b:ad"), "f"); !errors.Is(err, ErrBadKeyPart) {
 		t.Errorf("a kind containing a colon must be refused, got %v", err)
-	}
-}
-
-// TestKeyExpiryMatchesTheWindowRule asserts the TTL column of the layout table
-// (data-model.md section 3.1): window_end + 24h, and none for a `never`
-// entitlement. The PTTL half of the same rule is asserted inside the scripts in
-// IP-05; this is the Go side.
-func TestKeyExpiryMatchesTheWindowRule(t *testing.T) {
-	end := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	got, ok := KeyExpiry(&end)
-	if !ok {
-		t.Fatal("a bounded window must have an expiry")
-	}
-	want := end.Add(24 * time.Hour)
-	if !got.Equal(want) {
-		t.Errorf("KeyExpiry = %v, want %v", got, want)
-	}
-	if _, ok := KeyExpiry(nil); ok {
-		t.Error("a `never` entitlement must have no expiry (DR-008)")
 	}
 }

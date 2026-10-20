@@ -527,12 +527,12 @@ func TestTheReplyIsTheStateTheStoreHolds(t *testing.T) {
 		}
 	})
 
-	t.Run("a stale call still sets the expiry of the window that is stored", func(t *testing.T) {
+	t.Run("a stale call still clears the expiry of the hash it reads", func(t *testing.T) {
 		// The stored window closed an hour ago, so the caller at index 5 is
-		// ahead of a store at 4 and is answered stale. The expiry belongs to the
-		// window the key really holds, and a stale caller must not be the reason
-		// a key that was written without one stays without one.
-		_ = s.Client().Persist(ctx, key).Err()
+		// ahead of a store at 4 and is answered stale. A balance hash never
+		// expires (INV-C3, as amended 2026-10-20), and a stale caller must not
+		// be the reason a hash an earlier binary wrote with an expiry keeps it.
+		_ = s.Client().Expire(ctx, key, time.Hour).Err()
 		out, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1, IdempotencyKey: idemKey(t),
 			Window: fixedWindow(9, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at})
 		if err != nil {
@@ -545,8 +545,8 @@ func TestTheReplyIsTheStateTheStoreHolds(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PTTL: %v", err)
 		}
-		if pttl <= 0 {
-			t.Errorf("PTTL = %s, want a positive expiry: the expiry is set on every call, and a stale verdict is a call (INV-X5)", pttl)
+		if pttl != -1 {
+			t.Errorf("PTTL = %s, want no expiry: the expiry is cleared on every call, and a stale verdict is a call", pttl)
 		}
 	})
 }
@@ -731,9 +731,9 @@ func TestDefinitionOfDoneItemSixABalanceThatIsNotThereIsNeverCreated(t *testing.
 }
 
 // TestDefinitionOfDoneItemSevenTheKeyOutlivesItsWindow is the expiry rule: a
-// finite window's key lives until 24 hours after the window closes, which is
-// strictly later than any rollover could need it, and an entitlement that never
-// resets has a key that never expires (INV-X6, DR-048).
+// balance hash never expires, whether its window ends or not, so an idle
+// tenant is never left without one (INV-C3 and INV-X6, as amended 2026-10-20;
+// it said window_end + 24h until then).
 func TestDefinitionOfDoneItemSevenTheKeyOutlivesItsWindow(t *testing.T) {
 	s, runner := integrationRunner(t)
 	ctx := context.Background()
@@ -744,36 +744,20 @@ func TestDefinitionOfDoneItemSevenTheKeyOutlivesItsWindow(t *testing.T) {
 		key := keyFor(t, feature)
 		end := at.Add(23 * time.Hour)
 		seed(t, s, key, state{Balance: 10, Limit: 100, Index: 5, Start: at.Add(-time.Hour), End: &end})
+		// The expiry an earlier binary wrote, window_end + 24h, which removed an
+		// idle tenant's hash a day after its window closed.
+		_ = s.Client().ExpireAt(ctx, key, end.Add(24*time.Hour)).Err()
 		_, err := runner.Consume(ctx, Request{TenantID: testTenant, FeatureKey: feature, Amount: 1, IdempotencyKey: idemKey(t),
 			Window: fixedWindow(5, at.Add(-time.Hour), 24*time.Hour), Limit: 100, At: at})
 		if err != nil {
 			t.Fatalf("Consume: %v", err)
 		}
-		want := end.Add(24 * time.Hour)
-		// PTTL is answered by the store at one instant and compared here at
-		// another, and EXPIREAT rounds the expiry down to a whole second, so the
-		// two ends of the call bound what the reading can legitimately be. The
-		// bounds are the two instants either side of the call plus a second of
-		// rounding; anything outside them is a figure the script did not write.
-		before := time.Now()
 		pttl, err := s.Client().PTTL(ctx, key).Result()
-		after := time.Now()
 		if err != nil {
 			t.Fatalf("PTTL: %v", err)
 		}
-		low, high := want.Sub(after)-time.Second, want.Sub(before)+time.Second
-		if pttl < low || pttl > high {
-			t.Errorf("PTTL = %s, want window_end + 24h, which is between %s and %s from now",
-				pttl, low.Truncate(time.Second), high.Truncate(time.Second))
-		}
-		if pttl <= time.Until(end) {
-			t.Errorf("PTTL = %s, and the key must outlive the window it serves", pttl)
-		}
-		// The Go side computes the same figure, so the two cannot drift without a
-		// test noticing.
-		exp, ok := store.KeyExpiry(&end)
-		if !ok || !exp.Equal(want) {
-			t.Errorf("store.KeyExpiry = %v, %v; want %v, true", exp, ok, want)
+		if pttl != -1 {
+			t.Errorf("PTTL = %s, want no expiry: a balance hash outlives every window it serves (INV-C3)", pttl)
 		}
 	})
 

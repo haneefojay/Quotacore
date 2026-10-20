@@ -513,7 +513,7 @@ multi-key script is single-slot (ADR-0002, A-11).
 
 | Key | Type | Contents | TTL |
 | --- | --- | --- | --- |
-| `qc:{t:<tenant_id>}:bal:<feature_key>` | hash | `balance`, `limit`, `bonus`, `cycle_index`, `window_start`, `window_end` | `window_end + 24h`, none if `never` |
+| `qc:{t:<tenant_id>}:bal:<feature_key>` | hash | `balance`, `limit`, `bonus`, `cycle_index`, `window_start`, `window_end` | none. Amended 2026-10-20: this was `window_end + 24h`, which locked out a tenant idle for a day past its window (INV-C3) |
 | `qc:{t:<tenant_id>}:idem:<key>` | string | the recorded decision state: the fingerprint, the transition verdict and the six balance fields (§3.3) | 24 h |
 | `qc:{t:<tenant_id>}:f:<feature_key>` | hash | rolling-window bucket counters (v0.2) | `window_end + 24h` |
 | `qc:{t:<tenant_id>}:w:<feature_key>` | string | rolling-window bucket boundary marker (v0.2) | `window_end + 24h` |
@@ -618,7 +618,7 @@ the interval is a tuned value with a metric rather than a constant.
 | INV-X3 | Every administrative mutation has an audit row in the same transaction | Transaction scope in the admin store |
 | INV-X4 | `cycle_index` never decreases under one anchor | The monotonic guard in the Lua transition, and the anchor being the only stored cycle state. Amended 2026-10-20 (`IP-10`): a re-anchor restarts the index at 0 (C-7) and a force-rollover can lower it (C-5); both are audited control-plane writes, and no data-plane path writes a smaller index |
 | INV-X5 | `balance <= limit + bonus` at every instant, for every key | The ceiling check inside the atomic script (DR-019) |
-| INV-X6 | No runtime key expires before its cycle could legitimately need it | TTL is `window_end + 24h`, strictly greater than any rollover requirement |
+| INV-X6 | No runtime key expires before its cycle could legitimately need it | A balance hash has no TTL. Amended 2026-10-20: the TTL was `window_end + 24h`, and an idle tenant could need its key after that (INV-C3) |
 | INV-X7 | A deleted tenant has no runtime keys within one refresh interval | Soft delete publishes an invalidation and the script refuses unknown or deleted tenants |
 | INV-X8 | Postgres and the runtime store never disagree about a *schedule*; they may transiently disagree about a *value* | Anchor is Postgres-only and the script recomputes from it, so a stale snapshot can only delay a reset, never skip or duplicate one |
 
@@ -637,7 +637,7 @@ corrected at the next cycle.
 | `audit_log` | One row per admin mutation | 400 days (Q-09) | Low volume, high value. Never dropped by API (DR-044) |
 | All configuration tables | Human changes | indefinite | Bounded by features × plans × tenants; small |
 | `qc:*:idem:*` | One key per logical operation | 24 h (DR-029) | The largest consumer in the fast store by a wide margin, and the one the sizing floor in [deployment.md](deployment.md#5-sizing) exists for. Bounded by TTL in time and by the throughput envelope in volume, and **never evicted** (DR-048) |
-| `qc:*:bal:*` | One key per tenant-feature | `window_end + 24h` | Self-limiting; no dangling keys accumulate beyond one cycle plus a day |
+| `qc:*:bal:*` | One key per tenant-feature | none | Bounded by tenants times the features each was ever entitled to. Amended 2026-10-20: this was `window_end + 24h` (INV-C3); a deleted tenant's and a retired feature's hashes now stay until removed, because deleting a hash on soft deletion would answer an in-flight request `503`, which T-15 does not permit |
 
 The retention job deletes in bounded batches with a `DELETE` using the time index, never a single
 unbounded statement, and it runs with a statement timeout. A retention job that locks a table for
