@@ -46,7 +46,10 @@ Three rules follow from these boundaries:
 
 1. **A semi-trusted component is not trusted with authority it does not need.** The reset worker
    holds a runtime-scoped credential and has no database access (INV-WK2). The ledger writer
-   appends and cannot mutate balances.
+   appends and cannot mutate balances. Amended 2026-10-20 (`IP-12`): that sentence is a source
+   check — `internal/ledger` imports no data-store, script or SQL package, and its SQL in
+   `internal/db` touches only `usage_events`, which it only inserts into, and the dead-letter
+   table (`TestTheWriterCanOnlyAppend`).
 2. **The data store is trusted, and that trust is total.** It is why a script execution is
    authoritative and why the ceiling invariant is enforced there rather than in Go. Anything that
    can write to Redis can mint free service, so the host's access to Redis is the security

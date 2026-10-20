@@ -131,7 +131,7 @@ func TestTheAdminSurfaceProvisionsWhatTheDataPlaneEnforces(t *testing.T) {
 		t.Fatalf("the tenant's audit = %s", mustJSON(audit))
 	}
 	st := mustStatus(t, s.adminDo(http.MethodGet, "/v1/admin/status", ""), http.StatusOK)
-	if str(st, "status") != "ok" || str(st, "worker") != "stopped" {
+	if str(st, "status") != "ok" || str(st, "worker") != "running" {
 		t.Errorf("status = %s", mustJSON(st))
 	}
 }

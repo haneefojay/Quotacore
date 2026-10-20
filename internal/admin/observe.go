@@ -96,7 +96,11 @@ func (s *Service) listEvents(w http.ResponseWriter, r *http.Request) {
 // window recomputes an event's cycle from the tenant's current anchor, zone
 // and cadence. It is null for an event older than the anchor, whose window
 // was defined by an anchor that has since been replaced, and for a feature
-// the tenant no longer holds; the end is null for a never entitlement.
+// the tenant no longer holds; the end is null for a never entitlement. It is
+// null too where the row's stored cycle_start names a different window: a
+// consume applied against a hash the re-anchor drain had not yet rewritten,
+// which the instant comparison cannot see (IP-12 S5). The hash holds its
+// window in milliseconds, so the two are compared at that precision.
 func window(anchor time.Time, loc *time.Location, e Event) (contract.NilTimestamp, contract.NilTimestamp) {
 	none := contract.NilTimestamp{Null: true}
 	if e.Interval == "" || time.Time(e.OccurredAt).Before(anchor) {
@@ -107,9 +111,15 @@ func window(anchor time.Time, loc *time.Location, e Event) (contract.NilTimestam
 		return none, none
 	}
 	if iv == cycle.Never {
+		if !e.Start.IsZero() && e.Start.UnixMilli() != anchor.UnixMilli() {
+			return none, none
+		}
 		return contract.NewNilTimestamp(contract.Timestamp(anchor.In(loc))), none
 	}
 	start := cycle.Add(anchor, iv, loc, e.Index)
+	if !e.Start.IsZero() && e.Start.UnixMilli() != start.UnixMilli() {
+		return none, none
+	}
 	end := cycle.Add(anchor, iv, loc, e.Index+1)
 	return contract.NewNilTimestamp(contract.Timestamp(start.In(loc))), contract.NewNilTimestamp(contract.Timestamp(end.In(loc)))
 }
@@ -138,24 +148,27 @@ func (s *Service) serveStatus(w http.ResponseWriter, r *http.Request) {
 	if !s.status.Started.IsZero() {
 		uptime = int64(now.Sub(s.status.Started) / time.Second)
 	}
+	// The ledger's queue, writer and drops, for this instance (IP-12 D8). With
+	// no ledger wired, the honest values are an empty queue, a stopped writer
+	// and no drops.
+	depth, worker, dropped := int64(0), contract.StatusWorkerStopped, int64(0)
+	if l := s.status.Ledger; l != nil {
+		depth, worker, dropped = int64(l.Depth()), contract.StatusWorker(l.State()), l.Dropped()
+	}
 	respond(w, r, http.StatusOK, &contract.Status{
 		Status:  status,
 		Version: s.status.Version,
 		Commit:  s.status.Commit,
 		// The zone database is the one embedded by the toolchain that built
 		// the binary (time/tzdata), so the toolchain's release names it.
-		ZoneDataVersion: runtime.Version(),
-		ServerTime:      contract.Timestamp(now.UTC()),
-		UptimeS:         uptime,
-		Dependencies:    deps,
-		Cache:           cache,
-		// No queue, reset worker or ledger writer exists yet: IP-12 builds the
-		// ledger writer and its queue, and the reset worker belongs to no v0.1
-		// phase (the IP-09 plan's section 6). Until then the honest values are
-		// an empty queue, no drops and a worker that is not running.
-		QueueDepth:         0,
-		Worker:             contract.StatusWorkerStopped,
-		LedgerDroppedTotal: 0,
+		ZoneDataVersion:    runtime.Version(),
+		ServerTime:         contract.Timestamp(now.UTC()),
+		UptimeS:            uptime,
+		Dependencies:       deps,
+		Cache:              cache,
+		QueueDepth:         depth,
+		Worker:             worker,
+		LedgerDroppedTotal: dropped,
 	})
 }
 

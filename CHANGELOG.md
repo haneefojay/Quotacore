@@ -12,6 +12,27 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **The usage ledger, its writer and its retention (`IP-12`).** `internal/ledger` is a bounded queue
+  the request path hands each event to without waiting, and one writer per process that appends in
+  batches through its own two-connection pool. A full queue drops and counts (`queue_full`); a lost
+  connection holds the batch and retries with capped backoff; a refusal is bisected to its row and
+  kept as a dead letter. The writer mints a UUIDv7 `event_id` at enqueue and inserts with `ON
+  CONFLICT DO NOTHING`, so a redelivery changes nothing. `/v1/admin/status` reports the queue's depth,
+  the writer's state and the drops; a shutdown writes what is queued within the grace.
+- Migration `00010`: `usage_events.cycle_start`, a BRIN index on `created_at`, and
+  `usage_event_dead_letters`. The retention job runs in every instance, prunes `usage_events` after
+  `QUOTACORE_EVENT_RETENTION_DAYS` (90) and `audit_log` after `QUOTACORE_AUDIT_RETENTION_DAYS` (400)
+  in batches of 5 000 under one advisory lock, every `QUOTACORE_RETENTION_INTERVAL` (1h), and replays
+  rejected dead letters on each tick. `QUOTACORE_EVENT_QUEUE_SIZE`, `QUOTACORE_EVENT_BATCH_SIZE` and
+  `QUOTACORE_EVENT_FLUSH_INTERVAL` size the queue.
+- Eight ledger metrics: enqueued, written, dropped by reason, queue depth, write latency, duplicates
+  detected, dead-lettered by reason, and dead letters outstanding.
+- Every rollover is a row. The six scripts that share the transition answer a ninth value, the
+  balance the rollover discarded, and whichever request rolled, a check or a refused refund included,
+  hands the sink a `system` `cycle_rolled_over` before its own event.
+- Integration tests for the eight DoD items against the rows the writer appended, and real-row
+  assertions in T-01, T-02, T-08, the admin error matrix and the plan-change test.
+
 - **Plan lifecycle and cycle-boundary semantics (`IP-10`).** `internal/admin` serves the eight
   operations that move a balance or a boundary: the plan entitlement edit, apply-now, impact, a
   tenant's plan change, grant, set, force-rollover, and setting and clearing an override. A plan edit
@@ -241,6 +262,28 @@ exists, because a future implementer needs to know which statements are new.
   different `QUOTACORE_IDEMPOTENCY_TTL` — by a test on each boundary.
 
 ### Changed
+
+- **`IP-12` is `COMPLETE`**, opened 2026-10-20 before any file it owns existed and closed the same day
+  with 8 of 8 DoD items met. `IP-11` and `IP-14` are now `NOT STARTED`. A force-rollover reopens the
+  cycle it is in, so data-model §2.7's reconciliation identity reads from a cycle's last opening.
+  `force_rolled_over` carries its reason in `metadata`, and the events route answers a null window
+  for a row stored against a start the tenant's anchor does not compute. `Q-24` is added with a
+  default: an immediate override's balance move is written as `plan_changed`.
+
+- The specification and contract amendments the ledger needs (`IP-12`). `usage_events` gains
+  `cycle_start` and a BRIN index on `created_at`, and a cycle is `(tenant, feature, cycle_start,
+  cycle_index)`, opened by its `cycle_rolled_over`, `plan_changed` or `force_rolled_over` row or, with
+  none, at the effective limit; a new `usage_event_dead_letters` table keeps what the ledger refuses.
+  The writer mints `event_id` and writes `created_at` from the instant the request accepted.
+  request-lifecycle step 9 distinguishes a full queue, a transient write error (held and retried) and
+  a refusal (dead-lettered). A check that rolls a window emits the rollover (IP-07 item 2). DR-049,
+  T-14 and consistency-and-recovery §4.1 read the detected duplicate as a second deduction under one
+  idempotency key, not a repeated `event_id`; §5's `verify-tenant` formula no longer counts a grant
+  twice. `Status.queue_depth` and `worker` describe the ledger queue and writer, and
+  `listUsageEvents` no longer promises `system` gap events that §4.5 forbids. IP-12's DoD 3, 4, 7
+  and 8 are read for the writer by dated notes, since they cite webhook and reset-worker
+  invariants. `Q-09`, `Q-20` and `Q-22` are answered with their defaults. There is no replica in
+  v0.1 (ROADMAP, ARCHITECTURE).
 
 - **`IP-10` is `COMPLETE`**, opened 2026-10-20 after `IP-09` closed, before any file it owns
   existed, and closed the same day with 9 of 9 DoD items met. Item 4 is read by DR-015's body, and
@@ -573,6 +616,15 @@ exists, because a future implementer needs to know which statements are new.
   point-in-time records they are.
 
 ### Fixed
+
+- **A consume of zero answered `503`** (`IP-05`). consume.lua passed the negated amount to
+  `HINCRBY`, and Lua renders the negation of zero as `-0`, which Redis refuses as not an integer, so
+  DR-023's valid zero-amount request failed as a store fault. The increment is formatted as an
+  integer.
+
+- **An immediate override moved a balance with no ledger event** (`IP-10`). The relimit applied the
+  change in limit to the balance and discarded the script's answer. The move is now handed to the
+  ledger as `plan_changed`, and a rollover its transition applied as `cycle_rolled_over`.
 
 - **`TestArchivingAFeaturePreservesItsBalance` failed about one run in fifteen** (`IP-09`). It
   waited for the archive to reach the data plane by consuming, and a consume that landed before the

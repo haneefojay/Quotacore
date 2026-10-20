@@ -1501,7 +1501,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p>The route that decides whether a team keeps the product, because the first time a<br>customer disputes a deduction is the first time anyone evaluates it (UC-16).</p>
 <p>Each event shows the instant, the signed <code>delta</code>, the <code>balance_after</code>, the cycle window,<br>the <code>source</code> and the <code>request_id</code>. Summing the deltas for a cycle and comparing with the<br>reported balance is the reconciliation an operator performs by hand, and it is why<br><code>balance_after</code> is stored rather than recomputed (DR-042).</p>
 <p>For a specific disputed charge, filter by the customer&#39;s <code>Idempotency-Key</code> to see the<br>recorded outcome, which is how you prove whether a call was applied once or twice.</p>
-<p>A known limitation, stated here because a silently incomplete history is worse than a<br>documented one: events are delivered to the external sink <strong>best effort and at-least-once</strong>.<br>Where the sink could not deliver, <code>system</code> events record the gap and the drop counter in<br><code>GET /v1/admin/status</code> is non-zero (ADR-0016).</p>
+<p>A known limitation, stated here because a silently incomplete history is worse than a<br>documented one: events are appended to the ledger <strong>best effort and at-least-once</strong>, and a<br>consumer deduplicates on <code>id</code>. Where an event could not be appended, nothing is written in<br>its place; the gap is recorded by <code>ledger_dropped_total</code> in <code>GET /v1/admin/status</code> and by<br><code>quotacore_event_sink_dropped_total</code> (ADR-0016).</p>
 <p class="muted">Operation ID: <code>listUsageEvents</code></p>
 <h4>Authorisation</h4>
 <p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
@@ -2742,11 +2742,11 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>dependencies</code></td><td><code>array</code></td><td>yes</td><td><p>One row per dependency, and the reason to read this endpoint at all: the detail behind<br>the one word in <code>status</code>.</p>
 </td></tr>
 <tr><td><code>cache</code></td><td><a href="#schema-cachestats"><code>CacheStats</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>queue_depth</code></td><td><code>integer (int64)</code></td><td>yes</td><td><p>The reset worker&#39;s queue depth (ADR-0003).</p>
+<tr><td><code>queue_depth</code></td><td><code>integer (int64)</code></td><td>yes</td><td><p>The ledger queue&#39;s current depth on the instance that answered: events accepted and<br>not yet written. Growth toward <code>QUOTACORE_EVENT_QUEUE_SIZE</code> means the writer is behind,<br>and drops follow (ADR-0016).</p>
 </td></tr>
-<tr><td><code>worker</code></td><td><code>string</code></td><td>yes</td><td><p>The reset worker&#39;s state, so a stalled rollover is visible before a customer&#39;s balance is wrong.</p>
+<tr><td><code>worker</code></td><td><code>string</code></td><td>yes</td><td><p>The ledger writer&#39;s state on the instance that answered: <code>running</code>, <code>draining</code> while a<br>shutdown writes what is queued, and <code>stopped</code> before it starts or after it has drained.</p>
 </td></tr>
-<tr><td><code>ledger_dropped_total</code></td><td><code>integer (int64)</code></td><td>yes</td><td><p>Ledger events the external sink failed to accept. **Non-zero means the downstream<br>history is incomplete**, and that is reported rather than hidden, because a silently<br>incomplete history is worse than a documented one (ADR-0016).</p>
+<tr><td><code>ledger_dropped_total</code></td><td><code>integer (int64)</code></td><td>yes</td><td><p>Ledger events this instance dropped since it started, over every reason. **Non-zero<br>means the history is incomplete**, and that is reported rather than hidden, because a<br>silently incomplete history is worse than a documented one (ADR-0016). An event the<br>ledger refused is kept as a dead letter, not counted here.</p>
 </td></tr>
 </table>
 <h3 id="schema-healthresponse">HealthResponse</h3>

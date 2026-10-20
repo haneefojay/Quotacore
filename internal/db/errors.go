@@ -131,6 +131,10 @@ var constraints = map[string]constraintRule{
 	"tenant_pins_retired_limit_range":       {err: &Error{Code: api.ErrorCodeInternalError, Reason: "retired limit"}},
 	"tenant_pins_retired_until_needs_limit": {err: &Error{Code: api.ErrorCodeInternalError, Reason: "retired pin"}},
 	"pending_reanchors_kind":                {err: &Error{Code: api.ErrorCodeInternalError, Reason: "re-anchor kind"}},
+	// A dead letter is written by the ledger writer under the event's own id,
+	// and only with one of the two reasons, so any refusal is a bug.
+	"usage_event_dead_letters_pkey":   {err: &Error{Code: api.ErrorCodeInternalError, Reason: "primary key"}},
+	"usage_event_dead_letters_reason": {err: &Error{Code: api.ErrorCodeInternalError, Reason: "dead-letter reason"}},
 
 	// Unique keys a caller chooses.
 	"features_key_key":        {err: ErrFeatureKeyExists},

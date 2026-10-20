@@ -24,10 +24,10 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-08` | Control-plane schema and migrations | `IP-02` | `COMPLETE`, 2026-10-19 |
 | `IP-09` | Control-plane API and API keys | `IP-08` | `COMPLETE`, opened 2026-10-19, closed 2026-10-20 |
 | `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `COMPLETE`, opened and closed 2026-10-20 |
-| `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `BLOCKED` |
-| `IP-12` | Usage ledger, writer and archiver | `IP-08` | `NOT STARTED` |
+| `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `NOT STARTED` |
+| `IP-12` | Usage ledger, writer and archiver | `IP-08` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-13` | Observability | `IP-07` | `NOT STARTED` |
-| `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `BLOCKED` |
+| `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `NOT STARTED` |
 | `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `BLOCKED` |
 | `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `BLOCKED` on `IP-11`, `IP-15` |
 
@@ -937,6 +937,12 @@ with the codes and labels the catalogue assigns.
    > window it reports is current; it never deducts, records or emits. The call site is proved here:
    > a check hands the event sink nothing. The `usage_events` rows are `IP-12`'s, in the form `IP-05`
    > amended T-01 and T-08.
+   >
+   > **Amended 2026-10-20 (`IP-12`) — a check that rolls emits the rollover.** DR-042 and U-6 make a
+   > rollover an event, and a check can be the request that rolls; if it emitted nothing, the ledger
+   > would have no record of that boundary. So a check never deducts or records, and across a closed
+   > boundary it hands the sink exactly one `cycle_rolled_over` event, the one the transition it
+   > applied produced. Inside a cycle it still hands over nothing (DR-024).
 3. `GET /v1/balance` returns `cycle_start` and `cycle_end` as RFC 3339 instants with offsets, in the
    tenant's zone, and `cycle_end` is `null` for a `never` entitlement (INV-C6).
 4. `balance < amount` is `429 quota_exceeded`, and the service's own protective limit is
@@ -1332,6 +1338,8 @@ Seven things are recorded here because the phase surfaced them.
   one already written.
 - **An immediate override rewrites the hash's limit and emits no ledger event**, because no balance
   moves; the limit is read back from the audit row.
+  > **Amended 2026-10-20 (`IP-12`).** The balance does move, by the change in limit (D6), and
+  > `IP-12` writes the move as `plan_changed` (`Q-24`).
 - **Impact's `503` is the control plane's only.** It reads Postgres and nothing else, so its
   matrix row lists `control_plane_unavailable` and no longer `service_unavailable`, and it refuses a
   query parameter rather than read one as a preview it does not compute.
@@ -1352,7 +1360,8 @@ separate phases.
 
 ## IP-11 — Idempotency detection and reconciliation
 
-**Status** `BLOCKED`, gated on `IP-12`; `IP-07` closed on 2026-10-19.
+**Status** `NOT STARTED`; `IP-07` closed on 2026-10-19 and `IP-12` on 2026-10-20, so nothing gates
+this phase.
 
 **Objective.** The control plane's half of the idempotency claim: notice when a data-plane record
 and the ledger disagree, rather than preventing it again.
@@ -1397,7 +1406,9 @@ reconciliation says which tenants cannot be answered.
 
 ## IP-12 — Usage ledger, writer and archiver
 
-**Status** `NOT STARTED`; `IP-08` closed on 2026-10-19 and nothing else gates this phase.
+**Status** `COMPLETE`, opened and closed 2026-10-20. `IP-08` closed on 2026-10-19 and nothing else
+gated this phase. All 8 DoD items are met, each closed by a test in the evidence table below; items
+3, 4, 7 and 8 carry dated notes reading the invariants they cite for the ledger writer.
 
 **Objective.** One signed event per applied mutation, written off the request path, retained by
 policy, and never able to slow enforcement down.
@@ -1431,18 +1442,82 @@ policy, and never able to slow enforcement down.
 4. Duplicate delivery is possible by design and every payload carries an `event_id` for the consumer
    to deduplicate on; a test delivers each event twice and asserts the consumer's result is
    unchanged (INV-W1).
+   > **Amended 2026-10-20 (`IP-12`) — items 3 and 4 cite webhook invariants.** INV-W1 and INV-W2 are
+   > v0.3 webhook delivery's ([state-machines.md](../product/state-machines.md) §10). They are read
+   > for the ledger here — an enqueue that never blocks, and an `event_id` the consumer deduplicates
+   > on, where the first consumer is the ledger table itself — and stay `IP-21`–`IP-23`'s as written.
 5. A dead-lettered event is visible and replayable, never silently dropped (INV-U3).
 6. Retention is applied by a background job on a configured schedule, and the job is what removes
    rows (DR-044, NFR-C6). No API call deletes an event.
 7. The writer holds a runtime-scoped credential and has no direct database access (INV-WK2).
+   > **Amended 2026-10-20 (`IP-12`) — INV-WK2 is the reset worker's.** A ledger writer is the
+   > component that appends to Postgres (ADR-0016), so it cannot have no database access.
+   > [security-model.md](../architecture/security-model.md) §2 states the writer's own rule in the
+   > same sentence as INV-WK2: it appends and cannot mutate balances. The item is closed by that rule,
+   > as a source check: the writer's package imports no data-store, script or SQL package, and its SQL
+   > only inserts into `usage_events`. INV-WK2 is not changed.
 8. Deleting or stalling the writer, or running it twice, changes no enforcement outcome
    (INV-WK1).
+   > **Amended 2026-10-20 (`IP-12`).** INV-WK1 is the reset worker's too, and its property is read
+   > for the writer: stopped, stalled, or running in two instances against one database, it changes
+   > no enforcement outcome and writes no row twice.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The rows
+marked `(integration)` need real valkey and Postgres 16 and run in CI's `service` job; the ones in
+`cmd/quotacore` read the rows the real writer appended, after a flush of the sink, and never poll
+with a request.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestEveryAppliedMutationAppendsOneEvent` (integration), `TestTheSinkRefusesAZeroDelta` (integration), `TestTheLedgerAppendsWhatItIsGivenOnce` (integration), with `IP-08`'s `TestTheLedgerAndAuditConstraintsRefuseWhatTheyShould` | U-1 to U-7 through their routes, and U-6 through a consume, a refund refused at the ceiling, a check, a grant and a set that each cross a boundary: no row, two rows, or a row whose type, source, delta, `balance_after`, window, request id, idempotency key or instant is not the operation's; a zero-amount consume, a `set` to the current value or a rollover with nothing consumed writing a row; a zero delta queued by the sink (INV-U1, INV-X2, DR-042, Q-22) |
+| 2 | `TestTheLedgerReconcilesEveryCycle` (integration), `TestAnImmediateOverrideIsWrittenAsAPlanChange` (integration) | Over four tenants on hourly, monthly and `never` features, 300 seeded random consumes, refunds, checks, grants, sets, force-rollovers, plan changes, an apply-now and boundary crossings: a cycle whose last `balance_after` is not its last opening plus the deltas after it, or a current cycle that does not end at the hash's balance; an immediate override's balance move missing from the ledger (D1, DR-042, data-model §2.7, Q-24) |
+| 3 | `TestLedgerSaturationLeavesEnforcementAlone` (integration), `TestEnqueueNeverBlocks`, `TestAnEnqueueOnAFullQueueIsCheap` | With the writer stalled behind an `ACCESS EXCLUSIVE` lock and a queue of 64: any of 2 000 consumes answered other than with the balance a ledger-less run gives, `queue_full` drops not equal to the overflow, a depth other than the cap, or a p99 more than 50 % plus 2 ms above the unlocked runs'. An `Enqueue` on a full queue that blocks, allocates, or takes more than 50 µs at p99 over 100 000 calls (FS-10) |
+| 4 | `TestEveryEventIsWrittenOnceWhenDeliveredTwice` (integration), `TestTheWriterRetriesATransientFailure` | Each event delivered twice in one batch, again in a second batch, and again after a commit whose acknowledgement was lost: a row count other than the distinct events, a dead letter, or a duplicate counted (D2) |
+| 5 | `TestADeadLetterIsVisibleAndReplayed` (integration), `TestARejectedEventIsKeptAndReplayed` (integration), `TestAPermanentFailureIsBisectedToItsRow` | An event naming no feature and a second deduction under one key: either written, lost, or missing from the dead letters with its reason, its counter, its gauge or a log line naming its `event_id`; the rejected one not replayed exactly once after the feature exists, or the duplicate ever replayed (INV-U3, D6) |
+| 6 | `TestRetentionRemovesOnlyExpiredRows` (integration), `TestNoRouteReachesRetention`, `TestNoAuditOrLedgerRowIsRewritten` | Rows at 89, 91, 399, 401 and 402 days: a tick deleting a younger row or keeping an older one, a batch above its size, two instances deleting twice, a `0` deleting anything, or a delete before the first tick; any caller of the job outside its start in `cmd/quotacore`; a deletion from the two tables in any file but `retention.go` (DR-044, NFR-C6, INV-U2) |
+| 7 | `TestTheWriterCanOnlyAppend` | `internal/ledger` importing a data-store, script, `internal/db` or SQL package, or `internal/db/ledger.go` saying anything but an insert into the two ledger tables, the replay's removal and re-count of a dead letter, and reads (D5, security-model §2) |
+| 8 | `TestTheWriterIsAnOptimisation` (integration), `TestShutdownWritesWhatIsQueued`, `TestACancelledWriterCountsWhatItLeaves` | A fixed sequence of consumes, refunds, checks, grants and a boundary crossing answered differently, or leaving different balances, with the writer healthy, never started, stalled, or in two instances on one database; two instances writing a row twice; a shutdown that loses a queued event uncounted |
+| — | `TestStatusReportsTheLedger` (integration) | `Status.worker`, `queue_depth` and `ledger_dropped_total` not reporting `running`, a full queue and its drops under a stall, `draining` during a shutdown and `stopped` after it (`IP-09` hand-on, D8) |
+| — | `TestListUsageEventsReadsWhatTheWriterWrote` (integration) | The events route over writer-produced rows rendering a window the anchor does not compute, a non-null window for a row stored against another start (S5), or for a row an older anchor defined (`IP-09` hand-on) |
+| — | `TestAnIdleTenantRollsOnceAndEmitsOneEvent` (integration) | A tenant idle across three boundaries granted more than one allowance, or the ledger gaining other than one `cycle_rolled_over` whose index jumps by three (v0.1 exit criterion) |
+| — | `TestCheckAcrossABoundaryOnlyRolls`, `TestCheckChangesNothingInsideACycle`, `TestT01TwoHundredConsumesOverHTTP`, `TestT02FiftyDeliveriesOverHTTP`, `TestT08EveryRefusalChangesNothing`, `TestAdminEndpointErrorMatrix`, `TestAPlanChangeIsAHardReset` (integration) | The obligations `IP-05`, `IP-06`, `IP-07` and `IP-10` handed here, against real rows: a check writing a row inside a cycle or other than one rollover across a boundary; T-01's rows other than 100 summing to −100; T-02's other than one; any refusal, data plane or admin, writing a row or a dead letter; the plan change's `+200` missing |
+| — | `TestDecodeReadsEveryShapeAScriptCanAnswerWith`, `TestDecodeRefusesAnythingItDoesNotUnderstand`, `TestT06MissedBoundariesSkippedIsNotMissed`, `TestOnlyOneOfManyConcurrentCallersRollsTheCycle`, `TestTheSixScriptsShareOneTransitionBlock` | The closed balance missing from a roll, present on a replay or on a transition that rolled nothing, or reported by more than the one caller that rolled (D3) |
+| — | `TestTheWriterKeepsUpWithTheFloor` (integration), `TestLoadReadsTheLedgerKeys` | Fewer than 1 000 appends a second over 20 000 events (S9, the measured figure is `IP-16`'s); a ledger setting not read, or one the writer cannot run with accepted (S8) |
+
+Six things are recorded here because the phase surfaced them.
+
+- **A consume of zero answered `503`.** consume.lua passed `-amount` to `HINCRBY`, and Lua renders
+  the negation of zero as `-0`, which Redis refuses as not an integer, so DR-023's valid zero-amount
+  request failed as a store fault. The increment is now formatted as an integer. No test before
+  this phase sent a zero consume through the route.
+- **An immediate override moved a balance with no event.** `IP-10`'s relimit applies the change in
+  limit to the balance (D6) and discarded the script's answer, and its section records that no
+  balance moves. The move is now written as `plan_changed`, the closest type the frozen contract
+  has, and `Q-24` records the default.
+- **A force-rollover reopens the cycle it is in.** It refills the computed current window, so its
+  row shares that cycle's identity with the rows before it; the reconciliation identity reads from a
+  cycle's last opening (data-model §2.7, as amended).
+- **The replay updates its dead letter.** A replay that fails again raises the row's `attempts`, so
+  the appender's SQL includes an `UPDATE` of `usage_event_dead_letters`; it never updates
+  `usage_events`, and `TestTheWriterCanOnlyAppend` allows exactly that.
+- **A lost acknowledgement under-counts `event_written_total`.** A batch whose commit succeeded and
+  whose answer was lost is retried and found present, so the rows are right and the counter reads
+  what the writer could know.
+- **No request-path benchmark exists**, so the plan's `make bench` against `dev` was not run; the
+  request path gains one non-blocking channel send, and DoD 3's test compares its latency directly.
+
+Found in passing and not this phase's, left unchanged and named in the PR: no v0.1 phase builds the
+reset worker that mvp-scope §2's cycle-control row, `Q-13`, `QUOTACORE_WORKER_ENABLED` and `IP-14`'s
+`quotacore worker` describe, so an idle tenant still rolls only on its next request.
 
 **Exit criteria.** The ledger is a best record of what happened, not a dependency of whether it
 happened.
 
 **Deferred.** Export to an external sink beyond the configured file or stream, and webhooks
 (`IP-21`–`IP-23`).
+> **Amended 2026-10-20 (`IP-12`).** v0.1 has no file or stream sink and no replica:
+> [mvp-scope.md](../product/mvp-scope.md) §4c makes the ledger table the interface, and `Q-20` is
+> answered by a documented export query. Every external sink is deferred.
 
 ---
 
@@ -1499,7 +1574,7 @@ and what to do about it.
 
 ## IP-14 — The `quotacore` CLI
 
-**Status** `BLOCKED`, gated on `IP-12`. `IP-09` closed on 2026-10-20.
+**Status** `NOT STARTED`; `IP-09` and `IP-12` closed on 2026-10-20, so nothing gates this phase.
 
 **Objective.** One binary that administers the service, so an operator never needs a database client
 or a copy-pasted `curl`.

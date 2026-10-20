@@ -212,6 +212,8 @@ func seedRows(t *testing.T, db *sql.DB) int {
 			SELECT t.id, f.id, 0, -1, 9, 'api', 'consumed', '01J8Z6M2QK9V3X7B4C0N5TDEFA' FROM tenants t, features f`},
 		{"audit_log", `INSERT INTO audit_log (actor, action, subject_type, request_id)
 			VALUES ('bootstrap', 'tenant.create', 'tenant', '01J8Z6M2QK9V3X7B4C0N5TDEFA')`},
+		{"usage_event_dead_letters", `INSERT INTO usage_event_dead_letters (event_id, reason, payload, error)
+			VALUES (gen_random_uuid(), 'rejected', '{}', 'seed')`},
 	}
 	n := 0
 	for _, s := range steps {
@@ -235,7 +237,7 @@ func seedRows(t *testing.T, db *sql.DB) int {
 func rowCounts(t *testing.T, db *sql.DB) map[string]int {
 	t.Helper()
 	out := map[string]int{}
-	for _, table := range []string{"features", "plans", "plan_entitlements", "tenants", "tenant_entitlement_overrides", "api_keys", "usage_events", "audit_log"} {
+	for _, table := range []string{"features", "plans", "plan_entitlements", "tenants", "tenant_entitlement_overrides", "api_keys", "usage_events", "audit_log", "usage_event_dead_letters"} {
 		var n int
 		if err := db.QueryRowContext(context.Background(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
 			t.Fatalf("count %s: %v", table, err)

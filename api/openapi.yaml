@@ -1547,9 +1547,10 @@ paths:
         recorded outcome, which is how you prove whether a call was applied once or twice.
 
         A known limitation, stated here because a silently incomplete history is worse than a
-        documented one: events are delivered to the external sink **best effort and at-least-once**.
-        Where the sink could not deliver, `system` events record the gap and the drop counter in
-        `GET /v1/admin/status` is non-zero (ADR-0016).
+        documented one: events are appended to the ledger **best effort and at-least-once**, and a
+        consumer deduplicates on `id`. Where an event could not be appended, nothing is written in
+        its place; the gap is recorded by `ledger_dropped_total` in `GET /v1/admin/status` and by
+        `quotacore_event_sink_dropped_total` (ADR-0016).
       security:
         - bearerAuth: []
       x-required-scope: admin
@@ -5419,19 +5420,25 @@ components:
           type: integer
           format: int64
           minimum: 0
-          description: The reset worker's queue depth (ADR-0003).
+          description: |
+            The ledger queue's current depth on the instance that answered: events accepted and
+            not yet written. Growth toward `QUOTACORE_EVENT_QUEUE_SIZE` means the writer is behind,
+            and drops follow (ADR-0016).
         worker:
           type: string
-          description: The reset worker's state, so a stalled rollover is visible before a customer's balance is wrong.
+          description: |
+            The ledger writer's state on the instance that answered: `running`, `draining` while a
+            shutdown writes what is queued, and `stopped` before it starts or after it has drained.
           enum: [running, stopped, draining]
         ledger_dropped_total:
           type: integer
           format: int64
           minimum: 0
           description: |
-            Ledger events the external sink failed to accept. **Non-zero means the downstream
-            history is incomplete**, and that is reported rather than hidden, because a silently
-            incomplete history is worse than a documented one (ADR-0016).
+            Ledger events this instance dropped since it started, over every reason. **Non-zero
+            means the history is incomplete**, and that is reported rather than hidden, because a
+            silently incomplete history is worse than a documented one (ADR-0016). An event the
+            ledger refused is kept as a dead letter, not counted here.
 
     HealthResponse:
       type: object

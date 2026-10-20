@@ -276,9 +276,10 @@ func TestArchivingAFeaturePreservesItsBalance(t *testing.T) {
 	if r := s.consume(s.runtime, f, 40, tn.External, newKey()); r.Status != http.StatusOK {
 		t.Fatalf("consume: %d %s", r.Status, r.Body)
 	}
-	if _, err := s.seedDB.Exec(`INSERT INTO usage_events (tenant_id, feature_id, cycle_index, delta, balance_after, source, event_type, request_id)
-SELECT $1, id, 0, -40, 60, 'api', 'consumed', 'r-1' FROM features WHERE key = $2`, tn.ID, f); err != nil {
-		t.Fatal(err)
+	// The writer appends the consume's row; the comparison starts once it has
+	// (IP-12).
+	if rows := s.ledger(tn); !sameShapes(rows, expect{"consumed", "api", -40, 60}) {
+		t.Fatalf("the ledger before the archive is %v", shapes(rows))
 	}
 	ledger := func() string {
 		var row string
