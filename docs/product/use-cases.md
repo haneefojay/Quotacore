@@ -455,10 +455,12 @@ history.
 4. Revocation is audited, and the prefix appears in the audit log so a leak can be traced.
 
 **Alternative flows**
-- A revoked key is rejected on the next request with no cache delay.
+- A revoked key is rejected on the next request to the instance that revoked it, and within the
+  propagation bound (NFR-D3) on every other instance.
 - A lost key is replaced, not recovered. There is no "show key" endpoint and none will be added.
-- The bootstrap admin key exists only on first start, is printed once with a warning, and is
-  regenerated only by an explicit CLI command.
+- The bootstrap admin key is supplied by the operator and installed only while no key exists, with
+  an audit row and a `warn` naming its prefix. It is never generated or printed by the service, and
+  is ignored, with a warning, once any key exists (ADR-0018).
 
 **Postcondition:** the new key works, the old key does not, and the plaintext exists nowhere but
 in the caller's possession.

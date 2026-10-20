@@ -14,7 +14,8 @@ import (
 type Amount int64
 
 // Archive a plan or a feature. Archiving is not deletion: the record keeps its history and stops being
-// assignable, and archiving again is what reverses it (INV-P2, UC-13).
+// assignable (UC-13). v0.1 has no unarchive route, so archiving is one-way here, and archiving a
+// record that is already archived is a `200` that changes nothing and writes no audit row.
 // Ref: #/components/schemas/ArchiveRequest
 type ArchiveRequest struct {
 	// The optimistic-concurrency token.
@@ -108,9 +109,12 @@ type AuditEntry struct {
 	// The resource before the change, or null when it was created.
 	Before NilAuditEntryBefore `json:"before"`
 	// The resource after the change, or null when it was deleted.
-	After      NilAuditEntryAfter `json:"after"`
-	RequestID  RequestId          `json:"request_id"`
-	OccurredAt Timestamp          `json:"occurred_at"`
+	After NilAuditEntryAfter `json:"after"`
+	// The reason the caller gave, for the mutations that require one (archive, delete, suspend, resume),
+	// and null for the rest.
+	Reason     NilString `json:"reason"`
+	RequestID  RequestId `json:"request_id"`
+	OccurredAt Timestamp `json:"occurred_at"`
 }
 
 // GetID returns the value of ID.
@@ -151,6 +155,11 @@ func (s *AuditEntry) GetBefore() NilAuditEntryBefore {
 // GetAfter returns the value of After.
 func (s *AuditEntry) GetAfter() NilAuditEntryAfter {
 	return s.After
+}
+
+// GetReason returns the value of Reason.
+func (s *AuditEntry) GetReason() NilString {
+	return s.Reason
 }
 
 // GetRequestID returns the value of RequestID.
@@ -201,6 +210,11 @@ func (s *AuditEntry) SetBefore(val NilAuditEntryBefore) {
 // SetAfter sets the value of After.
 func (s *AuditEntry) SetAfter(val NilAuditEntryAfter) {
 	s.After = val
+}
+
+// SetReason sets the value of Reason.
+func (s *AuditEntry) SetReason(val NilString) {
+	s.Reason = val
 }
 
 // SetRequestID sets the value of RequestID.
@@ -706,12 +720,14 @@ func (s *CheckResponse) SetCycleEnd(val NilTimestamp) {
 
 type Cursor string
 
-// Soft-delete a tenant. Deletion is terminal for the tenant, so the open balance is not re-granted and
-// the ledger is kept, because a deleted tenant still has events (UC-14).
+// Delete a tenant, a plan or a feature, with the reason the audit row records. A tenant is
+// soft-deleted: deletion is terminal for the tenant, so the open balance is not re-granted and the
+// ledger is kept, because a deleted tenant still has events (UC-14). A plan or a feature is
+// hard-deleted, and only while nothing references it (P-6, F-6); otherwise the answer is
+// `409 plan_in_use` or `409 feature_in_use`, and archiving is the remedy.
 // Ref: #/components/schemas/DeleteRequest
 type DeleteRequest struct {
-	// Required and audited. Soft deletion is terminal, so the reason is the only record of why it
-	// happened.
+	// Required and audited. Deletion is terminal, so the reason is the only record of why it happened.
 	Reason string `json:"reason"`
 }
 
@@ -927,6 +943,8 @@ func (*ErrorBadRequestPlainHeaders) clearTenantOverrideRes()  {}
 func (*ErrorBadRequestPlainHeaders) createFeatureRes()        {}
 func (*ErrorBadRequestPlainHeaders) createKeyRes()            {}
 func (*ErrorBadRequestPlainHeaders) createPlanRes()           {}
+func (*ErrorBadRequestPlainHeaders) deleteFeatureRes()        {}
+func (*ErrorBadRequestPlainHeaders) deletePlanRes()           {}
 func (*ErrorBadRequestPlainHeaders) forceRolloverRes()        {}
 func (*ErrorBadRequestPlainHeaders) getFeatureRes()           {}
 func (*ErrorBadRequestPlainHeaders) getPlanRes()              {}
@@ -1030,6 +1048,7 @@ const (
 	ErrorCodeTenantNotFound          ErrorCode = "tenant_not_found"
 	ErrorCodeFeatureNotFound         ErrorCode = "feature_not_found"
 	ErrorCodePlanNotFound            ErrorCode = "plan_not_found"
+	ErrorCodeAPIKeyNotFound          ErrorCode = "api_key_not_found"
 	ErrorCodePayloadTooLarge         ErrorCode = "payload_too_large"
 	ErrorCodeIdempotencyKeyReuse     ErrorCode = "idempotency_key_reuse"
 	ErrorCodePlanInUse               ErrorCode = "plan_in_use"
@@ -1069,6 +1088,7 @@ func (ErrorCode) AllValues() []ErrorCode {
 		ErrorCodeTenantNotFound,
 		ErrorCodeFeatureNotFound,
 		ErrorCodePlanNotFound,
+		ErrorCodeAPIKeyNotFound,
 		ErrorCodePayloadTooLarge,
 		ErrorCodeIdempotencyKeyReuse,
 		ErrorCodePlanInUse,
@@ -1122,6 +1142,8 @@ func (s ErrorCode) MarshalText() ([]byte, error) {
 	case ErrorCodeFeatureNotFound:
 		return []byte(s), nil
 	case ErrorCodePlanNotFound:
+		return []byte(s), nil
+	case ErrorCodeAPIKeyNotFound:
 		return []byte(s), nil
 	case ErrorCodePayloadTooLarge:
 		return []byte(s), nil
@@ -1212,6 +1234,9 @@ func (s *ErrorCode) UnmarshalText(data []byte) error {
 		return nil
 	case ErrorCodePlanNotFound:
 		*s = ErrorCodePlanNotFound
+		return nil
+	case ErrorCodeAPIKeyNotFound:
+		*s = ErrorCodeAPIKeyNotFound
 		return nil
 	case ErrorCodePayloadTooLarge:
 		*s = ErrorCodePayloadTooLarge
@@ -1334,6 +1359,7 @@ func (s *ErrorConflictFeatureHeaders) SetResponse(val ErrorResponse) {
 
 func (*ErrorConflictFeatureHeaders) archiveFeatureRes() {}
 func (*ErrorConflictFeatureHeaders) createFeatureRes()  {}
+func (*ErrorConflictFeatureHeaders) deleteFeatureRes()  {}
 func (*ErrorConflictFeatureHeaders) updateFeatureRes()  {}
 
 // ErrorConflictPlanHeaders wraps ErrorResponse with response headers.
@@ -1364,6 +1390,7 @@ func (s *ErrorConflictPlanHeaders) SetResponse(val ErrorResponse) {
 
 func (*ErrorConflictPlanHeaders) archivePlanRes() {}
 func (*ErrorConflictPlanHeaders) createPlanRes()  {}
+func (*ErrorConflictPlanHeaders) deletePlanRes()  {}
 func (*ErrorConflictPlanHeaders) getPlanRes()     {}
 func (*ErrorConflictPlanHeaders) listPlansRes()   {}
 func (*ErrorConflictPlanHeaders) updatePlanRes()  {}
@@ -1477,6 +1504,7 @@ func (s *ErrorFeatureNotFoundHeaders) SetResponse(val ErrorResponse) {
 }
 
 func (*ErrorFeatureNotFoundHeaders) archiveFeatureRes() {}
+func (*ErrorFeatureNotFoundHeaders) deleteFeatureRes()  {}
 func (*ErrorFeatureNotFoundHeaders) getFeatureRes()     {}
 func (*ErrorFeatureNotFoundHeaders) updateFeatureRes()  {}
 
@@ -1545,6 +1573,8 @@ func (*ErrorForbiddenScopeHeaders) createFeatureRes()        {}
 func (*ErrorForbiddenScopeHeaders) createKeyRes()            {}
 func (*ErrorForbiddenScopeHeaders) createPlanRes()           {}
 func (*ErrorForbiddenScopeHeaders) createTenantRes()         {}
+func (*ErrorForbiddenScopeHeaders) deleteFeatureRes()        {}
+func (*ErrorForbiddenScopeHeaders) deletePlanRes()           {}
 func (*ErrorForbiddenScopeHeaders) deleteTenantRes()         {}
 func (*ErrorForbiddenScopeHeaders) forceRolloverRes()        {}
 func (*ErrorForbiddenScopeHeaders) getFeatureRes()           {}
@@ -1621,10 +1651,69 @@ func (s *ErrorInternalHeaders) SetResponse(val ErrorResponse) {
 	s.Response = val
 }
 
-func (*ErrorInternalHeaders) balanceRes() {}
-func (*ErrorInternalHeaders) checkRes()   {}
-func (*ErrorInternalHeaders) consumeRes() {}
-func (*ErrorInternalHeaders) refundRes()  {}
+func (*ErrorInternalHeaders) applyPlanRes()            {}
+func (*ErrorInternalHeaders) archiveFeatureRes()       {}
+func (*ErrorInternalHeaders) archivePlanRes()          {}
+func (*ErrorInternalHeaders) balanceRes()              {}
+func (*ErrorInternalHeaders) checkRes()                {}
+func (*ErrorInternalHeaders) clearTenantOverrideRes()  {}
+func (*ErrorInternalHeaders) consumeRes()              {}
+func (*ErrorInternalHeaders) createFeatureRes()        {}
+func (*ErrorInternalHeaders) createKeyRes()            {}
+func (*ErrorInternalHeaders) createPlanRes()           {}
+func (*ErrorInternalHeaders) createTenantRes()         {}
+func (*ErrorInternalHeaders) deleteFeatureRes()        {}
+func (*ErrorInternalHeaders) deletePlanRes()           {}
+func (*ErrorInternalHeaders) deleteTenantRes()         {}
+func (*ErrorInternalHeaders) forceRolloverRes()        {}
+func (*ErrorInternalHeaders) getFeatureRes()           {}
+func (*ErrorInternalHeaders) getPlanRes()              {}
+func (*ErrorInternalHeaders) getTenantRes()            {}
+func (*ErrorInternalHeaders) grantTenantRes()          {}
+func (*ErrorInternalHeaders) listAuditRes()            {}
+func (*ErrorInternalHeaders) listFeaturesRes()         {}
+func (*ErrorInternalHeaders) listKeysRes()             {}
+func (*ErrorInternalHeaders) listPlansRes()            {}
+func (*ErrorInternalHeaders) listTenantsRes()          {}
+func (*ErrorInternalHeaders) listUsageEventsRes()      {}
+func (*ErrorInternalHeaders) planImpactRes()           {}
+func (*ErrorInternalHeaders) refundRes()               {}
+func (*ErrorInternalHeaders) resumeTenantRes()         {}
+func (*ErrorInternalHeaders) revokeKeyRes()            {}
+func (*ErrorInternalHeaders) setTenantBalanceRes()     {}
+func (*ErrorInternalHeaders) suspendTenantRes()        {}
+func (*ErrorInternalHeaders) updateFeatureRes()        {}
+func (*ErrorInternalHeaders) updatePlanRes()           {}
+func (*ErrorInternalHeaders) updateTenantRes()         {}
+func (*ErrorInternalHeaders) upsertTenantOverrideRes() {}
+
+// ErrorKeyNotFoundHeaders wraps ErrorResponse with response headers.
+type ErrorKeyNotFoundHeaders struct {
+	XRequestID RequestId
+	Response   ErrorResponse
+}
+
+// GetXRequestID returns the value of XRequestID.
+func (s *ErrorKeyNotFoundHeaders) GetXRequestID() RequestId {
+	return s.XRequestID
+}
+
+// GetResponse returns the value of Response.
+func (s *ErrorKeyNotFoundHeaders) GetResponse() ErrorResponse {
+	return s.Response
+}
+
+// SetXRequestID sets the value of XRequestID.
+func (s *ErrorKeyNotFoundHeaders) SetXRequestID(val RequestId) {
+	s.XRequestID = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ErrorKeyNotFoundHeaders) SetResponse(val ErrorResponse) {
+	s.Response = val
+}
+
+func (*ErrorKeyNotFoundHeaders) revokeKeyRes() {}
 
 // ErrorNotFoundResourceHeaders wraps ErrorResponse with response headers.
 type ErrorNotFoundResourceHeaders struct {
@@ -1684,11 +1773,7 @@ func (s *ErrorNotImplementedHeaders) SetResponse(val ErrorResponse) {
 	s.Response = val
 }
 
-func (*ErrorNotImplementedHeaders) archiveFeatureRes() {}
-func (*ErrorNotImplementedHeaders) createFeatureRes()  {}
-func (*ErrorNotImplementedHeaders) getFeatureRes()     {}
-func (*ErrorNotImplementedHeaders) listFeaturesRes()   {}
-func (*ErrorNotImplementedHeaders) updateFeatureRes()  {}
+func (*ErrorNotImplementedHeaders) createFeatureRes() {}
 
 // ErrorPayloadTooLargeHeaders wraps ErrorResponse with response headers.
 type ErrorPayloadTooLargeHeaders struct {
@@ -1725,6 +1810,8 @@ func (*ErrorPayloadTooLargeHeaders) createFeatureRes()        {}
 func (*ErrorPayloadTooLargeHeaders) createKeyRes()            {}
 func (*ErrorPayloadTooLargeHeaders) createPlanRes()           {}
 func (*ErrorPayloadTooLargeHeaders) createTenantRes()         {}
+func (*ErrorPayloadTooLargeHeaders) deleteFeatureRes()        {}
+func (*ErrorPayloadTooLargeHeaders) deletePlanRes()           {}
 func (*ErrorPayloadTooLargeHeaders) deleteTenantRes()         {}
 func (*ErrorPayloadTooLargeHeaders) forceRolloverRes()        {}
 func (*ErrorPayloadTooLargeHeaders) grantTenantRes()          {}
@@ -1765,6 +1852,7 @@ func (s *ErrorPlanNotFoundHeaders) SetResponse(val ErrorResponse) {
 
 func (*ErrorPlanNotFoundHeaders) applyPlanRes()   {}
 func (*ErrorPlanNotFoundHeaders) archivePlanRes() {}
+func (*ErrorPlanNotFoundHeaders) deletePlanRes()  {}
 func (*ErrorPlanNotFoundHeaders) getPlanRes()     {}
 func (*ErrorPlanNotFoundHeaders) planImpactRes()  {}
 func (*ErrorPlanNotFoundHeaders) updatePlanRes()  {}
@@ -1845,11 +1933,40 @@ func (s *ErrorRateLimitedHeaders) SetResponse(val ErrorResponse) {
 	s.Response = val
 }
 
-func (*ErrorRateLimitedHeaders) balanceRes()         {}
-func (*ErrorRateLimitedHeaders) checkRes()           {}
-func (*ErrorRateLimitedHeaders) listAuditRes()       {}
-func (*ErrorRateLimitedHeaders) listUsageEventsRes() {}
-func (*ErrorRateLimitedHeaders) refundRes()          {}
+func (*ErrorRateLimitedHeaders) applyPlanRes()            {}
+func (*ErrorRateLimitedHeaders) archiveFeatureRes()       {}
+func (*ErrorRateLimitedHeaders) archivePlanRes()          {}
+func (*ErrorRateLimitedHeaders) balanceRes()              {}
+func (*ErrorRateLimitedHeaders) checkRes()                {}
+func (*ErrorRateLimitedHeaders) clearTenantOverrideRes()  {}
+func (*ErrorRateLimitedHeaders) createFeatureRes()        {}
+func (*ErrorRateLimitedHeaders) createKeyRes()            {}
+func (*ErrorRateLimitedHeaders) createPlanRes()           {}
+func (*ErrorRateLimitedHeaders) createTenantRes()         {}
+func (*ErrorRateLimitedHeaders) deleteFeatureRes()        {}
+func (*ErrorRateLimitedHeaders) deletePlanRes()           {}
+func (*ErrorRateLimitedHeaders) deleteTenantRes()         {}
+func (*ErrorRateLimitedHeaders) forceRolloverRes()        {}
+func (*ErrorRateLimitedHeaders) getFeatureRes()           {}
+func (*ErrorRateLimitedHeaders) getPlanRes()              {}
+func (*ErrorRateLimitedHeaders) getTenantRes()            {}
+func (*ErrorRateLimitedHeaders) grantTenantRes()          {}
+func (*ErrorRateLimitedHeaders) listAuditRes()            {}
+func (*ErrorRateLimitedHeaders) listFeaturesRes()         {}
+func (*ErrorRateLimitedHeaders) listKeysRes()             {}
+func (*ErrorRateLimitedHeaders) listPlansRes()            {}
+func (*ErrorRateLimitedHeaders) listTenantsRes()          {}
+func (*ErrorRateLimitedHeaders) listUsageEventsRes()      {}
+func (*ErrorRateLimitedHeaders) planImpactRes()           {}
+func (*ErrorRateLimitedHeaders) refundRes()               {}
+func (*ErrorRateLimitedHeaders) resumeTenantRes()         {}
+func (*ErrorRateLimitedHeaders) revokeKeyRes()            {}
+func (*ErrorRateLimitedHeaders) setTenantBalanceRes()     {}
+func (*ErrorRateLimitedHeaders) suspendTenantRes()        {}
+func (*ErrorRateLimitedHeaders) updateFeatureRes()        {}
+func (*ErrorRateLimitedHeaders) updatePlanRes()           {}
+func (*ErrorRateLimitedHeaders) updateTenantRes()         {}
+func (*ErrorRateLimitedHeaders) upsertTenantOverrideRes() {}
 
 // ErrorRefundConflictHeaders wraps ErrorResponse with response headers.
 type ErrorRefundConflictHeaders struct {
@@ -1878,36 +1995,6 @@ func (s *ErrorRefundConflictHeaders) SetResponse(val ErrorResponse) {
 }
 
 func (*ErrorRefundConflictHeaders) refundRes() {}
-
-// ErrorResourceVersionConflictHeaders wraps ErrorResponse with response headers.
-type ErrorResourceVersionConflictHeaders struct {
-	XRequestID RequestId
-	Response   ErrorResponse
-}
-
-// GetXRequestID returns the value of XRequestID.
-func (s *ErrorResourceVersionConflictHeaders) GetXRequestID() RequestId {
-	return s.XRequestID
-}
-
-// GetResponse returns the value of Response.
-func (s *ErrorResourceVersionConflictHeaders) GetResponse() ErrorResponse {
-	return s.Response
-}
-
-// SetXRequestID sets the value of XRequestID.
-func (s *ErrorResourceVersionConflictHeaders) SetXRequestID(val RequestId) {
-	s.XRequestID = val
-}
-
-// SetResponse sets the value of Response.
-func (s *ErrorResourceVersionConflictHeaders) SetResponse(val ErrorResponse) {
-	s.Response = val
-}
-
-func (*ErrorResourceVersionConflictHeaders) createKeyRes() {}
-func (*ErrorResourceVersionConflictHeaders) listKeysRes()  {}
-func (*ErrorResourceVersionConflictHeaders) revokeKeyRes() {}
 
 // The one error shape, everywhere, and it is non-negotiable. No endpoint returns a bare `400` or a
 // bare `500` without it.
@@ -2068,6 +2155,8 @@ func (*ErrorUnauthorizedHeaders) createFeatureRes()        {}
 func (*ErrorUnauthorizedHeaders) createKeyRes()            {}
 func (*ErrorUnauthorizedHeaders) createPlanRes()           {}
 func (*ErrorUnauthorizedHeaders) createTenantRes()         {}
+func (*ErrorUnauthorizedHeaders) deleteFeatureRes()        {}
+func (*ErrorUnauthorizedHeaders) deletePlanRes()           {}
 func (*ErrorUnauthorizedHeaders) deleteTenantRes()         {}
 func (*ErrorUnauthorizedHeaders) forceRolloverRes()        {}
 func (*ErrorUnauthorizedHeaders) getFeatureRes()           {}
@@ -2128,10 +2217,41 @@ func (s *ErrorUnavailableHeaders) SetResponse(val ErrorResponse) {
 	s.Response = val
 }
 
-func (*ErrorUnavailableHeaders) balanceRes() {}
-func (*ErrorUnavailableHeaders) checkRes()   {}
-func (*ErrorUnavailableHeaders) consumeRes() {}
-func (*ErrorUnavailableHeaders) refundRes()  {}
+func (*ErrorUnavailableHeaders) applyPlanRes()            {}
+func (*ErrorUnavailableHeaders) archiveFeatureRes()       {}
+func (*ErrorUnavailableHeaders) archivePlanRes()          {}
+func (*ErrorUnavailableHeaders) balanceRes()              {}
+func (*ErrorUnavailableHeaders) checkRes()                {}
+func (*ErrorUnavailableHeaders) clearTenantOverrideRes()  {}
+func (*ErrorUnavailableHeaders) consumeRes()              {}
+func (*ErrorUnavailableHeaders) createFeatureRes()        {}
+func (*ErrorUnavailableHeaders) createKeyRes()            {}
+func (*ErrorUnavailableHeaders) createPlanRes()           {}
+func (*ErrorUnavailableHeaders) createTenantRes()         {}
+func (*ErrorUnavailableHeaders) deleteFeatureRes()        {}
+func (*ErrorUnavailableHeaders) deletePlanRes()           {}
+func (*ErrorUnavailableHeaders) deleteTenantRes()         {}
+func (*ErrorUnavailableHeaders) forceRolloverRes()        {}
+func (*ErrorUnavailableHeaders) getFeatureRes()           {}
+func (*ErrorUnavailableHeaders) getPlanRes()              {}
+func (*ErrorUnavailableHeaders) getTenantRes()            {}
+func (*ErrorUnavailableHeaders) grantTenantRes()          {}
+func (*ErrorUnavailableHeaders) listAuditRes()            {}
+func (*ErrorUnavailableHeaders) listFeaturesRes()         {}
+func (*ErrorUnavailableHeaders) listKeysRes()             {}
+func (*ErrorUnavailableHeaders) listPlansRes()            {}
+func (*ErrorUnavailableHeaders) listTenantsRes()          {}
+func (*ErrorUnavailableHeaders) listUsageEventsRes()      {}
+func (*ErrorUnavailableHeaders) planImpactRes()           {}
+func (*ErrorUnavailableHeaders) refundRes()               {}
+func (*ErrorUnavailableHeaders) resumeTenantRes()         {}
+func (*ErrorUnavailableHeaders) revokeKeyRes()            {}
+func (*ErrorUnavailableHeaders) setTenantBalanceRes()     {}
+func (*ErrorUnavailableHeaders) suspendTenantRes()        {}
+func (*ErrorUnavailableHeaders) updateFeatureRes()        {}
+func (*ErrorUnavailableHeaders) updatePlanRes()           {}
+func (*ErrorUnavailableHeaders) updateTenantRes()         {}
+func (*ErrorUnavailableHeaders) upsertTenantOverrideRes() {}
 
 // Who caused the event.
 // Ref: #/components/schemas/EventSource
@@ -2268,8 +2388,8 @@ type ExternalId string
 // of it a tenant gets, and a tenant is assigned to exactly one plan (UC-05).
 // Ref: #/components/schemas/Feature
 type Feature struct {
-	// Internal, and what `/v1/admin/features/{id}` takes. Unlike a tenant's `external_id` there is no
-	// customer-chosen form, because a feature is Quotacore's own catalogue entry.
+	// Internal. The admin routes address a feature by `feature_key`, never by this id, which exists for
+	// the audit log's `subject_id`.
 	ID uuid.UUID `json:"id"`
 	// Immutable once created (INV-F3).
 	FeatureKey FeatureKey `json:"feature_key"`
@@ -2411,6 +2531,9 @@ type FeatureCreate struct {
 	Unit Unit `json:"unit"`
 	// Optional free text. Absent and `''` are the same thing, which is why it defaults to `''`.
 	Description OptString `json:"description"`
+	// Optional, `metered` by default. `boolean` is a v0.2 surface and is `501 not_implemented` on a v0.1
+	// build (F-5).
+	Kind OptFeatureCreateKind `json:"kind"`
 }
 
 // GetFeatureKey returns the value of FeatureKey.
@@ -2433,6 +2556,11 @@ func (s *FeatureCreate) GetDescription() OptString {
 	return s.Description
 }
 
+// GetKind returns the value of Kind.
+func (s *FeatureCreate) GetKind() OptFeatureCreateKind {
+	return s.Kind
+}
+
 // SetFeatureKey sets the value of FeatureKey.
 func (s *FeatureCreate) SetFeatureKey(val FeatureKey) {
 	s.FeatureKey = val
@@ -2451,6 +2579,53 @@ func (s *FeatureCreate) SetUnit(val Unit) {
 // SetDescription sets the value of Description.
 func (s *FeatureCreate) SetDescription(val OptString) {
 	s.Description = val
+}
+
+// SetKind sets the value of Kind.
+func (s *FeatureCreate) SetKind(val OptFeatureCreateKind) {
+	s.Kind = val
+}
+
+// Merged schema.
+type FeatureCreateKind string
+
+const (
+	FeatureCreateKindMetered FeatureCreateKind = "metered"
+	FeatureCreateKindBoolean FeatureCreateKind = "boolean"
+)
+
+// AllValues returns all FeatureCreateKind values.
+func (FeatureCreateKind) AllValues() []FeatureCreateKind {
+	return []FeatureCreateKind{
+		FeatureCreateKindMetered,
+		FeatureCreateKindBoolean,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s FeatureCreateKind) MarshalText() ([]byte, error) {
+	switch s {
+	case FeatureCreateKindMetered:
+		return []byte(s), nil
+	case FeatureCreateKindBoolean:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *FeatureCreateKind) UnmarshalText(data []byte) error {
+	switch FeatureCreateKind(data) {
+	case FeatureCreateKindMetered:
+		*s = FeatureCreateKindMetered
+		return nil
+	case FeatureCreateKindBoolean:
+		*s = FeatureCreateKindBoolean
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // FeatureCreatedHeaders wraps Feature with response headers.
@@ -2615,8 +2790,9 @@ func (*FeatureOKHeaders) archiveFeatureRes() {}
 func (*FeatureOKHeaders) getFeatureRes()     {}
 func (*FeatureOKHeaders) updateFeatureRes()  {}
 
-// A rename. `unit` and `feature_key` are absent by design: offering an immutable field and then
-// refusing it is a worse API than not offering it.
+// A rename, or a unit correction. `feature_key` is absent by design: it is immutable always, and
+// offering an immutable field and then refusing it is a worse API than not offering it. `unit` is
+// offered because it is mutable until the feature is referenced (INV-F2).
 // Ref: #/components/schemas/FeatureUpdate
 type FeatureUpdate struct {
 	// Required. The optimistic-concurrency token from the `GET` that preceded this call. A mismatch is
@@ -2626,6 +2802,9 @@ type FeatureUpdate struct {
 	Name OptString `json:"name"`
 	// Replaces the current free text. `''` clears it, so clearing is an explicit act.
 	Description OptString `json:"description"`
+	// A new unit, accepted only while no plan entitlement, override or usage event references the feature.
+	// Otherwise `409 feature_unit_immutable` (INV-F2).
+	Unit OptUnit `json:"unit"`
 }
 
 // GetVersion returns the value of Version.
@@ -2643,6 +2822,11 @@ func (s *FeatureUpdate) GetDescription() OptString {
 	return s.Description
 }
 
+// GetUnit returns the value of Unit.
+func (s *FeatureUpdate) GetUnit() OptUnit {
+	return s.Unit
+}
+
 // SetVersion sets the value of Version.
 func (s *FeatureUpdate) SetVersion(val Version) {
 	s.Version = val
@@ -2656,6 +2840,11 @@ func (s *FeatureUpdate) SetName(val OptString) {
 // SetDescription sets the value of Description.
 func (s *FeatureUpdate) SetDescription(val OptString) {
 	s.Description = val
+}
+
+// SetUnit sets the value of Unit.
+func (s *FeatureUpdate) SetUnit(val OptUnit) {
+	s.Unit = val
 }
 
 // Roll one feature's cycle over now, applying the next cycle's allowance immediately. It is audited
@@ -2837,8 +3026,8 @@ type Key struct {
 	// Optional at issue time, enforced on every request. A key past this is `401 api_key_invalid`.
 	ExpiresAt  NilTimestamp `json:"expires_at"`
 	LastUsedAt NilTimestamp `json:"last_used_at"`
-	// Revocation is immediate and effective on the next request with no cache delay, because the cache
-	// stores the hash and the state and revocation bumps the version (UC-15, K-2).
+	// Revocation takes effect on the next request to the instance that served it, and within the
+	// propagation bound (NFR-D3) on every other instance (UC-15, K-2).
 	RevokedAt NilTimestamp `json:"revoked_at"`
 }
 
@@ -3204,7 +3393,8 @@ func (s *KeyScope) UnmarshalText(data []byte) error {
 	}
 }
 
-// A key's lifecycle. Revocation is effective on the next request, with no cache delay.
+// A key's lifecycle. Revocation is effective on the next request to the instance that served it, and
+// within the propagation bound (NFR-D3) on every other.
 // Ref: #/components/schemas/KeyState
 type KeyState string
 
@@ -4080,6 +4270,8 @@ func (s *NoContent) SetXRequestID(val RequestId) {
 }
 
 func (*NoContent) clearTenantOverrideRes() {}
+func (*NoContent) deleteFeatureRes()       {}
+func (*NoContent) deletePlanRes()          {}
 func (*NoContent) revokeKeyRes()           {}
 
 // An OpenAPI 3.1 document, identical to `api/openapi.yaml`.
@@ -4344,6 +4536,52 @@ func (o OptExternalId) Get() (v ExternalId, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptExternalId) Or(d ExternalId) ExternalId {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptFeatureCreateKind returns new OptFeatureCreateKind with value set to v.
+func NewOptFeatureCreateKind(v FeatureCreateKind) OptFeatureCreateKind {
+	return OptFeatureCreateKind{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptFeatureCreateKind is optional FeatureCreateKind.
+type OptFeatureCreateKind struct {
+	Value FeatureCreateKind
+	Set   bool
+}
+
+// IsSet returns true if OptFeatureCreateKind was set.
+func (o OptFeatureCreateKind) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptFeatureCreateKind) Reset() {
+	var v FeatureCreateKind
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptFeatureCreateKind) SetTo(v FeatureCreateKind) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptFeatureCreateKind) Get() (v FeatureCreateKind, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptFeatureCreateKind) Or(d FeatureCreateKind) FeatureCreateKind {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -4918,6 +5156,52 @@ func (o OptTimestamp) Get() (v Timestamp, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptTimestamp) Or(d Timestamp) Timestamp {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptUnit returns new OptUnit with value set to v.
+func NewOptUnit(v Unit) OptUnit {
+	return OptUnit{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptUnit is optional Unit.
+type OptUnit struct {
+	Value Unit
+	Set   bool
+}
+
+// IsSet returns true if OptUnit was set.
+func (o OptUnit) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptUnit) Reset() {
+	var v Unit
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptUnit) SetTo(v Unit) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptUnit) Get() (v Unit, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptUnit) Or(d Unit) Unit {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -6777,9 +7061,14 @@ type UsageEvent struct {
 	// The customer's key, on `consumed` and `refunded`. Filtering by it is how a disputed charge is
 	// resolved: the recorded outcome shows whether it was applied once or twice (UC-16).
 	IdempotencyKey NilIdempotencyKey `json:"idempotency_key"`
-	CycleStart     NilTimestamp      `json:"cycle_start"`
-	CycleEnd       NilTimestamp      `json:"cycle_end"`
-	OccurredAt     Timestamp         `json:"occurred_at"`
+	// The start of the event's cycle, recomputed from the tenant's current anchor, zone and interval. Null
+	// for an event older than the current anchor, because a window from before a re-anchor cannot be
+	// recomputed from the anchor that replaced it.
+	CycleStart NilTimestamp `json:"cycle_start"`
+	// The end of the event's cycle, on the same terms as `cycle_start`, and also null for a `never`
+	// entitlement (INV-C6).
+	CycleEnd   NilTimestamp `json:"cycle_end"`
+	OccurredAt Timestamp    `json:"occurred_at"`
 }
 
 // GetID returns the value of ID.

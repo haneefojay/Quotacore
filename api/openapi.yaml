@@ -301,8 +301,8 @@ paths:
       operationId: listFeatures
       summary: List the feature catalogue
       description: |
-        The whole catalogue is small by construction, so this returns everything rather than a
-        page. A feature is a key, a unit and a name, and the unit is what an `amount` counts.
+        A page of the catalogue, newest first, with the same opaque cursor as every other list. A
+        feature is a key, a unit and a name, and the unit is what an `amount` counts.
       security:
         - bearerAuth: []
       x-required-scope: admin
@@ -318,17 +318,20 @@ paths:
           $ref: '#/components/responses/ErrorUnauthorized'
         '403':
           $ref: '#/components/responses/ErrorForbiddenScope'
-        '501':
-          $ref: '#/components/responses/ErrorNotImplemented'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
     post:
       tags: [admin-features]
       operationId: createFeature
       summary: Create a feature
       description: |
-        `key` and `unit` are immutable once the feature is referenced, because reinterpreting a
-        historical amount is not allowed. The two have distinct error codes for that reason
-        (INV-F2, INV-F3); `feature_unit_immutable` is on this cell because a create that races an
-        assignment is the case the DDL cannot catch.
+        `key` is immutable always and `unit` once the feature is referenced, because reinterpreting a
+        historical amount is not allowed (INV-F2, INV-F3). `kind: boolean` is a v0.2 surface and is
+        `501 not_implemented` on a v0.1 build (F-5).
       security:
         - bearerAuth: []
       x-required-scope: admin
@@ -359,8 +362,14 @@ paths:
           $ref: '#/components/responses/ErrorConflictFeature'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
         '501':
           $ref: '#/components/responses/ErrorNotImplemented'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/features/{feature_key}:
     parameters:
@@ -383,12 +392,16 @@ paths:
           $ref: '#/components/responses/ErrorForbiddenScope'
         '404':
           $ref: '#/components/responses/ErrorFeatureNotFound'
-        '501':
-          $ref: '#/components/responses/ErrorNotImplemented'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
     patch:
       tags: [admin-features]
       operationId: updateFeature
-      summary: Rename a feature
+      summary: Rename a feature, or correct an unreferenced unit
       description: |
         `version` is required and is the optimistic-concurrency token. A mismatch is
         `409 resource_version_conflict` with the current version in `details`, so a client can
@@ -396,8 +409,10 @@ paths:
         money is not acceptable, and an operator with two open browser tabs is exactly the case
         (FS-12).
 
-        `unit` is absent from this body on purpose. It is immutable, so offering the field and
-        then refusing it would be a worse API than not offering it.
+        `unit` may change only while nothing references the feature: no plan entitlement, no
+        override and no usage event. Once anything does, a unit change is
+        `409 feature_unit_immutable`, because it would reinterpret every historical amount
+        (INV-F2).
       security:
         - bearerAuth: []
       x-required-scope: admin
@@ -428,8 +443,56 @@ paths:
           $ref: '#/components/responses/ErrorConflictFeature'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
-        '501':
-          $ref: '#/components/responses/ErrorNotImplemented'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
+
+    delete:
+      tags: [admin-features]
+      operationId: deleteFeature
+      summary: Delete an unreferenced feature
+      description: |
+        A hard delete, permitted only while no plan entitlement, override or usage event
+        references the feature (F-6). Otherwise `409 feature_in_use`, and archiving is the remedy,
+        because the history must never dangle (DR-016). The delete is audited with its reason.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteRequest'
+            examples:
+              delete:
+                summary: Remove a feature created by mistake
+                value:
+                  reason: created with the wrong key
+      responses:
+        '204':
+          $ref: '#/components/responses/NoContent'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorFeatureNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflictFeature'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/features/{feature_key}/archive:
     parameters:
@@ -475,8 +538,12 @@ paths:
           $ref: '#/components/responses/ErrorConflictFeature'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
-        '501':
-          $ref: '#/components/responses/ErrorNotImplemented'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/plans:
     get:
@@ -500,6 +567,12 @@ paths:
           $ref: '#/components/responses/ErrorForbiddenScope'
         '409':
           $ref: '#/components/responses/ErrorConflictPlan'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
     post:
       tags: [admin-plans]
       operationId: createPlan
@@ -543,6 +616,12 @@ paths:
           $ref: '#/components/responses/ErrorConflictPlan'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/plans/{id}:
     parameters:
@@ -567,6 +646,12 @@ paths:
           $ref: '#/components/responses/ErrorPlanNotFound'
         '409':
           $ref: '#/components/responses/ErrorConflictPlan'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
     patch:
       tags: [admin-plans]
       operationId: updatePlan
@@ -615,6 +700,56 @@ paths:
           $ref: '#/components/responses/ErrorConflictPlan'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
+
+    delete:
+      tags: [admin-plans]
+      operationId: deletePlan
+      summary: Delete an unassigned plan
+      description: |
+        A hard delete, permitted only while no tenant, including a soft-deleted one, is assigned to
+        the plan (P-6, DR-035). Otherwise `409 plan_in_use`, and archiving is the remedy. The
+        plan's own entitlements go with it. The delete is audited with its reason.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteRequest'
+            examples:
+              delete:
+                summary: Remove a plan that was never sold
+                value:
+                  reason: draft plan, never assigned
+      responses:
+        '204':
+          $ref: '#/components/responses/NoContent'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorPlanNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflictPlan'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/plans/{id}/apply:
     parameters:
@@ -674,6 +809,12 @@ paths:
           $ref: '#/components/responses/ErrorConfirmationRequired'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/plans/{id}/archive:
     parameters:
@@ -716,6 +857,12 @@ paths:
           $ref: '#/components/responses/ErrorConflictPlan'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/plans/{id}/impact:
     parameters:
@@ -742,6 +889,12 @@ paths:
           $ref: '#/components/responses/ErrorForbiddenScope'
         '404':
           $ref: '#/components/responses/ErrorPlanNotFound'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/tenants:
     get:
@@ -769,6 +922,12 @@ paths:
           $ref: '#/components/responses/ErrorForbiddenScope'
         '409':
           $ref: '#/components/responses/ErrorConflictTenant'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
     post:
       tags: [admin-tenants]
       operationId: createTenant
@@ -814,6 +973,12 @@ paths:
           $ref: '#/components/responses/ErrorConflictTenant'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/tenants/{id}:
     parameters:
@@ -838,6 +1003,12 @@ paths:
           $ref: '#/components/responses/ErrorTenantNotFound'
         '409':
           $ref: '#/components/responses/ErrorConflictTenant'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
     patch:
       tags: [admin-tenants]
       operationId: updateTenant
@@ -880,6 +1051,12 @@ paths:
           $ref: '#/components/responses/ErrorConflictTenant'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
     delete:
       tags: [admin-tenants]
       operationId: deleteTenant
@@ -921,6 +1098,12 @@ paths:
           $ref: '#/components/responses/ErrorConflictTenant'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/tenants/{id}/suspend:
     parameters:
@@ -963,6 +1146,12 @@ paths:
           $ref: '#/components/responses/ErrorConflictTenant'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/tenants/{id}/resume:
     parameters:
@@ -1001,6 +1190,12 @@ paths:
           $ref: '#/components/responses/ErrorConflictTenant'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/tenants/{id}/grant:
     parameters:
@@ -1050,6 +1245,12 @@ paths:
           $ref: '#/components/responses/ErrorConflictQuota'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/tenants/{id}/set:
     parameters:
@@ -1092,6 +1293,12 @@ paths:
           $ref: '#/components/responses/ErrorConflictQuota'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/tenants/{id}/force-rollover:
     parameters:
@@ -1136,6 +1343,12 @@ paths:
           $ref: '#/components/responses/ErrorConflictQuota'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/tenants/{id}/overrides:
     parameters:
@@ -1200,6 +1413,12 @@ paths:
           $ref: '#/components/responses/ErrorConflictQuota'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/tenants/{id}/overrides/{feature_key}:
     parameters:
@@ -1254,6 +1473,12 @@ paths:
           $ref: '#/components/responses/ErrorTenantNotFound'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
   
   /v1/admin/tenants/{id}/events:
     parameters:
@@ -1303,6 +1528,10 @@ paths:
           $ref: '#/components/responses/ErrorTenantNotFound'
         '429':
           $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
   
   /v1/admin/keys:
     get:
@@ -1332,8 +1561,12 @@ paths:
           $ref: '#/components/responses/ErrorUnauthorized'
         '403':
           $ref: '#/components/responses/ErrorForbiddenScope'
-        '409':
-          $ref: '#/components/responses/ErrorResourceVersionConflict'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
     post:
       tags: [admin-keys]
       operationId: createKey
@@ -1370,10 +1603,14 @@ paths:
           $ref: '#/components/responses/ErrorUnauthorized'
         '403':
           $ref: '#/components/responses/ErrorForbiddenScope'
-        '409':
-          $ref: '#/components/responses/ErrorResourceVersionConflict'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
 
   /v1/admin/keys/{id}:
     parameters:
@@ -1383,9 +1620,11 @@ paths:
       operationId: revokeKey
       summary: Revoke an API key
       description: |
-        Revocation is **immediate, with no cache delay**, because the cache stores the hash and the
-        state and revocation bumps the version. A revoked key is rejected on the next request
-        (UC-15, K-2).
+        Revocation takes effect on the next request to the instance that served it, and within the
+        propagation bound (NFR-D3) on every other, because each instance's key cache re-reads its
+        keys on every invalidation and refresh tick (UC-15, K-2). Revoking a key that is already
+        revoked is `204` and changes nothing. An id that names no key is `404 api_key_not_found`,
+        so a mistyped id in an incident is never mistaken for a revoked key.
       security:
         - bearerAuth: []
       x-required-scope: admin
@@ -1398,8 +1637,14 @@ paths:
           $ref: '#/components/responses/ErrorUnauthorized'
         '403':
           $ref: '#/components/responses/ErrorForbiddenScope'
-        '409':
-          $ref: '#/components/responses/ErrorResourceVersionConflict'
+        '404':
+          $ref: '#/components/responses/ErrorKeyNotFound'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
   
   /v1/admin/audit:
     get:
@@ -1431,6 +1676,10 @@ paths:
           $ref: '#/components/responses/ErrorForbiddenScope'
         '429':
           $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '503':
+          $ref: '#/components/responses/ErrorUnavailable'
   
   /v1/admin/status:
     get:
@@ -1443,8 +1692,11 @@ paths:
         down could not report that the dependency was down, which is the one thing it exists to
         do. It reports dependency failure as data, at `200`.
 
-        It does still require the `admin` scope (NFR-O5). Reports the build, the `tzdata` version
-        the binary was built with, the current time and the snapshot size.
+        It does still require the `admin` scope (NFR-O5). A missing or invalid credential is a bare
+        `401`, a key of the wrong scope a bare `403`, and a caller over the admin rate limit a bare
+        `429` with `Retry-After`, each with no body, because those are answers about the caller
+        rather than about a dependency. Reports the build, the `tzdata` version the binary was built
+        with, the current time and the snapshot size.
       security:
         - bearerAuth: []
       x-required-scope: admin
@@ -1670,7 +1922,10 @@ components:
       name: id
       in: path
       required: true
-      description: A plan identifier. Either the UUID or the plan key; both address a plan.
+      description: |
+        A plan identifier. Either the UUID or the plan key; both address a plan. A UUID-shaped value
+        is looked up as an id first and as a plan key second. An identifier that names no plan is
+        `404 plan_not_found`, never `400`.
       schema:
         type: string
         minLength: 1
@@ -1679,7 +1934,10 @@ components:
       name: id
       in: path
       required: true
-      description: A tenant identifier. Either the UUID or the `external_id`; both address a tenant.
+      description: |
+        A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A
+        UUID-shaped value is looked up as an id first and as an `external_id` second. An identifier
+        that names no tenant is `404 tenant_not_found`, never `400`, and is never echoed.
       schema:
         type: string
         minLength: 1
@@ -1914,6 +2172,13 @@ components:
           request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
           details:
             plan_key: enterprise-legacy
+    ApiKeyNotFound:
+      summary: Revoking a key id that names no key
+      value:
+        error:
+          code: api_key_not_found
+          message: no API key has that id
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
     PayloadTooLarge:
       summary: metadata above its cap
       description: |
@@ -2726,6 +2991,7 @@ components:
                       feature_key: llm.tokens.output
                       limit_value: 10000000
                       apply_at: next_boundary
+                    reason: null
                     request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
                     occurred_at: '2026-09-28T14:00:00+02:00'
                 next_cursor: null
@@ -3209,12 +3475,12 @@ components:
             resource_version_conflict:
               $ref: '#/components/examples/ResourceVersionConflict'
 
-    ErrorResourceVersionConflict:
-      x-status: 409
-      x-codes: [resource_version_conflict]
+    ErrorKeyNotFound:
+      x-status: 404
+      x-codes: [api_key_not_found]
       description: |
-        Optimistic concurrency. Re-read the resource and retry with the current `version`; retrying
-        the same body will fail the same way.
+        No API key has that id. Distinct from a successful revocation, so a mistyped id is never
+        mistaken for a revoked key. List the keys and check the id.
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'
@@ -3223,8 +3489,8 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
           examples:
-            resource_version_conflict:
-              $ref: '#/components/examples/ResourceVersionConflict'
+            api_key_not_found:
+              $ref: '#/components/examples/ApiKeyNotFound'
 
     ErrorPayloadTooLarge:
       x-status: 413
@@ -3506,7 +3772,9 @@ components:
 
     KeyState:
       type: string
-      description: A key's lifecycle. Revocation is effective on the next request, with no cache delay.
+      description: |
+        A key's lifecycle. Revocation is effective on the next request to the instance that served
+        it, and within the propagation bound (NFR-D3) on every other.
       enum: [active, revoked, expired]
 
     TenantState:
@@ -3595,6 +3863,7 @@ components:
         - tenant_not_found
         - feature_not_found
         - plan_not_found
+        - api_key_not_found
         - payload_too_large
         - idempotency_key_reuse
         - plan_in_use
@@ -3850,8 +4119,8 @@ components:
           type: string
           format: uuid
           description: |
-            Internal, and what `/v1/admin/features/{id}` takes. Unlike a tenant's `external_id`
-            there is no customer-chosen form, because a feature is Quotacore's own catalogue entry.
+            Internal. The admin routes address a feature by `feature_key`, never by this id, which
+            exists for the audit log's `subject_id`.
         feature_key:
           allOf:
             - $ref: '#/components/schemas/FeatureKey'
@@ -3914,12 +4183,20 @@ components:
           maxLength: 2000
           description: Optional free text. Absent and `''` are the same thing, which is why it defaults to `''`.
           default: ''
+        kind:
+          allOf:
+            - $ref: '#/components/schemas/FeatureKind'
+          description: |
+            Optional, `metered` by default. `boolean` is a v0.2 surface and is `501 not_implemented`
+            on a v0.1 build (F-5).
+          default: metered
 
     FeatureUpdate:
       type: object
       description: |
-        A rename. `unit` and `feature_key` are absent by design: offering an immutable field and
-        then refusing it is a worse API than not offering it.
+        A rename, or a unit correction. `feature_key` is absent by design: it is immutable always, and
+        offering an immutable field and then refusing it is a worse API than not offering it. `unit`
+        is offered because it is mutable until the feature is referenced (INV-F2).
       additionalProperties: false
       required: [version]
       properties:
@@ -3938,6 +4215,12 @@ components:
           type: string
           maxLength: 2000
           description: Replaces the current free text. `''` clears it, so clearing is an explicit act.
+        unit:
+          allOf:
+            - $ref: '#/components/schemas/Unit'
+          description: |
+            A new unit, accepted only while no plan entitlement, override or usage event references
+            the feature. Otherwise `409 feature_unit_immutable` (INV-F2).
 
     FeatureList:
       description: |
@@ -4374,7 +4657,9 @@ components:
     ArchiveRequest:
       description: |
         Archive a plan or a feature. Archiving is not deletion: the record keeps its history and stops
-        being assignable, and archiving again is what reverses it (INV-P2, UC-13).
+        being assignable (UC-13). v0.1 has no unarchive route, so archiving is one-way here, and
+        archiving a record that is already archived is a `200` that changes nothing and writes no
+        audit row.
       type: object
       additionalProperties: false
       required: [version, reason]
@@ -4393,8 +4678,11 @@ components:
 
     DeleteRequest:
       description: |
-        Soft-delete a tenant. Deletion is terminal for the tenant, so the open balance is not re-granted
-        and the ledger is kept, because a deleted tenant still has events (UC-14).
+        Delete a tenant, a plan or a feature, with the reason the audit row records. A tenant is
+        soft-deleted: deletion is terminal for the tenant, so the open balance is not re-granted and
+        the ledger is kept, because a deleted tenant still has events (UC-14). A plan or a feature is
+        hard-deleted, and only while nothing references it (P-6, F-6); otherwise the answer is
+        `409 plan_in_use` or `409 feature_in_use`, and archiving is the remedy.
       type: object
       additionalProperties: false
       required: [reason]
@@ -4404,8 +4692,8 @@ components:
           minLength: 1
           maxLength: 2000
           description: |
-            Required and audited. Soft deletion is terminal, so the reason is the only record of
-            why it happened.
+            Required and audited. Deletion is terminal, so the reason is the only record of why it
+            happened.
 
     GrantRequest:
       type: object
@@ -4676,10 +4964,17 @@ components:
           oneOf:
             - $ref: '#/components/schemas/Timestamp'
             - type: 'null'
+          description: |
+            The start of the event's cycle, recomputed from the tenant's current anchor, zone and
+            interval. Null for an event older than the current anchor, because a window from before
+            a re-anchor cannot be recomputed from the anchor that replaced it.
         cycle_end:
           oneOf:
             - $ref: '#/components/schemas/Timestamp'
             - type: 'null'
+          description: |
+            The end of the event's cycle, on the same terms as `cycle_start`, and also null for a
+            `never` entitlement (INV-C6).
         occurred_at:
           $ref: '#/components/schemas/Timestamp'
 
@@ -4707,7 +5002,7 @@ components:
         One administrative mutation, written in the same transaction as the mutation (NFR-D4). An
         audit log written best effort is a log, not an audit trail.
       additionalProperties: false
-      required: [id, actor, actor_key_id, action, subject_type, subject_id, before, after, request_id, occurred_at]
+      required: [id, actor, actor_key_id, action, subject_type, subject_id, before, after, reason, request_id, occurred_at]
       properties:
         id:
           type: string
@@ -4758,6 +5053,13 @@ components:
           oneOf:
             - type: object
               additionalProperties: true
+            - type: 'null'
+        reason:
+          description: |
+            The reason the caller gave, for the mutations that require one (archive, delete, suspend,
+            resume), and null for the rest.
+          oneOf:
+            - type: string
             - type: 'null'
         request_id:
           $ref: '#/components/schemas/RequestId'
@@ -4827,9 +5129,8 @@ components:
             - $ref: '#/components/schemas/Timestamp'
             - type: 'null'
           description: |
-            Revocation is immediate and **effective on the next request with no cache delay**,
-            because the cache stores the hash and the state and revocation bumps the version
-            (UC-15, K-2).
+            Revocation takes effect on the next request to the instance that served it, and within
+            the propagation bound (NFR-D3) on every other instance (UC-15, K-2).
 
     KeyCreate:
       description: |

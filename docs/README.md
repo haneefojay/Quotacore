@@ -45,7 +45,7 @@ Read in order; the documents build on each other. Start with
 | [mvp-scope.md](product/mvp-scope.md) | The hard v0.1 boundary, per-release exit criteria, and what is deferred | You are planning work or defending a cut |
 | [use-cases.md](product/use-cases.md) | 19 use cases (`UC-01`–`UC-19`) with preconditions, triggers, flows and alternatives | You are writing tests, or designing an interface |
 | [state-machines.md](product/state-machines.md) | Every state, its transitions, guards and invariants | You are implementing transitions or reasoning about an edge case |
-| [error-catalog.md](product/error-catalog.md) | 34 error codes and 22 failure scenarios (`FS-01`–`FS-22`), with a client action for each | You are handling errors, or writing an SDK |
+| [error-catalog.md](product/error-catalog.md) | 35 error codes and 22 failure scenarios (`FS-01`–`FS-22`), with a client action for each | You are handling errors, or writing an SDK |
 | [user-journeys.md](product/user-journeys.md) | 10 end-to-end journeys (`J-1`–`J-10`), including the sceptical evaluator | You are validating that the product solves a real problem |
 | [assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) | 23 assumptions (`A-01`–`A-23`) with validation methods, a dated accepted-risk table and a corrections log, and 22 questions: 10 answered, 3 deferred, 9 open | You are about to build on an unverified assumption |
 | [glossary.md](product/glossary.md) | Every term, with the ones that are easy to confuse marked | Any time a word is ambiguous |
@@ -137,7 +137,7 @@ documents themselves and fails if this table disagrees, so a stale count cannot 
 | --- | --- | --- |
 | Rules | 49 | [product/domain-rules.md](product/domain-rules.md) |
 | Use cases | 19 | [product/use-cases.md](product/use-cases.md) |
-| Error codes | 34 | [product/error-catalog.md](product/error-catalog.md) |
+| Error codes | 35 | [product/error-catalog.md](product/error-catalog.md) |
 | Failure scenarios | 22 | [product/error-catalog.md](product/error-catalog.md) |
 | Assumptions | 23 | [product/assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) |
 | Open questions | 22 | [product/assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) |
@@ -147,7 +147,7 @@ documents themselves and fails if this table disagrees, so a stale count cannot 
 | Named tests | 15 | [architecture/testing-strategy.md](architecture/testing-strategy.md) |
 | Decisions | 18 | [decisions/](decisions/) |
 | Markdown documents | 64 | repository root |
-| Files in the repository | 194 | repository root, excluding the paths `.gitignore` marks as build output (13 files added by `IP-05` and `IP-06`: `IP-05`'s three embedded Lua scripts, the runner and the outcome, and the source, unit and integration tests that assert them; `IP-06`'s `idempotency.go` and its unit and integration tests; and 16 by `IP-08`: six migrations, the checksum record, the error classifier, the three guarded operations and the Postgres snapshot loader, and the schema, enum, constraint, source, loader and test-database tests; and 31 by `IP-07`: ADR-0018, the four routes and their decoding, rate limiter and event sink in `internal/dataplane`, the token, key cache and miss limiter in `internal/auth`, the error envelope and contract reader in `internal/envelope`, the key and tenant reads in `internal/db`, the balance read, the data-plane metrics, the server assembly, and the unit, matrix, outage, kill and restart tests) |
+| Files in the repository | 195 | repository root, excluding the paths `.gitignore` marks as build output (13 files added by `IP-05` and `IP-06`: `IP-05`'s three embedded Lua scripts, the runner and the outcome, and the source, unit and integration tests that assert them; `IP-06`'s `idempotency.go` and its unit and integration tests; and 16 by `IP-08`: six migrations, the checksum record, the error classifier, the three guarded operations and the Postgres snapshot loader, and the schema, enum, constraint, source, loader and test-database tests; and 31 by `IP-07`: ADR-0018, the four routes and their decoding, rate limiter and event sink in `internal/dataplane`, the token, key cache and miss limiter in `internal/auth`, the error envelope and contract reader in `internal/envelope`, the key and tenant reads in `internal/db`, the balance read, the data-plane metrics, the server assembly, and the unit, matrix, outage, kill and restart tests; and so far 1 by `IP-09`: the audit `reason` migration) |
 
 ## Identifier namespaces
 

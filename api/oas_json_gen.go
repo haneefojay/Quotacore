@@ -247,6 +247,10 @@ func (s *AuditEntry) encodeFields(e *jx.Encoder) {
 		s.After.Encode(e)
 	}
 	{
+		e.FieldStart("reason")
+		s.Reason.Encode(e)
+	}
+	{
 		e.FieldStart("request_id")
 		s.RequestID.Encode(e)
 	}
@@ -256,17 +260,18 @@ func (s *AuditEntry) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfAuditEntry = [10]string{
-	0: "id",
-	1: "actor",
-	2: "actor_key_id",
-	3: "action",
-	4: "subject_type",
-	5: "subject_id",
-	6: "before",
-	7: "after",
-	8: "request_id",
-	9: "occurred_at",
+var jsonFieldsNameOfAuditEntry = [11]string{
+	0:  "id",
+	1:  "actor",
+	2:  "actor_key_id",
+	3:  "action",
+	4:  "subject_type",
+	5:  "subject_id",
+	6:  "before",
+	7:  "after",
+	8:  "reason",
+	9:  "request_id",
+	10: "occurred_at",
 }
 
 // Decode decodes AuditEntry from json.
@@ -364,8 +369,18 @@ func (s *AuditEntry) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"after\"")
 			}
-		case "request_id":
+		case "reason":
 			requiredBitSet[1] |= 1 << 0
+			if err := func() error {
+				if err := s.Reason.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"reason\"")
+			}
+		case "request_id":
+			requiredBitSet[1] |= 1 << 1
 			if err := func() error {
 				if err := s.RequestID.Decode(d); err != nil {
 					return err
@@ -375,7 +390,7 @@ func (s *AuditEntry) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"request_id\"")
 			}
 		case "occurred_at":
-			requiredBitSet[1] |= 1 << 1
+			requiredBitSet[1] |= 1 << 2
 			if err := func() error {
 				if err := s.OccurredAt.Decode(d); err != nil {
 					return err
@@ -395,7 +410,7 @@ func (s *AuditEntry) Decode(d *jx.Decoder) error {
 	var failures []validate.FieldError
 	for i, mask := range [2]uint8{
 		0b11111111,
-		0b00000011,
+		0b00000111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -1708,6 +1723,8 @@ func (s *ErrorCode) Decode(d *jx.Decoder) error {
 		*s = ErrorCodeFeatureNotFound
 	case ErrorCodePlanNotFound:
 		*s = ErrorCodePlanNotFound
+	case ErrorCodeAPIKeyNotFound:
+		*s = ErrorCodeAPIKeyNotFound
 	case ErrorCodePayloadTooLarge:
 		*s = ErrorCodePayloadTooLarge
 	case ErrorCodeIdempotencyKeyReuse:
@@ -2490,13 +2507,20 @@ func (s *FeatureCreate) encodeFields(e *jx.Encoder) {
 			s.Description.Encode(e)
 		}
 	}
+	{
+		if s.Kind.Set {
+			e.FieldStart("kind")
+			s.Kind.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfFeatureCreate = [4]string{
+var jsonFieldsNameOfFeatureCreate = [5]string{
 	0: "feature_key",
 	1: "name",
 	2: "unit",
 	3: "description",
+	4: "kind",
 }
 
 // Decode decodes FeatureCreate from json.
@@ -2551,6 +2575,16 @@ func (s *FeatureCreate) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"description\"")
 			}
+		case "kind":
+			if err := func() error {
+				s.Kind.Reset()
+				if err := s.Kind.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"kind\"")
+			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
 		}
@@ -2603,6 +2637,46 @@ func (s *FeatureCreate) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *FeatureCreate) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes FeatureCreateKind as json.
+func (s FeatureCreateKind) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes FeatureCreateKind from json.
+func (s *FeatureCreateKind) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode FeatureCreateKind to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch FeatureCreateKind(v) {
+	case FeatureCreateKindMetered:
+		*s = FeatureCreateKindMetered
+	case FeatureCreateKindBoolean:
+		*s = FeatureCreateKindBoolean
+	default:
+		*s = FeatureCreateKind(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s FeatureCreateKind) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *FeatureCreateKind) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -2835,12 +2909,19 @@ func (s *FeatureUpdate) encodeFields(e *jx.Encoder) {
 			s.Description.Encode(e)
 		}
 	}
+	{
+		if s.Unit.Set {
+			e.FieldStart("unit")
+			s.Unit.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfFeatureUpdate = [3]string{
+var jsonFieldsNameOfFeatureUpdate = [4]string{
 	0: "version",
 	1: "name",
 	2: "description",
+	3: "unit",
 }
 
 // Decode decodes FeatureUpdate from json.
@@ -2881,6 +2962,16 @@ func (s *FeatureUpdate) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"description\"")
+			}
+		case "unit":
+			if err := func() error {
+				s.Unit.Reset()
+				if err := s.Unit.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"unit\"")
 			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
@@ -5173,6 +5264,39 @@ func (s *OptErrorDetails) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes FeatureCreateKind as json.
+func (o OptFeatureCreateKind) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes FeatureCreateKind from json.
+func (o *OptFeatureCreateKind) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptFeatureCreateKind to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptFeatureCreateKind) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptFeatureCreateKind) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes FeatureKey as json.
 func (o OptFeatureKey) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -5521,6 +5645,39 @@ func (s OptTimestamp) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptTimestamp) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes Unit as json.
+func (o OptUnit) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes Unit from json.
+func (o *OptUnit) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptUnit to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptUnit) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptUnit) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
