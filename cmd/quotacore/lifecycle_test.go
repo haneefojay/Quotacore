@@ -694,7 +694,9 @@ func TestT06PlanAppliedAcrossAnOutage(t *testing.T) {
 			}
 		}
 
-		// A restart, and another drain, change nothing.
+		// A restart, and another drain, change nothing. Both instances'
+		// ledgers are written first, because the digest counts the rows.
+		second.flush()
 		before := digest()
 		newStack(t, func(o *stackOptions) { o.dbURL = s.dbURL })
 		time.Sleep(1500 * time.Millisecond)
