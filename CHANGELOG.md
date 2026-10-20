@@ -263,6 +263,9 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **`IP-11` is `IN PROGRESS`**, opened 2026-10-20 before any file it owns exists. Nothing gated it:
+  `IP-07` closed on 2026-10-19 and `IP-12` on 2026-10-20.
+
 - **`IP-12` is `COMPLETE`**, opened 2026-10-20 before any file it owns existed and closed the same day
   with 8 of 8 DoD items met. `IP-11` and `IP-14` are now `NOT STARTED`. A force-rollover reopens the
   cycle it is in, so data-model §2.7's reconciliation identity reads from a cycle's last opening.

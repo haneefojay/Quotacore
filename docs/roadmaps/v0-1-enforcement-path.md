@@ -24,7 +24,7 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-08` | Control-plane schema and migrations | `IP-02` | `COMPLETE`, 2026-10-19 |
 | `IP-09` | Control-plane API and API keys | `IP-08` | `COMPLETE`, opened 2026-10-19, closed 2026-10-20 |
 | `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `COMPLETE`, opened and closed 2026-10-20 |
-| `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `NOT STARTED` |
+| `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `IN PROGRESS`, opened 2026-10-20 |
 | `IP-12` | Usage ledger, writer and archiver | `IP-08` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-13` | Observability | `IP-07` | `NOT STARTED` |
 | `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `NOT STARTED` |
@@ -1367,8 +1367,8 @@ separate phases.
 
 ## IP-11 — Idempotency detection and reconciliation
 
-**Status** `NOT STARTED`; `IP-07` closed on 2026-10-19 and `IP-12` on 2026-10-20, so nothing gates
-this phase.
+**Status** `IN PROGRESS`, opened 2026-10-20. `IP-07` closed on 2026-10-19 and `IP-12` on
+2026-10-20, so nothing gates this phase.
 
 **Objective.** The control plane's half of the idempotency claim: notice when a data-plane record
 and the ledger disagree, rather than preventing it again.
