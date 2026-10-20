@@ -90,6 +90,11 @@ type Outcome struct {
 	Index int64
 	Start time.Time
 	End   *time.Time
+	// Closed is the balance a rollover discarded: what the cycle that ended
+	// held when this execution re-granted the allowance. It is set exactly
+	// when Transition is Rolled, except on a replay, which rolled nothing, and
+	// the caller records it as that cycle's closing (IP-12 D3).
+	Closed *int64
 }
 
 // Allowed reports whether the request fits in the balance, which is the question
@@ -142,8 +147,13 @@ var ErrIdempotencyKeyReuse = errors.New("this Idempotency-Key was used for a dif
 
 // replyFields is the arity of every reply, and it is fixed. A table with a
 // missing or an extra element would decode into the wrong field rather than
-// fail, so both are refused.
-const replyFields = 8
+// fail, so both are refused. The one exception is a replayed reply of eight,
+// the shape before the closed balance was added (IP-12 D3): a replay carries no
+// closed balance, so the eight it had are the same eight it has now.
+const replyFields = 9
+
+// stateFields is the decision, the transition and the six values of the state.
+const stateFields = 8
 
 // decode turns a script's reply into an Outcome, or into an error. It never
 // guesses: an unknown decision, an unknown verdict, a number where a string was
@@ -162,18 +172,38 @@ func decode(op Operation, raw any) (Outcome, error) {
 	if !ok {
 		return Outcome{}, fmt.Errorf("the %s script answered %T rather than a table of %d strings", op, raw, replyFields)
 	}
+	if len(table) == stateFields {
+		if d, _ := table[0].(string); Decision(d) == Replayed {
+			table = append(table[:stateFields:stateFields], "")
+		}
+	}
 	if len(table) != replyFields {
 		return Outcome{}, fmt.Errorf("the %s script answered %d fields rather than %d", op, len(table), replyFields)
 	}
-	fields := make([]string, replyFields)
+	fields, err := asStrings(op, table)
+	if err != nil {
+		return Outcome{}, err
+	}
+	return decodeFields(op, fields)
+}
+
+// asStrings requires every element of a reply to be a string.
+func asStrings(op Operation, table []any) ([]string, error) {
+	fields := make([]string, len(table))
 	for i, v := range table {
 		s, isString := v.(string)
 		if !isString {
-			return Outcome{}, fmt.Errorf("the %s script answered %q in field %d rather than a string", op, v, i+1)
+			return nil, fmt.Errorf("the %s script answered %q in field %d rather than a string", op, v, i+1)
 		}
 		fields[i] = s
 	}
+	return fields, nil
+}
 
+// decodeFields reads the nine fields every script that runs the shared
+// transition answers with; reanchor and rollover answer the first eight and
+// leave the closed balance empty.
+func decodeFields(op Operation, fields []string) (Outcome, error) {
 	out := Outcome{
 		Decision:   Decision(fields[0]),
 		Transition: Transition(fields[1]),
@@ -225,6 +255,21 @@ func decode(op Operation, raw any) (Outcome, error) {
 		}
 		converted := time.UnixMilli(end).UTC()
 		out.End = &converted
+	}
+	closed := fields[stateFields]
+	switch {
+	case closed != "" && out.Transition != Rolled:
+		return Outcome{}, fmt.Errorf("the %s script answered a closed balance %q on a %s transition", op, closed, out.Transition)
+	case closed != "" && out.Decision == Replayed:
+		return Outcome{}, fmt.Errorf("the %s script answered a closed balance %q on a replay, which rolled nothing", op, closed)
+	case closed == "" && out.Transition == Rolled && out.Decision != Replayed && op != Reanchor && op != Rollover:
+		return Outcome{}, fmt.Errorf("the %s script rolled a cycle and did not say what it closed", op)
+	case closed != "":
+		n, err := parseCount(op, closed)
+		if err != nil {
+			return Outcome{}, err
+		}
+		out.Closed = &n
 	}
 	return out, nil
 }

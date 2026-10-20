@@ -580,6 +580,9 @@ func TestT06MissedBoundariesSkippedIsNotMissed(t *testing.T) {
 	if out.Balance != 99 {
 		t.Errorf("balance = %d, want 99: one allowance, not one per boundary missed", out.Balance)
 	}
+	if out.Closed == nil || *out.Closed != 3 {
+		t.Errorf("closed balance = %v, want the 3 the idle cycle ended on (IP-12 D3)", out.Closed)
+	}
 	if got := balanceOf(t, s, key); got != 99 {
 		t.Errorf("the key holds %d, want 99", got)
 	}
@@ -618,8 +621,14 @@ func TestOnlyOneOfManyConcurrentCallersRollsTheCycle(t *testing.T) {
 			switch out.Transition {
 			case Rolled:
 				rolled++
+				if out.Closed == nil || *out.Closed != 7 {
+					t.Errorf("the rolling caller reported closing %v, want 7", out.Closed)
+				}
 			case Current:
 				current++
+				if out.Closed != nil {
+					t.Errorf("a caller that rolled nothing reported closing %d", *out.Closed)
+				}
 			default:
 				t.Errorf("transition = %q, want rolled or current", out.Transition)
 			}

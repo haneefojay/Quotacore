@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/quotacore/quotacore/internal/script"
 )
 
 // Event is what an applied consume or refund hands the ledger (request-lifecycle.md
@@ -55,3 +57,33 @@ type EventSink interface {
 type NopSink struct{}
 
 func (NopSink) Enqueue(Event) {}
+
+// Rollover is the cycle_rolled_over event for a script reply whose transition
+// re-granted the allowance (IP-12 D3, U-6): the closed cycle's balance becomes
+// the new window's limit, attributed to the system and to the request whose
+// script rolled. A caller hands it to the sink before its own event, so the
+// ledger reads in the order the store changed. It reports false when nothing
+// rolled, on a replay, and when the closing balance already equalled the new
+// limit, which is no change and so no event (Q-22).
+func Rollover(requestID, tenantID, featureKey string, out script.Outcome, at time.Time) (Event, bool) {
+	if !out.Rolled() || out.Closed == nil {
+		return Event{}, false
+	}
+	delta := out.Limit - *out.Closed
+	if delta == 0 {
+		return Event{}, false
+	}
+	return Event{
+		RequestID:  requestID,
+		TenantID:   tenantID,
+		FeatureKey: featureKey,
+		Type:       "cycle_rolled_over",
+		Source:     "system",
+		Amount:     max(delta, -delta),
+		Delta:      delta,
+		Balance:    out.Limit,
+		CycleIndex: out.Index,
+		CycleStart: out.Start,
+		OccurredAt: at,
+	}, true
+}

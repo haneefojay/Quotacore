@@ -157,7 +157,7 @@ func appliedReply(balance int64) []any {
 		"applied", "current",
 		strconv.FormatInt(balance, 10), "100", "0", "5",
 		strconv.FormatInt(testWindow.Start.UnixMilli(), 10),
-		strconv.FormatInt(testWindow.End.UnixMilli(), 10),
+		strconv.FormatInt(testWindow.End.UnixMilli(), 10), "",
 	}
 }
 
@@ -308,7 +308,7 @@ func TestAMutationWithoutAnIdempotencyKeyNeverReachesTheStore(t *testing.T) {
 func TestAnEntitlementThatNeverResetsSendsAnEmptyEnd(t *testing.T) {
 	fake := &fakeStore{reply: []any{
 		"applied", "current", "100", "100", "0", "0",
-		strconv.FormatInt(testWindow.Start.UnixMilli(), 10), "",
+		strconv.FormatInt(testWindow.Start.UnixMilli(), 10), "", "",
 	}}
 	r := newRunner(t, fake, 250*time.Millisecond)
 	req := Request{

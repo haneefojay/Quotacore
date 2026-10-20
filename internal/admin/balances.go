@@ -147,8 +147,14 @@ func (s *Service) adjust(w http.ResponseWriter, r *http.Request, fields []string
 		out     script.AdminOutcome
 		h       held
 		evts    []dataplane.Event
+		roll    *dataplane.Event
 		applied bool
 	)
+	defer func() {
+		if roll != nil {
+			s.events.Enqueue(*roll)
+		}
+	}()
 	tenant, err := s.store.AdjustBalance(r.Context(), actor(r), id, feature, s.rewrite,
 		func(ctx context.Context, t *snapshot.LoadedTenant) (Audit, error) {
 			var err error
@@ -161,6 +167,13 @@ func (s *Service) adjust(w http.ResponseWriter, r *http.Request, fields []string
 				}
 				return Audit{}, errDataStore{err: err}
 			}
+			// The script's transition may have rolled the cycle before the
+			// change was decided. That rollover is in the store whether or not
+			// this transaction commits, so it is handed to the ledger whatever
+			// happens next (IP-12 D3).
+			if ev, ok := dataplane.Rollover(actor(r).RequestID, h.tenant.ID, feature, out.Outcome, h.at); ok && roll == nil {
+				roll = &ev
+			}
 			if out.Decision == script.RefusedCeiling {
 				return Audit{}, refuse(ceiling(feature, out, a.grant))
 			}
@@ -171,11 +184,18 @@ func (s *Service) adjust(w http.ResponseWriter, r *http.Request, fields []string
 			}
 			after := &balanceAudit{FeatureKey: feature, Balance: out.Balance, Limit: out.Limit, Bonus: out.Bonus, CycleIndex: out.Index}
 			if delta, known := out.Delta(); known && delta != 0 {
-				evts = append(evts, dataplane.Event{
+				ev := dataplane.Event{
 					RequestID: actor(r).RequestID, TenantID: h.tenant.ID, FeatureKey: feature, Type: a.event,
 					Source: "admin", Amount: abs(delta), Delta: delta, Balance: out.Balance, CycleIndex: out.Index,
-					OccurredAt: h.at,
-				})
+					CycleStart: out.Start, OccurredAt: h.at,
+				}
+				if a.event == "force_rolled_over" {
+					// U-7 carries its reason in metadata (state-machines.md
+					// section 5), so the ledger can tell a forced rollover's why.
+					ev.Metadata, _ = json.Marshal(map[string]string{"reason": reason})
+				}
+				evts = evts[:0]
+				evts = append(evts, ev)
 			}
 			return Audit{Action: a.action, Before: before, After: after, Reason: reason}, nil
 		})
@@ -190,7 +210,12 @@ func (s *Service) adjust(w http.ResponseWriter, r *http.Request, fields []string
 		s.fail(w, r, err)
 		return
 	}
-	// The ledger is handed what committed, and only once it has (S6).
+	// The ledger is handed what committed, and only once it has (S6), after
+	// the rollover the script applied first.
+	if roll != nil {
+		s.events.Enqueue(*roll)
+		roll = nil
+	}
 	for _, ev := range evts {
 		s.events.Enqueue(ev)
 	}

@@ -16,9 +16,13 @@ import (
 // report a tenant as exhausted.
 func TestDecodeReadsEveryShapeAScriptCanAnswerWith(t *testing.T) {
 	const start, end = int64(1759200000000), int64(1761792000000)
-	fields := func(decision, transition, balance, limit, bonus, index, endArg string) []any {
-		return []any{decision, transition, balance, limit, bonus, index,
-			strconv.FormatInt(start, 10), endArg}
+	fields := func(decision, transition, balance, limit, bonus, index, endArg string, closed ...string) []any {
+		reply := []any{decision, transition, balance, limit, bonus, index,
+			strconv.FormatInt(start, 10), endArg, ""}
+		if len(closed) > 0 {
+			reply[8] = closed[0]
+		}
+		return reply
 	}
 	cases := map[string]struct {
 		reply      []any
@@ -29,6 +33,7 @@ func TestDecodeReadsEveryShapeAScriptCanAnswerWith(t *testing.T) {
 		bonus      int64
 		index      int64
 		end        *time.Time
+		closed     *int64
 	}{
 		"applied in the window the caller asked about": {
 			reply:    fields("applied", "current", "70", "100", "0", "5", strconv.FormatInt(end, 10)),
@@ -36,9 +41,14 @@ func TestDecodeReadsEveryShapeAScriptCanAnswerWith(t *testing.T) {
 			end: ptr(time.UnixMilli(end).UTC()),
 		},
 		"applied after a rollover": {
-			reply:    fields("applied", "rolled", "100", "100", "0", "6", strconv.FormatInt(end, 10)),
+			reply:    fields("applied", "rolled", "100", "100", "0", "6", strconv.FormatInt(end, 10), "37"),
 			decision: Applied, transition: Rolled, balance: 100, limit: 100, index: 6,
-			end: ptr(time.UnixMilli(end).UTC()),
+			end: ptr(time.UnixMilli(end).UTC()), closed: count(37),
+		},
+		"a rollover that closed an exhausted cycle": {
+			reply:    fields("denied", "rolled", "10", "10", "0", "6", strconv.FormatInt(end, 10), "0"),
+			decision: Denied, transition: Rolled, balance: 10, limit: 10, index: 6,
+			end: ptr(time.UnixMilli(end).UTC()), closed: count(0),
 		},
 		"applied for a caller whose window was behind the store": {
 			reply:    fields("applied", "stale", "30", "100", "5", "9", strconv.FormatInt(end, 10)),
@@ -74,6 +84,11 @@ func TestDecodeReadsEveryShapeAScriptCanAnswerWith(t *testing.T) {
 			decision: Replayed, transition: Rolled, balance: 100, limit: 100, index: 6,
 			end: ptr(time.UnixMilli(end).UTC()),
 		},
+		"a replay in the eight-field form": {
+			reply:    fields("replayed", "current", "70", "100", "0", "5", strconv.FormatInt(end, 10))[:8],
+			decision: Replayed, transition: Current, balance: 70, limit: 100, index: 5,
+			end: ptr(time.UnixMilli(end).UTC()),
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -98,6 +113,9 @@ func TestDecodeReadsEveryShapeAScriptCanAnswerWith(t *testing.T) {
 			} else if out.End == nil || !out.End.Equal(*tc.end) {
 				t.Errorf("End = %v, want %v", out.End, tc.end)
 			}
+			if (out.Closed == nil) != (tc.closed == nil) || (out.Closed != nil && *out.Closed != *tc.closed) {
+				t.Errorf("Closed = %v, want %v", out.Closed, tc.closed)
+			}
 			// A replay is allowed: the operation it stands for was applied, and
 			// reporting a successful call as a quota failure is the opposite of
 			// what a retry is for.
@@ -116,28 +134,33 @@ func TestDecodeReadsEveryShapeAScriptCanAnswerWith(t *testing.T) {
 
 func TestDecodeRefusesAnythingItDoesNotUnderstand(t *testing.T) {
 	full := func(decision, transition string) []any {
-		return []any{decision, transition, "70", "100", "0", "5", "1759200000000", "1761792000000"}
+		return []any{decision, transition, "70", "100", "0", "5", "1759200000000", "1761792000000", ""}
 	}
 	cases := map[string]any{
-		"no reply at all":              nil,
-		"a string rather than a table": "applied",
-		"a number rather than a table": int64(1),
-		"a table of seven":             []any{"applied", "current", "70", "100", "0", "5", "1759200000000"},
-		"a table of nine":              append(full("applied", "current"), "extra"),
+		"no reply at all":                             nil,
+		"a string rather than a table":                "applied",
+		"a number rather than a table":                int64(1),
+		"a table of seven":                            []any{"applied", "current", "70", "100", "0", "5", "1759200000000"},
+		"a table of eight that is not a replay":       full("applied", "current")[:8],
+		"a table of ten":                              append(full("applied", "current"), "extra"),
+		"a closed balance on a current transition":    append(full("applied", "current")[:8], "40"),
+		"a closed balance on a replay":                append(full("replayed", "rolled")[:8], "40"),
+		"a rollover that does not say what it closed": full("applied", "rolled"),
+		"a closed balance that is not a count":        append(full("applied", "rolled")[:8], "-1"),
 		"a number where a string was promised": []any{
-			"applied", "current", int64(70), "100", "0", "5", "1759200000000", "1761792000000",
+			"applied", "current", int64(70), "100", "0", "5", "1759200000000", "1761792000000", "",
 		},
 		"a decision that is not one of the seven":   full("granted", "current"),
 		"a transition that is not one of the three": full("applied", "rewound"),
-		"a negative balance":                        []any{"applied", "current", "-1", "100", "0", "5", "1759200000000", "1761792000000"},
-		"a balance above 2^53":                      []any{"applied", "current", "9007199254740992", "100", "0", "5", "1759200000000", "1761792000000"},
-		"a balance that is not a number":            []any{"applied", "current", "seventy", "100", "0", "5", "1759200000000", "1761792000000"},
-		"a start that is not an instant":            []any{"applied", "current", "70", "100", "0", "5", "yesterday", "1761792000000"},
-		"an end that is not an instant":             []any{"applied", "current", "70", "100", "0", "5", "1759200000000", "tomorrow"},
-		"a missing state carried with the fault":    []any{"state_missing", "", "0", "0", "0", "0", "", ""},
-		"an invalid argument carried with a state":  []any{"invalid", "", "70", "100", "0", "5", "1759200000000", ""},
-		"a reused key":                              []any{"reused", "", "", "", "", "", "", ""},
-		"a reused key carrying a balance":           []any{"reused", "current", "70", "100", "0", "5", "1759200000000", ""},
+		"a negative balance":                        []any{"applied", "current", "-1", "100", "0", "5", "1759200000000", "1761792000000", ""},
+		"a balance above 2^53":                      []any{"applied", "current", "9007199254740992", "100", "0", "5", "1759200000000", "1761792000000", ""},
+		"a balance that is not a number":            []any{"applied", "current", "seventy", "100", "0", "5", "1759200000000", "1761792000000", ""},
+		"a start that is not an instant":            []any{"applied", "current", "70", "100", "0", "5", "yesterday", "1761792000000", ""},
+		"an end that is not an instant":             []any{"applied", "current", "70", "100", "0", "5", "1759200000000", "tomorrow", ""},
+		"a missing state carried with the fault":    []any{"state_missing", "", "0", "0", "0", "0", "", "", ""},
+		"an invalid argument carried with a state":  []any{"invalid", "", "70", "100", "0", "5", "1759200000000", "", ""},
+		"a reused key":                              []any{"reused", "", "", "", "", "", "", "", ""},
+		"a reused key carrying a balance":           []any{"reused", "current", "70", "100", "0", "5", "1759200000000", "", ""},
 	}
 	for name, reply := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -156,16 +179,16 @@ func TestDecodeRefusesAnythingItDoesNotUnderstand(t *testing.T) {
 // reading the message, because the caller turns them into HTTP statuses and
 // request-lifecycle.md step 2 is specific about which.
 func TestTheTwoNamedRefusalsAreRecognisable(t *testing.T) {
-	if _, err := decode(Consume, []any{"state_missing", "", "", "", "", "", "", ""}); !errors.Is(err, ErrStateMissing) {
+	if _, err := decode(Consume, []any{"state_missing", "", "", "", "", "", "", "", ""}); !errors.Is(err, ErrStateMissing) {
 		t.Errorf("a state-missing reply gave %v, and the caller matches it with errors.Is", err)
 	}
-	if _, err := decode(Refund, []any{"invalid", "", "", "", "", "", "", ""}); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := decode(Refund, []any{"invalid", "", "", "", "", "", "", "", ""}); !errors.Is(err, ErrInvalidArgument) {
 		t.Errorf("an invalid reply gave %v, and the caller matches it with errors.Is", err)
 	}
 	// A decision that is not in the set is neither: it is a defect in this code
 	// or in the store's copy of a script, and naming it as one of the two
 	// recognised refusals would send a defect out as a 503 the client retries.
-	if _, err := decode(Check, []any{"unknown", "", "", "", "", "", "", ""}); errors.Is(err, ErrStateMissing) || errors.Is(err, ErrInvalidArgument) {
+	if _, err := decode(Check, []any{"unknown", "", "", "", "", "", "", "", ""}); errors.Is(err, ErrStateMissing) || errors.Is(err, ErrInvalidArgument) {
 		t.Error("a decision that is not one of the seven was reported as a recognised refusal")
 	}
 }
@@ -174,10 +197,10 @@ func TestTheTwoNamedRefusalsAreRecognisable(t *testing.T) {
 // that was already used for a different operation is refused as a 409 whose
 // remedy is a new key, and it is never applied (DR-028).
 func TestAReusedKeyIsItsOwnRefusal(t *testing.T) {
-	if _, err := decode(Consume, []any{"reused", "", "", "", "", "", "", ""}); !errors.Is(err, ErrIdempotencyKeyReuse) {
+	if _, err := decode(Consume, []any{"reused", "", "", "", "", "", "", "", ""}); !errors.Is(err, ErrIdempotencyKeyReuse) {
 		t.Errorf("a reused reply gave %v, and the caller matches it with errors.Is", err)
 	}
-	if _, err := decode(Refund, []any{"reused", "", "", "", "", "", "", ""}); !errors.Is(err, ErrIdempotencyKeyReuse) {
+	if _, err := decode(Refund, []any{"reused", "", "", "", "", "", "", "", ""}); !errors.Is(err, ErrIdempotencyKeyReuse) {
 		t.Errorf("a reused refund gave %v, want the reuse marker", err)
 	}
 	// A missing key is the other half of the pair, and the two are different
@@ -187,3 +210,5 @@ func TestAReusedKeyIsItsOwnRefusal(t *testing.T) {
 		t.Error("the missing-key and reused-key refusals are the same error, and they map to different codes")
 	}
 }
+
+func count(n int64) *int64 { return &n }

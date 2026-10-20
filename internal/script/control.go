@@ -17,8 +17,10 @@ import (
 // atomicity rule does, which is why they are scripts rather than a read and a
 // write from Go.
 //
-// Each answers the data plane's eight fields and a ninth: the balance before
-// the change, which the caller audits and hands the ledger.
+// Grant, set and relimit answer the data plane's nine fields and a tenth: the
+// balance before the change, which the caller audits and hands the ledger.
+// Reanchor and rollover run no shared transition and answer the eight fields of
+// the state they wrote and a ninth, the balance they replaced.
 
 // Moved is reanchor's answer when the stored window is no longer the one the
 // caller read, so it wrote nothing (D2). It is a decision only reanchor gives.
@@ -184,31 +186,35 @@ func (r *Runner) control(ctx context.Context, b body, key string, argv []any) (A
 	return decodeControl(b.op, raw)
 }
 
-// decodeControl reads a nine-field reply: the data plane's eight, decoded by
-// the same rules, then the balance before the change.
+// decodeControl reads a control-plane reply: the state, decoded by the data
+// plane's rules, then the balance before the change.
 func decodeControl(op Operation, raw any) (AdminOutcome, error) {
+	want := replyFields + 1
+	if op == Reanchor || op == Rollover {
+		want = stateFields + 1
+	}
 	table, ok := raw.([]any)
-	if !ok || len(table) != replyFields+1 {
-		return AdminOutcome{}, fmt.Errorf("the %s script answered %v rather than %d strings", op, raw, replyFields+1)
+	if !ok || len(table) != want {
+		return AdminOutcome{}, fmt.Errorf("the %s script answered %v rather than %d strings", op, raw, want)
 	}
-	before, isString := table[replyFields].(string)
-	if !isString {
-		return AdminOutcome{}, fmt.Errorf("the %s script answered %v in field %d rather than a string", op, table[replyFields], replyFields+1)
+	fields, err := asStrings(op, table)
+	if err != nil {
+		return AdminOutcome{}, err
 	}
-	if d, _ := table[0].(string); Decision(d) == Moved {
+	before := fields[want-1]
+	// The state is nine fields; reanchor's and rollover's eight get an empty
+	// closed balance, because they run no shared transition.
+	state := append(fields[:want-1:want-1], "")[:replyFields]
+	if Decision(fields[0]) == Moved {
 		if op != Reanchor {
 			return AdminOutcome{}, fmt.Errorf("the %s script answered moved, which only a re-anchor answers", op)
 		}
-		fields := make([]string, replyFields)
-		for i, v := range table[:replyFields] {
-			fields[i], _ = v.(string)
-		}
-		if err := requireEmpty(op, fields); err != nil || before != "" {
+		if err := requireEmpty(op, state); err != nil || before != "" {
 			return AdminOutcome{}, fmt.Errorf("the %s script answered moved with state", op)
 		}
 		return AdminOutcome{}, fmt.Errorf("the %s script: %w", op, ErrMoved)
 	}
-	out, err := decode(op, table[:replyFields])
+	out, err := decodeFields(op, state)
 	if err != nil {
 		return AdminOutcome{}, err
 	}
