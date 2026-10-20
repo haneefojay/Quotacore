@@ -25,6 +25,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/quotacore/quotacore/internal/admin"
 	"github.com/quotacore/quotacore/internal/auth"
 	"github.com/quotacore/quotacore/internal/cycle"
 	"github.com/quotacore/quotacore/internal/dataplane"
@@ -140,7 +141,7 @@ type stackOptions struct {
 	dbURL    string // overrides the fresh database, e.g. a proxy in front of it
 	env      map[string]string
 	// adminStore wraps the Postgres admin store, e.g. with a commit hook.
-	adminStore func(*db.Admin) *db.Admin
+	adminStore func(*db.Admin) admin.Store
 	// logs, when set, is where the stack logs, so two stacks can share one.
 	logs *syncBuffer
 }

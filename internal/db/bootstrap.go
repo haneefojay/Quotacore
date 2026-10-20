@@ -20,7 +20,9 @@ const (
 )
 
 // Bootstrap installs the operator-supplied admin key on an empty api_keys
-// table, with an audit row whose actor is "bootstrap" (ADR-0018, D3). Only the
+// table, named bootstrap-admin, with an audit row whose actor is "bootstrap"
+// (ADR-0018, D3). No API request can write that actor: a request's actor is
+// its key's name, and the key routes refuse the name "bootstrap". Only the
 // prefix and the digest arrive here; the secret never does. The table is
 // locked first, so replicas starting together install the key once and the
 // rest find it present (INV-K2).
@@ -38,7 +40,7 @@ func Bootstrap(ctx context.Context, db *sql.DB, prefix string, hash []byte) (Boo
 			return nil
 		}
 		k, err := scanAdminKey(tx.QueryRowContext(ctx, `INSERT INTO api_keys (name, prefix, key_hash, scope)
- VALUES ('bootstrap', $1, $2, 'admin') RETURNING `+keyRow, prefix, hash))
+ VALUES ('bootstrap-admin', $1, $2, 'admin') RETURNING `+keyRow, prefix, hash))
 		if err != nil {
 			return Classify(OpWrite, err)
 		}

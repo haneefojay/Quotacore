@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -135,8 +136,11 @@ func TestTheAdminSurfaceProvisionsWhatTheDataPlaneEnforces(t *testing.T) {
 	}
 }
 
+func newTestLogger(buf *syncBuffer) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
-
