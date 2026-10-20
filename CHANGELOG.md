@@ -242,6 +242,9 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **`IP-12` is `IN PROGRESS`**, opened 2026-10-20 before any file it owns exists. Nothing gated it:
+  `IP-08` closed on 2026-10-19.
+
 - **`IP-10` is `COMPLETE`**, opened 2026-10-20 after `IP-09` closed, before any file it owns
   existed, and closed the same day with 9 of 9 DoD items met. Item 4 is read by DR-015's body, and
   the ledger rows, the reconciler's view of a re-anchor, a pending-re-anchor gauge and the CLI

@@ -25,7 +25,7 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-09` | Control-plane API and API keys | `IP-08` | `COMPLETE`, opened 2026-10-19, closed 2026-10-20 |
 | `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `BLOCKED` |
-| `IP-12` | Usage ledger, writer and archiver | `IP-08` | `NOT STARTED` |
+| `IP-12` | Usage ledger, writer and archiver | `IP-08` | `IN PROGRESS`, opened 2026-10-20 |
 | `IP-13` | Observability | `IP-07` | `NOT STARTED` |
 | `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `BLOCKED` |
 | `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `BLOCKED` |
@@ -1397,7 +1397,8 @@ reconciliation says which tenants cannot be answered.
 
 ## IP-12 — Usage ledger, writer and archiver
 
-**Status** `NOT STARTED`; `IP-08` closed on 2026-10-19 and nothing else gates this phase.
+**Status** `IN PROGRESS`, opened 2026-10-20. `IP-08` closed on 2026-10-19 and nothing else gates
+this phase.
 
 **Objective.** One signed event per applied mutation, written off the request path, retained by
 policy, and never able to slow enforcement down.
