@@ -354,6 +354,16 @@ type StatusInfo struct {
 	Cache func() contract.CacheStats
 	// ProbeTimeout bounds each dependency probe (S9).
 	ProbeTimeout time.Duration
+	// Ledger reports the ledger queue and writer; nil reports an empty queue,
+	// a stopped writer and no drops.
+	Ledger LedgerStatus
+}
+
+// LedgerStatus is what status reads from the ledger sink (IP-12 D8).
+type LedgerStatus interface {
+	Depth() int
+	State() string
+	Dropped() int64
 }
 
 // Service serves the admin routes.

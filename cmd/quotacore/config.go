@@ -48,6 +48,15 @@ type Config struct {
 	// The IP-10 keys: apply-now's confirmation handshake (DR-046, S11).
 	PlanApplyConfirmThreshold int64
 	ConfirmationTTL           time.Duration
+
+	// The IP-12 keys of deployment.md section 4.4: the ledger queue and
+	// writer, and the retention job. A retention of zero keeps that table.
+	EventQueueSize     int
+	EventBatchSize     int
+	EventFlushInterval time.Duration
+	EventRetentionDays int
+	AuditRetentionDays int
+	RetentionInterval  time.Duration
 }
 
 // maxRefreshInterval bounds QUOTACORE_CONFIG_REFRESH_INTERVAL. A snapshot can
@@ -83,6 +92,13 @@ func Load(getenv Getenv) (Config, error) {
 
 		PlanApplyConfirmThreshold: 50,
 		ConfirmationTTL:           900 * time.Second,
+
+		EventQueueSize:     10000,
+		EventBatchSize:     200,
+		EventFlushInterval: 100 * time.Millisecond,
+		EventRetentionDays: 90,
+		AuditRetentionDays: 400,
+		RetentionInterval:  time.Hour,
 	}
 	if c.DatabaseURL == "" {
 		return c, fmt.Errorf("QUOTACORE_DATABASE_URL is required and is not set")
@@ -237,6 +253,9 @@ func Load(getenv Getenv) (Config, error) {
 		}
 		c.RateLimitEnabled = b
 	}
+	if err := loadLedger(getenv, &c); err != nil {
+		return c, err
+	}
 	proxies, err := admin.ParseProxies(getenv("QUOTACORE_TRUSTED_PROXIES"))
 	if err != nil {
 		return c, fmt.Errorf("QUOTACORE_TRUSTED_PROXIES: %w", err)
@@ -256,6 +275,54 @@ func Load(getenv Getenv) (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// loadLedger reads the six keys of deployment.md section 4.4, refusing a value
+// that would make the queue unbounded or useless, the writer spin or stall, or
+// the retention job run so often it becomes load.
+func loadLedger(getenv Getenv, c *Config) error {
+	for _, k := range []struct {
+		key string
+		dst *int
+		min int
+	}{
+		{"QUOTACORE_EVENT_QUEUE_SIZE", &c.EventQueueSize, 1},
+		{"QUOTACORE_EVENT_BATCH_SIZE", &c.EventBatchSize, 1},
+		{"QUOTACORE_EVENT_RETENTION_DAYS", &c.EventRetentionDays, 0},
+		{"QUOTACORE_AUDIT_RETENTION_DAYS", &c.AuditRetentionDays, 0},
+	} {
+		if raw := getenv(k.key); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < k.min {
+				return fmt.Errorf("%s is %q, which is not an integer of at least %d", k.key, raw, k.min)
+			}
+			*k.dst = n
+		}
+	}
+	if c.EventBatchSize > c.EventQueueSize {
+		return fmt.Errorf("QUOTACORE_EVENT_BATCH_SIZE (%d) is larger than QUOTACORE_EVENT_QUEUE_SIZE (%d), so a batch could never fill", c.EventBatchSize, c.EventQueueSize)
+	}
+	if raw := getenv("QUOTACORE_EVENT_FLUSH_INTERVAL"); raw != "" {
+		d, err := parseDuration(raw, "QUOTACORE_EVENT_FLUSH_INTERVAL")
+		if err != nil {
+			return err
+		}
+		if d < time.Millisecond || d > 10*time.Second {
+			return fmt.Errorf("QUOTACORE_EVENT_FLUSH_INTERVAL is %q, which is outside 1ms to 10s", raw)
+		}
+		c.EventFlushInterval = d
+	}
+	if raw := getenv("QUOTACORE_RETENTION_INTERVAL"); raw != "" {
+		d, err := parseDuration(raw, "QUOTACORE_RETENTION_INTERVAL")
+		if err != nil {
+			return err
+		}
+		if d < time.Minute {
+			return fmt.Errorf("QUOTACORE_RETENTION_INTERVAL is %q, which is shorter than a minute", raw)
+		}
+		c.RetentionInterval = d
+	}
+	return nil
 }
 
 func valueOr(getenv Getenv, key, fallback string) string {

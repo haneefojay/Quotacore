@@ -145,6 +145,9 @@ func run() error {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return err
 	}
+	// Every request has answered, so nothing more is enqueued; the ledger
+	// writes what is queued within what remains of the grace (IP-12 D8).
+	app.Drain(shutdownCtx)
 	log.Info("stopped")
 	return nil
 }
