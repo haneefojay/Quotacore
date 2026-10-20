@@ -333,3 +333,46 @@ func TestLoadReadsThePlanLifecycleKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadReadsTheLedgerKeys is S8: the six deployment.md section 4.4 keys,
+// their defaults, and a refusal naming the key for a value the ledger cannot
+// run with.
+func TestLoadReadsTheLedgerKeys(t *testing.T) {
+	c, err := Load(env(baseEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.EventQueueSize != 10000 || c.EventBatchSize != 200 || c.EventFlushInterval != 100*time.Millisecond ||
+		c.EventRetentionDays != 90 || c.AuditRetentionDays != 400 || c.RetentionInterval != time.Hour {
+		t.Errorf("defaults: %d %d %v %d %d %v", c.EventQueueSize, c.EventBatchSize, c.EventFlushInterval,
+			c.EventRetentionDays, c.AuditRetentionDays, c.RetentionInterval)
+	}
+	e := baseEnv()
+	e["QUOTACORE_EVENT_QUEUE_SIZE"] = "64"
+	e["QUOTACORE_EVENT_BATCH_SIZE"] = "64"
+	e["QUOTACORE_EVENT_FLUSH_INTERVAL"] = "5ms"
+	e["QUOTACORE_EVENT_RETENTION_DAYS"] = "0"
+	e["QUOTACORE_AUDIT_RETENTION_DAYS"] = "30"
+	e["QUOTACORE_RETENTION_INTERVAL"] = "10m"
+	if c, err = Load(env(e)); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.EventQueueSize != 64 || c.EventBatchSize != 64 || c.EventFlushInterval != 5*time.Millisecond ||
+		c.EventRetentionDays != 0 || c.AuditRetentionDays != 30 || c.RetentionInterval != 10*time.Minute {
+		t.Errorf("overrides not carried through: %+v", c)
+	}
+	for key, bad := range map[string]string{
+		"QUOTACORE_EVENT_QUEUE_SIZE":     "0",
+		"QUOTACORE_EVENT_BATCH_SIZE":     "20000",
+		"QUOTACORE_EVENT_FLUSH_INTERVAL": "30s",
+		"QUOTACORE_EVENT_RETENTION_DAYS": "-1",
+		"QUOTACORE_AUDIT_RETENTION_DAYS": "a year",
+		"QUOTACORE_RETENTION_INTERVAL":   "30s",
+	} {
+		e := baseEnv()
+		e[key] = bad
+		if _, err := Load(env(e)); err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("%s=%q: err = %v, want a refusal naming the key", key, bad, err)
+		}
+	}
+}

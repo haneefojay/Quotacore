@@ -242,6 +242,8 @@ func TestT08EveryRefusalChangesNothing(t *testing.T) {
 	check := func(ps []provocation, st *stack) {
 		for _, p := range ps {
 			before := st.state(p.tenant, p.ftr)
+			st.flush()
+			ledgerBefore := st.rows(`SELECT count(*) FROM usage_events`) + st.rows(`SELECT count(*) FROM usage_event_dead_letters`)
 			r := p.send()
 			if r.code(t) != p.code {
 				t.Errorf("%s %s: got %d %s", p.route, p.code, r.Status, r.Body)
@@ -250,6 +252,12 @@ func TestT08EveryRefusalChangesNothing(t *testing.T) {
 			time.Sleep(time.Millisecond)
 			if after := st.state(p.tenant, p.ftr); !reflect.DeepEqual(before, after) {
 				t.Errorf("%s on %s changed the state:\nbefore %+v\nafter  %+v", p.code, p.route, before, after)
+			}
+			// The ledger half (IP-05 DoD 3, IP-12): a refusal writes no row
+			// and no dead letter.
+			st.flush()
+			if n := st.rows(`SELECT count(*) FROM usage_events`) + st.rows(`SELECT count(*) FROM usage_event_dead_letters`); n != ledgerBefore {
+				t.Errorf("%s on %s wrote %d ledger rows", p.code, p.route, n-ledgerBefore)
 			}
 			covered[p.code] = true
 		}

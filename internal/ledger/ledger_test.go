@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -255,4 +256,33 @@ func TestACancelledWriterCountsWhatItLeaves(t *testing.T) {
 		t.Errorf("shutdown drops = %v, want 10", got)
 	}
 	flush(t, s)
+}
+
+// TestAnEnqueueOnAFullQueueIsCheap is DoD 3's bound on the drop path: over
+// 100 000 calls against a full queue, an Enqueue takes no more than 50 µs at
+// the 99th percentile and allocates nothing.
+func TestAnEnqueueOnAFullQueueIsCheap(t *testing.T) {
+	s := newSink(&fake{}, 4, 4)
+	for range 4 {
+		s.Enqueue(event("fill"))
+	}
+	ev := event("over")
+	ev.ID = uuid.Must(uuid.NewV7())
+	if allocs := testing.AllocsPerRun(1000, func() { s.Enqueue(ev) }); allocs != 0 {
+		t.Errorf("an Enqueue on a full queue allocates %v times", allocs)
+	}
+	if raceEnabled {
+		t.Skip("the race detector's instrumentation is not the latency under test")
+	}
+	const n = 100_000
+	lat := make([]time.Duration, n)
+	for i := range n {
+		start := time.Now()
+		s.Enqueue(ev)
+		lat[i] = time.Since(start)
+	}
+	sort.Slice(lat, func(i, j int) bool { return lat[i] < lat[j] })
+	if p99 := lat[n*99/100]; p99 > 50*time.Microsecond {
+		t.Errorf("p99 of an Enqueue on a full queue = %s, want at most 50µs", p99)
+	}
 }
