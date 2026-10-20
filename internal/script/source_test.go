@@ -67,12 +67,12 @@ func TestTheThreeScriptsShareOneTransitionBlock(t *testing.T) {
 
 func TestScriptsCallOnlyTheCommandsTheyNeed(t *testing.T) {
 	// A command the scripts need to be atomic and nothing else. HMGET reads the
-	// hash, HSET and HINCRBY write it, EXPIREAT and PERSIST hold the key for the
-	// idempotency window, and GET and SET are the idempotency record: the lookup
+	// hash, HSET and HINCRBY write it, PERSIST keeps it from ever expiring
+	// (INV-C3), and GET and SET are the idempotency record: the lookup
 	// that turns a repeat into a replay or a reuse, and the write that makes a
 	// repeat recognisable at all (DR-027, DR-028).
 	allowed := map[string]bool{
-		"HMGET": true, "HSET": true, "HINCRBY": true, "EXPIREAT": true, "PERSIST": true,
+		"HMGET": true, "HSET": true, "HINCRBY": true, "PERSIST": true,
 		"GET": true, "SET": true,
 	}
 	callSite := regexp.MustCompile(`redis\.(call|pcall)\(\s*'([A-Za-z]+)'`)

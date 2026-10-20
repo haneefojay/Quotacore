@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -123,18 +122,6 @@ var confirmationShape = regexp.MustCompile(`^cnf_[0-9A-HJKMNP-TV-Z]{26}$`)
 // ConfigInvalidateChannel is the pub/sub channel a committed control-plane
 // write publishes to (data-model.md section 3.4).
 func ConfigInvalidateChannel() string { return namespace + ":cfg:invalidate" }
-
-// KeyExpiry returns the absolute expiry of a runtime key: `window_end + 24h`,
-// which is strictly later than any rollover could need it (DR-048, INV-X6),
-// and none for a `never` entitlement. It mirrors cycle.Window in shape: a nil
-// end means the key outlives every cycle. The scripts assert the PTTL side of
-// this in IP-05; this function is the Go side of the same rule.
-func KeyExpiry(end *time.Time) (exp time.Time, ok bool) {
-	if end == nil {
-		return time.Time{}, false
-	}
-	return end.Add(24 * time.Hour), true
-}
 
 // HashTag extracts the literal `{t:...}` region of a key that TenantKey built.
 // The single test that proves the tag boundaries compares this to the tenant

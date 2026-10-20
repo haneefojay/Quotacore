@@ -621,6 +621,8 @@ indivisible step in one round trip.
 - The cycle transition inside all three, so a rollover is never a separate operation a caller can
   forget.
 - Key expiry at `window_end + 24h`, which is strictly later than any rollover could need it.
+  > **Amended 2026-10-20.** A balance hash now has no expiry (INV-C3): with no worker, an idle
+  > tenant's key expired a day after its window closed and the tenant was refused until a rebuild.
 - The ceiling check, and the refusal to initialise a balance that does not exist.
 
 > **Amended 2026-09-29 — the fourth script.** This section previously read "four atomic scripts" and
@@ -698,6 +700,11 @@ indivisible step in one round trip.
    > a caller answered `stale` still leaves the key expiring when its own window closes. The first
    > implementation returned early on the stale path and skipped the write, which meant a key
    > materialised without an expiry stayed without one as long as every caller was behind it.
+   > **Amended 2026-10-20 — a balance hash has no expiry.** The item is met by its successor rule:
+   > every script, a stale call included, and provisioning leave `PTTL` at `-1`, because with no
+   > worker a tenant idle for a day after its window closed lost its hash and was refused `503`
+   > until a rebuild (INV-C3). `TestDefinitionOfDoneItemSevenTheKeyOutlivesItsWindow` asserts the
+   > new rule, and `TestABalanceHashNeverExpires` asserts it through every route.
 8. The scripts are static Go-embedded files, and a test asserts that no request field is ever
    assembled into script text.
 9. The round-trip count for one `consume` is one, asserted in the client, not assumed.
@@ -732,7 +739,7 @@ are the three embedded Lua bodies and the runner is the only Go caller; the sour
 | — | `TestTheRunnerAddressesTheScriptByItsDigest`, `TestAFlushedScriptCacheIsRecoveredFromWithoutARestart`, `TestTheStoreThatForgotTheScriptsIsRecoveredFrom` (integration) | An `EVAL` on the request path, a flushed script cache needing a restart, or a retry that is not bounded to one (NFR-S8) |
 | — | `TestARecoveredCallIsRetriedOnceAndNoMore`, `TestAFailedReloadIsReportedRatherThanRetried` | A retry loop, or a second `SCRIPT LOAD` behind one `NOSCRIPT` |
 | — | `TestTheBudgetIsTheCallersBudget` | A request budget that is not the caller's context deadline, or a `NOSCRIPT` reload that starts a second budget |
-| — | `TestScriptsCallOnlyTheCommandsTheyNeed`, `TestScriptsIterateOverNothing` | A command outside `HMGET`, `HSET`, `HINCRBY`, `EXPIREAT` and `PERSIST`, and any loop, so the work stays constant per key |
+| — | `TestScriptsCallOnlyTheCommandsTheyNeed`, `TestScriptsIterateOverNothing` | A command outside `HMGET`, `HSET`, `HINCRBY`, `EXPIREAT` and `PERSIST` (`EXPIREAT` left the list on 2026-10-20, INV-C3), and any loop, so the work stays constant per key |
 | — | `TestTheScriptsWorkIsNotProportionalToTheTenant` (integration) | A per-request operation over the tenant's other feature keys — 200 sibling hashes leave the work unchanged |
 | — | `TestTheScriptsAndTheRunnerAgreeOnTheBound`, `TestTheScriptsReadTheArgumentsTheRunnerSends`, `TestTheRunnerSendsOneKeyAndSixValues` | The scripts and the runner disagreeing about the bound, the argument order, or the key, which is the failure a silent `ARGV` shift produces |
 | — | `TestT05TheTransitionIsMonotonic`, `TestOnlyOneOfManyConcurrentCallersRollsTheCycle` (integration) | A caller behind the store rolling the cycle, or 50 callers that all discover a closed boundary re-granting it 50 times (DR-045, T-05) |

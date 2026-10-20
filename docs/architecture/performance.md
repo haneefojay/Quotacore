@@ -153,9 +153,9 @@ It is the slowest legitimate request, so it gets its own treatment.
 | Step | Added cost |
 | --- | --- |
 | Cycle compute finds `target_index > stored_index` | ~5 µs |
-| Script performs the transition: four field writes, `bonus = 0`, `EXPIREAT` | ~50 µs |
+| Script performs the transition: four field writes, `bonus = 0`, `PERSIST` | ~50 µs |
 | One extra `cycle_rolled_over` event, enqueued like any other | off-path |
-| `EXPIREAT` instead of `EXPIRE` | zero |
+| `PERSIST` instead of an expiry (amended 2026-10-20, INV-C3) | zero |
 | **Total** | **~55 µs, so about 3% of the p50 budget (NFR-L7)** |
 
 The reason this is cheap is that the transition is four field writes inside an execution that was
