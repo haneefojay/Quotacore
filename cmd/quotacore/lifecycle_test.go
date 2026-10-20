@@ -195,6 +195,15 @@ func TestAPlanChangeIsAHardReset(t *testing.T) {
 	oldAnchor := s.anchorOf(tn.ID)
 
 	m := mustStatus(t, s.adminDo(http.MethodPatch, tp, fmt.Sprintf(`{"version":%d,"plan_key":%q}`, s.version(tp), small)), http.StatusOK)
+	// The request drains its tenant inline, unless the second instance's
+	// background drain holds the tenant first: the inline drain skips a
+	// locked tenant rather than wait for it. Either way the pending row is
+	// gone once the rewrite is done, so the test waits on that row, a read
+	// that changes nothing.
+	deadline := time.Now().Add(5 * time.Second)
+	for s.rows(`SELECT count(*) FROM pending_reanchors WHERE tenant_id = $1`, tn.ID) != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
 	anchor := s.anchorOf(tn.ID)
 	if !anchor.After(oldAnchor) {
 		t.Errorf("the anchor moved from %v to %v, not forward", oldAnchor, anchor)
@@ -213,16 +222,17 @@ func TestAPlanChangeIsAHardReset(t *testing.T) {
 	if n := s.rows(`SELECT count(*) FROM audit_log WHERE action = 'tenant.change_plan' AND subject_id = $1`, tn.ID); n != audits+1 {
 		t.Errorf("tenant.change_plan audited %d times, want once", n-audits)
 	}
-	if d := s.eventsOf(tn.ID, f, "plan_changed"); len(d) != 1 || d[0] != 200 {
-		t.Errorf("plan_changed events for the tenant: %v, want one of +200", d)
+	if d := append(s.eventsOf(tn.ID, f, "plan_changed"), other.eventsOf(tn.ID, f, "plan_changed")...); len(d) != 1 || d[0] != 200 {
+		t.Errorf("plan_changed events for the tenant over both instances: %v, want one of +200", d)
 	}
 	// The same, as the rows the writer appended (IP-10 hand-on, IP-12).
+	other.flush()
 	if rows := rowsFor(s.ledger(tn), f); !sameShapes(rows, expect{"consumed", "api", -725, 275},
 		expect{"granted", "admin", 25, 300}, expect{"plan_changed", "admin", 200, 500}) {
 		t.Errorf("the ledger for %s is %v", f, shapes(rows))
 	}
 	if n := s.rows(`SELECT count(*) FROM pending_reanchors WHERE tenant_id = $1`, tn.ID); n != 0 {
-		t.Errorf("the inline drain left %d pending rows", n)
+		t.Errorf("the drain left %d pending rows", n)
 	}
 
 	until(t, "feature_not_in_plan", func() response {

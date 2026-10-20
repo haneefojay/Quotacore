@@ -113,7 +113,9 @@ negative balance cannot be represented by the contract or the scripts, and does 
 [Q-09](#2-open-questions) (90-day events, 400-day audit, applied by the retention job),
 [Q-20](#2-open-questions) (a documented export query, no pipeline) and
 [Q-22](#2-open-questions) (a zero-delta transition writes no row, and a cycle with no opening row
-opens at the effective limit). Seven remain open.
+opens at the effective limit). [Q-24](#2-open-questions) was added the same day by `IP-12`, which
+found that an immediate override moved a balance with no event, and does not block it. Eight remain
+open.
 
 | ID | Question | Proposed default | Deadline | Blocks | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -140,6 +142,7 @@ opens at the effective limit). Seven remain open.
 | Q-21 | May the data store evict an idempotency record inside the 24-hour window, and still claim "a retrying client is charged once"? | **No, the window is a contract, and the store is sized to keep it.** `maxmemory-policy noeviction` on the whole fast-store keyspace, sized for the 24-hour window at the sustained-throughput figure in NFR-T1. Capacity exhaustion is a `503`, not a silent eviction. What `noeviction` cannot survive is *total* store loss, and that is answered by an automatic reversal of the duplicate once it is detected | Before v0.1 release | DR-029, NFR-T1, NFR-T9, [deployment](../architecture/deployment.md#5-sizing) | answered — ADR-0017 |
 | Q-22 | A `set` to the current value and a rollover with nothing consumed both have `delta = 0`, which `usage_events_delta_nonzero` refuses, while DR-042 says each attempts one row. Which gives way? | **The constraint.** A zero-delta transition writes no row, because a row that changes nothing is not a mutation and the constraint is the schema. Reconciliation then reads a cycle's opening allowance from the plan and the anchor rather than from a `cycle_rolled_over` row, and `IP-12` states that in the writer | Before the ledger writer ships (`IP-12`) | `usage_events` writer | answered — the constraint; data-model §2.7 |
 | Q-23 | DR-018 lets an admin `set` a negative balance, but the contract's amounts are non-negative and every script reads a negative stored balance as a damaged hash. Should a negative balance be representable? | **Not in v0.1.** `set` takes `0` to `limit + bonus`; setting `0`, or suspending the tenant, stops an abusive customer until the boundary, which is what DR-018 is for. Widening it changes the contract's `Amount` and the transition block in six scripts | Before the admin API is extended past v0.1 | `POST /v1/admin/tenants/{id}/set` | open |
+| Q-24 | An override applied `immediate` moves the open cycle's balance by the change in limit (`IP-10` D6), and the contract's event types have none for it. What does the ledger write? | **`plan_changed`, `source: admin`.** The move is a change to the tenant's effective entitlement, which is what U-5 records, and its `balance_after` is a correct opening for the reconciler. A distinct `override_applied` type adds a value to the frozen contract's `EventType` and to the `event_type` enumeration | Before the contract's next minor version | `usage_events` writer, `EventType` | open |
 ---
 
 ## 3. How this register is maintained
