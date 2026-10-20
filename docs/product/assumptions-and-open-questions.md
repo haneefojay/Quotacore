@@ -107,7 +107,8 @@ document is frozen, and they are answered: [Q-05](#2-open-questions),
 schema, the endpoint matrix or an invariant; only Q-16 needed new text. [Q-22](#2-open-questions)
 was added on 2026-10-19 by `IP-08`, which found it while building the ledger table, and does not
 block that phase: the constraint is built as written and the writer that faces the question is
-`IP-12`'s.
+`IP-12`'s. [Q-23](#2-open-questions) was added on 2026-10-20 by `IP-10`, which found that DR-018's
+negative balance cannot be represented by the contract or the scripts, and does not block it.
 
 | ID | Question | Proposed default | Deadline | Blocks | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -133,6 +134,7 @@ block that phase: the constraint is built as written and the writer that faces t
 | Q-20 | What is the migration story for the event ledger if a customer has a compliance retention requirement? | **Documented export.** A documented query plus a documented deletion job. A full export pipeline is a v0.5+ candidate, not an MVP feature | Before v0.1 release | `events-retention` config | open |
 | Q-21 | May the data store evict an idempotency record inside the 24-hour window, and still claim "a retrying client is charged once"? | **No, the window is a contract, and the store is sized to keep it.** `maxmemory-policy noeviction` on the whole fast-store keyspace, sized for the 24-hour window at the sustained-throughput figure in NFR-T1. Capacity exhaustion is a `503`, not a silent eviction. What `noeviction` cannot survive is *total* store loss, and that is answered by an automatic reversal of the duplicate once it is detected | Before v0.1 release | DR-029, NFR-T1, NFR-T9, [deployment](../architecture/deployment.md#5-sizing) | answered — ADR-0017 |
 | Q-22 | A `set` to the current value and a rollover with nothing consumed both have `delta = 0`, which `usage_events_delta_nonzero` refuses, while DR-042 says each attempts one row. Which gives way? | **The constraint.** A zero-delta transition writes no row, because a row that changes nothing is not a mutation and the constraint is the schema. Reconciliation then reads a cycle's opening allowance from the plan and the anchor rather than from a `cycle_rolled_over` row, and `IP-12` states that in the writer | Before the ledger writer ships (`IP-12`) | `usage_events` writer | open |
+| Q-23 | DR-018 lets an admin `set` a negative balance, but the contract's amounts are non-negative and every script reads a negative stored balance as a damaged hash. Should a negative balance be representable? | **Not in v0.1.** `set` takes `0` to `limit + bonus`; setting `0`, or suspending the tenant, stops an abusive customer until the boundary, which is what DR-018 is for. Widening it changes the contract's `Amount` and the transition block in six scripts | Before the admin API is extended past v0.1 | `POST /v1/admin/tenants/{id}/set` | open |
 ---
 
 ## 3. How this register is maintained

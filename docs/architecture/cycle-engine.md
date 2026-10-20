@@ -224,6 +224,16 @@ the two ever diverged, a race would produce either a duplicate allowance or a lo
 the divergence would be invisible in testing. This is the strongest structural guarantee in the
 system and it costs nothing.
 
+**Re-anchors are not transitions.** A plan change or an apply-now moves the anchor, and a cycle
+index means something only under one anchor, so the new windows cannot be reached by the steps
+above: step 2 would refuse every one of them as stale. The control plane instead rewrites each hash
+to the window the new anchor puts the current instant in, at the new limit, with a
+compare-and-set on the window it read, and the request path keeps serving the old numbering until
+that rewrite lands (`IP-10`; [consistency-and-recovery.md](consistency-and-recovery.md#3-dependency-failure-matrix)).
+A rewrite never runs on the request path. The grant, set and re-limit scripts the admin routes run
+open with the transition above, byte for byte, so a grant to an idle tenant lands in the current
+cycle, not the closed one.
+
 ## 6. Test matrix
 
 Every row is an assertion in the test suite, not a comment. Interval boundaries are asserted as
@@ -289,6 +299,17 @@ The last row is a genuine consequence of the pure-function design and worth stat
 override that changes the **interval** cannot be applied to a running cycle without invalidating
 the anchor relationship, so it takes effect at the next boundary or requires an explicit apply.
 Changing only the **limit** has no such constraint.
+
+> **Amended 2026-10-20 (`IP-10`).** Three rows read two ways and are settled as follows. **Override
+> set, `immediate`**: the limit re-limits the open cycle when the override is written; the balance
+> moves by the same difference as the limit, floored at zero, and the window is unchanged.
+> **Force rollover**: a refill of the window the anchor puts the current instant in, at the
+> effective limit with a zero bonus, whatever was stored, which also repairs a stored index that
+> is ahead (C-5's note); mid-cycle the transition would do nothing. **Interval change**, on a plan
+> or an override: it reaches an existing tenant at its next **re-anchor**, not its next boundary,
+> because the tenant's cadence is pinned until then (E-3's note); a natural boundary under the old
+> cadence would otherwise be renumbered under the new one. A plan edit's **limit** lands at the
+> next boundary as the first row says, and a plan edit never moves a boundary.
 
 ## 8. Failure modes specific to this component
 

@@ -713,7 +713,16 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h3><span class="method method-patch">PATCH</span> <span class="path">/v1/admin/plans/{id}</span></h3>
 <p><strong>Edit a plan&#39;s entitlements</strong></p>
 <p>The edit changes what applies to <strong>new assignments immediately</strong> and to **existing<br>tenants at their next boundary**. It does not touch an open cycle&#39;s balance, and it does<br>not move a boundary. <code>POST /v1/admin/plans/{id}/apply</code> is the route that changes that, and<br>it is guarded by blast radius (DR-014).</p>
-<p><code>entitlements</code> replaces the whole set, because a partial update of a bounded set is an<br>ambiguity, and a plan that is an offer should be edited as one.</p>
+<p>What reaches an existing tenant, and when:</p>
+<pre><code>- A <strong>limit</strong> change binds at the tenant&#39;s own next boundary.
+- An <strong>interval</strong> change, and a <strong>feature added</strong> to the plan, reach the tenant at its next
+  re-anchor (a plan change or an apply-now), because a live interval would renumber the
+  open cycle and an added feature has no balance yet (E-3, DR-045). Until then the tenant
+  keeps the cadence and the feature set it was anchored on.
+- A <strong>feature removed</strong> stays the tenant&#39;s, at the limit it had, until the end of the
+  window the edit landed in; a removed <code>never</code> feature stays until the next re-anchor
+  (E-4, INV-E1). Adding it back before then keeps it.</code></pre>
+<p><code>entitlements</code> replaces the whole set, because a partial update of a bounded set is an<br>ambiguity, and a plan that is an offer should be edited as one. An archived plan cannot<br>be edited: <code>400 validation_failed</code>.</p>
 <p class="muted">Operation ID: <code>updatePlan</code></p>
 <h4>Authorisation</h4>
 <p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
@@ -815,7 +824,8 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p><strong>Re-anchor and re-limit every assigned tenant, now</strong></p>
 <p>This re-anchors every tenant assigned to the plan, so it is guarded by <strong>blast radius</strong><br>rather than by operator intent (DR-046).</p>
 <p>At or below <code>QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD</code> (default 50) it is one call and a<br><code>200</code>. Above it, the service counts first, writes nothing, and returns<br><code>409 confirmation_required</code> carrying a single-use token. Re-issue the identical request<br>with <code>confirmation_token</code> and it applies.</p>
-<p>The token is bound to the plan <code>resource_version</code> it was issued against, so a plan edited<br>in between is refused: the count the operator approved is no longer the count. There is<br>no <code>Idempotency-Key</code> on this route, deliberately. The handshake is already exactly-once<br>by construction, and adding a second exactly-once mechanism to one operation is a way to<br>have two opinions about whether it happened.</p>
+<p>The token is honoured once, and only for the plan, the <code>resource_version</code> and the<br><code>reason</code> it was issued for, and only while the plan&#39;s count has not grown past the one it<br>was issued against. Anything else, a plan edited in between included, is counted afresh:<br>above the threshold that is a new <code>409</code> with a new token, because the count the operator<br>approved is no longer the count. A <code>409</code> writes nothing and records no audit row; an<br>apply bumps the plan&#39;s version, so no token survives it. There is no <code>Idempotency-Key</code> on<br>this route, deliberately. The handshake is already exactly-once<br>by construction, and adding a second exactly-once mechanism to one operation is a way to<br>have two opinions about whether it happened.</p>
+<p>Every tenant on the plan, suspended ones included, is re-anchored at the request&#39;s<br>instant in one transaction, and its balances are rewritten after it: inline while the<br>request has time, and by a background drain for any it did not reach. Until a tenant&#39;s<br>balances are rewritten it is served its previous state, never a fresh allowance. An<br>archived plan cannot be applied: <code>400 validation_failed</code>.</p>
 <p>To preview the numbers without provoking the error, call<br><code>GET /v1/admin/plans/{id}/impact</code> first.</p>
 <p class="muted">Operation ID: <code>applyPlan</code></p>
 <h4>Authorisation</h4>
@@ -910,8 +920,9 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 </table>
 <h3><span class="method method-get">GET</span> <span class="path">/v1/admin/plans/{id}/impact</span></h3>
-<p><strong>Preview how many tenants an edit would affect</strong></p>
+<p><strong>Preview how many tenants an apply would affect</strong></p>
 <p>Read-only. Nothing is re-anchored, no audit row records a mutation and no token is<br>issued. The route exists so that the common case is a quiet read rather than a <code>409</code><br>(UC-19).</p>
+<p>It describes an apply-now of the plan <strong>as saved</strong>: every non-deleted tenant on it, and<br>the earliest end of their current cycles over their features that reset, in the zone of<br>the tenant it belongs to. It is computed by the same function the <code>409</code> uses, so the two<br>agree.</p>
 <p class="muted">Operation ID: <code>planImpact</code></p>
 <h4>Authorisation</h4>
 <p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
@@ -939,8 +950,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
 <p>Quote the <code>request_id</code>.</p>
 </td></tr>
-<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
-<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>Postgres did not answer. A route that reads only the control plane cannot answer<br><code>service_unavailable</code>, because it never touches the data store. Retryable with backoff and<br>jitter.</p>
 </td></tr>
 </table>
 <h2 id="tag-admin-tenants">admin-tenants</h2>
@@ -1241,9 +1251,10 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/tenants/{id}/grant</span></h3>
 <p><strong>Add bonus quota for the current cycle</strong></p>
-<p>Raises <code>bonus</code> for the current cycle, subject to the <code>balance &lt;= limit + bonus</code> ceiling,<br>and applies immediately. A grant is <strong>cycle-scoped</strong>: it does not survive the boundary,<br>because a bonus is a gesture and a limit is a contract (DR-019, DR-020).</p>
-<p>A grant on a <code>never</code> entitlement increases the balance with no ceiling tied to a cycle<br>and no expiry, which is the one case where the ceiling does not apply.</p>
-<p>A grant that would break the ceiling is <code>409 grant_exceeds_ceiling</code>. To raise a limit<br>durably, use an override, which is the correct remedy for a lasting increase.</p>
+<p>Adds <code>amount</code> to both <code>balance</code> and <code>bonus</code> in the current cycle, after any rollover that<br>is due, and applies immediately. Because both rise together, <code>balance &lt;= limit + bonus</code><br>holds by construction and a grant to a full balance succeeds. A grant is<br><strong>cycle-scoped</strong>: it does not survive the boundary, because a bonus is a gesture and a<br>limit is a contract (DR-019, DR-020).</p>
+<p>A grant on a <code>never</code> entitlement increases the balance with no cycle to end it.</p>
+<p><code>409 grant_exceeds_ceiling</code> is a grant that would take the balance or the bonus past<br><code>2^53 - 1</code>, the largest amount the service represents exactly (DR-022). To raise a limit<br>durably, use an override, which is the correct remedy for a lasting increase.</p>
+<p>A grant has no <code>version</code> and no <code>Idempotency-Key</code>, so a grant retried after a timeout is a<br>second grant; each is in the audit log with its reason.</p>
 <p class="muted">Operation ID: <code>grantTenant</code></p>
 <h4>Authorisation</h4>
 <p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
@@ -1274,7 +1285,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Neither the tenant nor the named feature exists. On the admin API existence is not<br>hidden, because the operator is already authorised for the whole instance.</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the three<br>cases.</p>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the four<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -1289,7 +1300,8 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/tenants/{id}/set</span></h3>
 <p><strong>Set a balance to an exact value</strong></p>
-<p>Overwrites the balance outright. It is the blunt instrument, and it is the right one when<br>a migration produced a number that is known to be wrong.</p>
+<p>Overwrites the current cycle&#39;s balance outright, after any rollover that is due. It is the<br>blunt instrument, and it is the right one when a migration produced a number that is<br>known to be wrong.</p>
+<p><code>value</code> is <code>0</code> to <code>limit + bonus</code>. Above that is <code>409 grant_exceeds_ceiling</code>: grant first.<br>Setting <code>0</code>, or suspending the tenant, is how to stop a tenant until its boundary; a<br>negative balance is not representable in v0.1 (Q-23).</p>
 <p class="muted">Operation ID: <code>setTenantBalance</code></p>
 <h4>Authorisation</h4>
 <p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
@@ -1320,7 +1332,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Neither the tenant nor the named feature exists. On the admin API existence is not<br>hidden, because the operator is already authorised for the whole instance.</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the three<br>cases.</p>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the four<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -1335,7 +1347,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/tenants/{id}/force-rollover</span></h3>
 <p><strong>Roll one feature&#39;s cycle over now</strong></p>
-<p>Applies the allowance for the next cycle immediately, for one feature. It is audited with<br>a mandatory <code>reason</code>, and it is a <code>force_rolled_over</code> event in the ledger.</p>
+<p>Refills one feature now: the balance becomes the effective limit and the bonus <code>0</code>, in<br>the cycle the tenant&#39;s anchor puts this instant in, whatever cycle the stored balance<br>was on. That also repairs a balance stuck on a cycle index that is ahead. It does not move<br>the anchor. A second call refills again. It is audited with a mandatory <code>reason</code>, and a<br>refill that changed the balance is a <code>force_rolled_over</code> event in the ledger.</p>
 <p>A <code>never</code> entitlement cannot be rolled, because there is no cycle to roll:<br><code>409 reset_not_supported</code>. Grant explicitly instead (DR-008).</p>
 <p class="muted">Operation ID: <code>forceRollover</code></p>
 <h4>Authorisation</h4>
@@ -1366,7 +1378,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Neither the tenant nor the named feature exists. On the admin API existence is not<br>hidden, because the operator is already authorised for the whole instance.</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the three<br>cases.</p>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the four<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -1383,7 +1395,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p><strong>Set or replace a per-feature override</strong></p>
 <p>An override is a <strong>contract term</strong> and it outranks the plan (DR-011). It survives later<br>plan edits, because a plan is an offer and an override is what this one customer signed<br>for.</p>
 <p>At least one of <code>limit_value</code> or <code>interval</code> must be present. An override that set neither<br>would inherit everything from the plan and would therefore be indistinguishable from not<br>existing, so it is <code>400 validation_failed</code> (UC-13).</p>
-<p><code>apply_at</code> is <code>immediate</code> by default. It is a <strong>mode, not a timestamp</strong>: <code>next_boundary</code><br>defers the new value to the tenant&#39;s next boundary, which is the only moment a boundary<br>change is meaningful.</p>
+<p><code>apply_at</code> is <code>immediate</code> by default. It is a <strong>mode, not a timestamp</strong>. For the limit,<br><code>immediate</code> re-limits the open cycle and keeps what was spent: the balance moves by the<br>same difference as the limit, floored at zero. <code>next_boundary</code> writes the override only,<br>and the tenant&#39;s next boundary grants the new limit. An <code>interval</code> reaches the tenant at<br>its next re-anchor in either mode, because a live interval would renumber the open cycle.</p>
 <p>An override can raise a limit above the plan&#39;s. That is the mechanism for &#34;custom limits<br>for an enterprise customer&#34;. It cannot add a feature the plan does not include, which is<br><code>400 validation_failed</code> (DR-012, DR-015).</p>
 <p>Clearing an override is <code>DELETE</code> on the per-feature sub-path, not this route. See that<br>route for why.</p>
 <p class="muted">Operation ID: <code>upsertTenantOverride</code></p>
@@ -1422,7 +1434,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Neither the tenant nor the named feature exists. On the admin API existence is not<br>hidden, because the operator is already authorised for the whole instance.</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the three<br>cases.</p>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the four<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -1437,7 +1449,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </table>
 <h3><span class="method method-delete">DELETE</span> <span class="path">/v1/admin/tenants/{id}/overrides/{feature_key}</span></h3>
 <p><strong>Clear a per-feature override</strong></p>
-<p>Removes the override, so the plan value applies again (UC-13).</p>
+<p>Removes the override, so the plan value applies again (UC-13). <code>immediate</code> re-limits the<br>open cycle to the plan&#39;s limit as an override&#39;s <code>immediate</code> does; <code>next_boundary</code> lets the<br>next boundary grant it. Clearing an override that does not exist changes nothing and is<br>still <code>204</code>.</p>
 <p><code>apply_at</code> is in the body rather than a query parameter because it changes <em>when</em> money is<br>owed, and a <code>DELETE</code> that silently means &#34;now&#34; would be a surprise in a billing system.<br><code>next_boundary</code> restores the plan value at the tenant&#39;s next boundary; <code>immediate</code> applies<br>it at once.</p>
 <p>This is a <code>DELETE</code> on a per-feature sub-path rather than another <code>POST</code> on the collection<br>because the storage cannot represent &#34;an override that sets nothing&#34;:<br><code>tenant_overrides_not_empty</code> rejects a row with both <code>limit_value</code> and <code>interval</code> null, so<br>clearing is the <strong>absence of the row</strong> rather than a row of nulls. Expressing it as a<br><code>clear: true</code> field on the <code>POST</code> would mean one route with two mutually exclusive body<br>modes, which is exactly the shape that generated SDKs handle worst.</p>
 <p>This is one of the two routes in the contract where a <code>DELETE</code> takes a body: the body<br>holds <code>apply_at</code>, and the rule that a body is capped applies here like any other, so<br><code>413 payload_too_large</code> is on this route (NFR-T6).</p>
@@ -1469,7 +1481,9 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>403</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A valid key with the wrong scope. <code>403</code> and not <code>404</code>, because the caller is already<br>authenticated and hiding the endpoint helps nobody (FS-18).</p>
 </td></tr>
-<tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Unknown or soft-deleted tenant. A soft-deleted tenant is treated exactly as absent, which<br>is why this is also the answer after a soft delete (T-15).</p>
+<tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Neither the tenant nor the named feature exists. On the admin API existence is not<br>hidden, because the operator is already authorised for the whole instance.</p>
+</td></tr>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The tenant is deleted, which is terminal, so nothing about it can change (T-7).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -1865,7 +1879,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p>One of: <code>hourly</code>, <code>daily</code>, <code>weekly</code>, <code>monthly</code>, <code>yearly</code>, <code>never</code></p>
 <h3 id="schema-overrideapplyat">OverrideApplyAt</h3>
 <p class="muted">Type <code>string</code></p>
-<p>A <strong>mode, not a timestamp</strong>. <code>immediate</code> applies now; <code>next_boundary</code> applies at the<br>tenant&#39;s next boundary, which is the only moment a boundary change is meaningful.</p>
+<p>A <strong>mode, not a timestamp</strong>. <code>immediate</code> applies a limit now, re-limiting the open cycle<br>and keeping what was spent; <code>next_boundary</code> applies it at the tenant&#39;s next boundary. An<br>interval reaches the tenant at its next re-anchor in either mode, because that is the<br>only moment a cadence change is meaningful.</p>
 <p>It is a mode because the actual instant an override takes effect is always the tenant&#39;s<br>next boundary, computed by the cycle engine and never stored. The name is a deliberate<br>wart kept for the API&#39;s benefit, and it is why the enum type exists in the schema: a<br><code>timestamptz DEFAULT &#39;immediate&#39;</code> would not be a slightly awkward value, it would not<br>parse.</p>
 <p>One of: <code>immediate</code>, <code>next_boundary</code></p>
 <h3 id="schema-keyscope">KeyScope</h3>
@@ -2171,7 +2185,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </table>
 <h3 id="schema-planupdate">PlanUpdate</h3>
 <p class="muted">Type <code>object</code></p>
-<p>An edit to a plan&#39;s entitlements. It applies to new assignments immediately and to<br>existing tenants at their next boundary; it does not touch an open balance and it does not<br>move a boundary (DR-014).</p>
+<p>An edit to a plan&#39;s entitlements. It applies to new assignments immediately; an existing<br>tenant takes a new limit at its next boundary and a new interval or an added feature at its<br>next re-anchor, and keeps a removed feature until the end of the window the edit landed<br>in. It does not touch an open balance and it does not move a boundary (DR-014).</p>
 <ul>
 <li><p><strong>Undeclared fields are rejected.</strong> A field that is not in this schema is a <code>400 validation_failed</code>.</p>
 </li>
@@ -2198,7 +2212,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
 <tr><td><code>reason</code></td><td><code>string</code></td><td>yes</td><td><p>Required and audited. Re-anchoring every assigned tenant is a decision with a blast<br>radius, and a decision with a blast radius is one whose reason is worth having later.</p>
 </td></tr>
-<tr><td><code>confirmation_token</code></td><td><code>string</code></td><td>no</td><td><p>Present only when re-issuing after <code>409 confirmation_required</code>. Single-use, bound to<br>the plan <code>resource_version</code> it was issued against, and expiring on<br><code>QUOTACORE_CONFIRMATION_TTL</code>, because an abandoned token must not accumulate in a<br>store that cannot evict (DR-048).</p>
+<tr><td><code>confirmation_token</code></td><td><code>string</code></td><td>no</td><td><p>Present only when re-issuing after <code>409 confirmation_required</code>. Single-use, bound to<br>the plan, the <code>resource_version</code> and the <code>reason</code> it was issued against, and expiring on<br><code>QUOTACORE_CONFIRMATION_TTL</code>, because an abandoned token must not accumulate in a<br>store that cannot evict (DR-048).</p>
 </td></tr>
 </table>
 <h3 id="schema-planapplied">PlanApplied</h3>
@@ -2211,7 +2225,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <table>
 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
 <tr><td><code>plan_key</code></td><td><a href="#schema-plankey"><code>PlanKey</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>affected_tenants</code></td><td><code>integer (int64)</code></td><td>yes</td><td><p>How many tenants were re-anchored, matching the <code>affected_tenants</code> the operator was<br>shown in the confirmation.</p>
+<tr><td><code>affected_tenants</code></td><td><code>integer (int64)</code></td><td>yes</td><td><p>How many tenants were re-anchored, as committed. It is at most the <code>affected_tenants</code><br>the operator was shown in the confirmation: a token is not honoured once the plan&#39;s<br>count has grown past it.</p>
 </td></tr>
 <tr><td><code>applied_at</code></td><td><a href="#schema-timestamp"><code>Timestamp</code></a></td><td>yes</td><td></td></tr>
 <tr><td><code>version</code></td><td>—</td><td>yes</td><td><p>The plan&#39;s version after the apply.</p>
@@ -2219,7 +2233,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </table>
 <h3 id="schema-planimpact">PlanImpact</h3>
 <p class="muted">Type <code>object</code></p>
-<p>What an edit would affect, read-only. Nothing is re-anchored, no audit row records a<br>mutation and no token is issued (UC-19).</p>
+<p>What an apply-now of the plan as saved would affect, read-only. Nothing is re-anchored, no<br>audit row records a mutation and no token is issued (UC-19).</p>
 <ul>
 <li><p><strong>Undeclared fields are rejected.</strong> A field that is not in this schema is a <code>400 validation_failed</code>.</p>
 </li>
@@ -2227,9 +2241,9 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <table>
 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
 <tr><td><code>plan_key</code></td><td><a href="#schema-plankey"><code>PlanKey</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>affected_tenants</code></td><td><code>integer (int64)</code></td><td>yes</td><td><p>How many tenants the edit would affect, which is the number<br><code>exceeds_confirmation_threshold</code> compares against the configured threshold.</p>
+<tr><td><code>affected_tenants</code></td><td><code>integer (int64)</code></td><td>yes</td><td><p>How many non-deleted tenants are on the plan, suspended ones included, which is the<br>number <code>exceeds_confirmation_threshold</code> compares against the configured threshold.</p>
 </td></tr>
-<tr><td><code>earliest_cycle_end</code></td><td>—</td><td>yes</td><td><p>The earliest <code>cycle_end</code> among affected tenants, or null when none are affected. It is<br>the same value <code>confirmation_required</code> reports, so the common case is a quiet read<br>rather than a <code>409</code>.</p>
+<tr><td><code>earliest_cycle_end</code></td><td>—</td><td>yes</td><td><p>The earliest <code>cycle_end</code> among affected tenants&#39; features that reset, in that tenant&#39;s<br>zone, or null when there is none. It is the same value <code>confirmation_required</code><br>reports, so the common case is a quiet read rather than a <code>409</code>.</p>
 </td></tr>
 <tr><td><code>exceeds_confirmation_threshold</code></td><td><code>boolean</code></td><td>yes</td><td><p>Whether <code>affected_tenants</code> is above <code>QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD</code>. The<br>operator can tell whether to expect a confirmation without provoking one.</p>
 </td></tr>

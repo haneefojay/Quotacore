@@ -1426,6 +1426,34 @@ func (*ErrorConflictQuotaHeaders) grantTenantRes()          {}
 func (*ErrorConflictQuotaHeaders) setTenantBalanceRes()     {}
 func (*ErrorConflictQuotaHeaders) upsertTenantOverrideRes() {}
 
+// ErrorConflictTenantDeletedHeaders wraps ErrorResponse with response headers.
+type ErrorConflictTenantDeletedHeaders struct {
+	XRequestID RequestId
+	Response   ErrorResponse
+}
+
+// GetXRequestID returns the value of XRequestID.
+func (s *ErrorConflictTenantDeletedHeaders) GetXRequestID() RequestId {
+	return s.XRequestID
+}
+
+// GetResponse returns the value of Response.
+func (s *ErrorConflictTenantDeletedHeaders) GetResponse() ErrorResponse {
+	return s.Response
+}
+
+// SetXRequestID sets the value of XRequestID.
+func (s *ErrorConflictTenantDeletedHeaders) SetXRequestID(val RequestId) {
+	s.XRequestID = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ErrorConflictTenantDeletedHeaders) SetResponse(val ErrorResponse) {
+	s.Response = val
+}
+
+func (*ErrorConflictTenantDeletedHeaders) clearTenantOverrideRes() {}
+
 // ErrorConflictTenantHeaders wraps ErrorResponse with response headers.
 type ErrorConflictTenantHeaders struct {
 	XRequestID RequestId
@@ -1459,6 +1487,45 @@ func (*ErrorConflictTenantHeaders) listTenantsRes()   {}
 func (*ErrorConflictTenantHeaders) resumeTenantRes()  {}
 func (*ErrorConflictTenantHeaders) suspendTenantRes() {}
 func (*ErrorConflictTenantHeaders) updateTenantRes()  {}
+
+// ErrorControlPlaneUnavailableHeaders wraps ErrorResponse with response headers.
+type ErrorControlPlaneUnavailableHeaders struct {
+	RetryAfter OptInt32
+	XRequestID RequestId
+	Response   ErrorResponse
+}
+
+// GetRetryAfter returns the value of RetryAfter.
+func (s *ErrorControlPlaneUnavailableHeaders) GetRetryAfter() OptInt32 {
+	return s.RetryAfter
+}
+
+// GetXRequestID returns the value of XRequestID.
+func (s *ErrorControlPlaneUnavailableHeaders) GetXRequestID() RequestId {
+	return s.XRequestID
+}
+
+// GetResponse returns the value of Response.
+func (s *ErrorControlPlaneUnavailableHeaders) GetResponse() ErrorResponse {
+	return s.Response
+}
+
+// SetRetryAfter sets the value of RetryAfter.
+func (s *ErrorControlPlaneUnavailableHeaders) SetRetryAfter(val OptInt32) {
+	s.RetryAfter = val
+}
+
+// SetXRequestID sets the value of XRequestID.
+func (s *ErrorControlPlaneUnavailableHeaders) SetXRequestID(val RequestId) {
+	s.XRequestID = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ErrorControlPlaneUnavailableHeaders) SetResponse(val ErrorResponse) {
+	s.Response = val
+}
+
+func (*ErrorControlPlaneUnavailableHeaders) planImpactRes() {}
 
 // Code-specific and additive across versions. Every code-specific field lives here, not beside `code`,
 // which is what keeps the envelope one shape everywhere.
@@ -1742,6 +1809,7 @@ func (s *ErrorNotFoundResourceHeaders) SetResponse(val ErrorResponse) {
 }
 
 func (*ErrorNotFoundResourceHeaders) balanceRes()              {}
+func (*ErrorNotFoundResourceHeaders) clearTenantOverrideRes()  {}
 func (*ErrorNotFoundResourceHeaders) forceRolloverRes()        {}
 func (*ErrorNotFoundResourceHeaders) grantTenantRes()          {}
 func (*ErrorNotFoundResourceHeaders) setTenantBalanceRes()     {}
@@ -2107,16 +2175,15 @@ func (s *ErrorTenantNotFoundHeaders) SetResponse(val ErrorResponse) {
 	s.Response = val
 }
 
-func (*ErrorTenantNotFoundHeaders) checkRes()               {}
-func (*ErrorTenantNotFoundHeaders) clearTenantOverrideRes() {}
-func (*ErrorTenantNotFoundHeaders) consumeRes()             {}
-func (*ErrorTenantNotFoundHeaders) deleteTenantRes()        {}
-func (*ErrorTenantNotFoundHeaders) getTenantRes()           {}
-func (*ErrorTenantNotFoundHeaders) listUsageEventsRes()     {}
-func (*ErrorTenantNotFoundHeaders) refundRes()              {}
-func (*ErrorTenantNotFoundHeaders) resumeTenantRes()        {}
-func (*ErrorTenantNotFoundHeaders) suspendTenantRes()       {}
-func (*ErrorTenantNotFoundHeaders) updateTenantRes()        {}
+func (*ErrorTenantNotFoundHeaders) checkRes()           {}
+func (*ErrorTenantNotFoundHeaders) consumeRes()         {}
+func (*ErrorTenantNotFoundHeaders) deleteTenantRes()    {}
+func (*ErrorTenantNotFoundHeaders) getTenantRes()       {}
+func (*ErrorTenantNotFoundHeaders) listUsageEventsRes() {}
+func (*ErrorTenantNotFoundHeaders) refundRes()          {}
+func (*ErrorTenantNotFoundHeaders) resumeTenantRes()    {}
+func (*ErrorTenantNotFoundHeaders) suspendTenantRes()   {}
+func (*ErrorTenantNotFoundHeaders) updateTenantRes()    {}
 
 // ErrorUnauthorizedHeaders wraps ErrorResponse with response headers.
 type ErrorUnauthorizedHeaders struct {
@@ -2242,7 +2309,6 @@ func (*ErrorUnavailableHeaders) listKeysRes()             {}
 func (*ErrorUnavailableHeaders) listPlansRes()            {}
 func (*ErrorUnavailableHeaders) listTenantsRes()          {}
 func (*ErrorUnavailableHeaders) listUsageEventsRes()      {}
-func (*ErrorUnavailableHeaders) planImpactRes()           {}
 func (*ErrorUnavailableHeaders) refundRes()               {}
 func (*ErrorUnavailableHeaders) resumeTenantRes()         {}
 func (*ErrorUnavailableHeaders) revokeKeyRes()            {}
@@ -5352,8 +5418,10 @@ func (s *Override) SetUpdatedAt(val Timestamp) {
 	s.UpdatedAt = val
 }
 
-// A mode, not a timestamp. `immediate` applies now; `next_boundary` applies at the tenant's next
-// boundary, which is the only moment a boundary change is meaningful.
+// A mode, not a timestamp. `immediate` applies a limit now, re-limiting the open cycle and keeping
+// what was spent; `next_boundary` applies it at the tenant's next boundary. An interval reaches the
+// tenant at its next re-anchor in either mode, because that is the only moment a cadence change is
+// meaningful.
 //
 // It is a mode because the actual instant an override takes effect is always the tenant's next
 // boundary, computed by the cycle engine and never stored. The name is a deliberate wart kept for the
@@ -5663,8 +5731,8 @@ func (s *Plan) SetArchivedAt(val NilTimestamp) {
 // Ref: #/components/schemas/PlanApplied
 type PlanApplied struct {
 	PlanKey PlanKey `json:"plan_key"`
-	// How many tenants were re-anchored, matching the `affected_tenants` the operator was shown in the
-	// confirmation.
+	// How many tenants were re-anchored, as committed. It is at most the `affected_tenants` the operator
+	// was shown in the confirmation: a token is not honoured once the plan's count has grown past it.
 	AffectedTenants int64     `json:"affected_tenants"`
 	AppliedAt       Timestamp `json:"applied_at"`
 	// The plan's version after the apply.
@@ -5747,9 +5815,10 @@ type PlanApplyRequest struct {
 	// Required and audited. Re-anchoring every assigned tenant is a decision with a blast radius, and a
 	// decision with a blast radius is one whose reason is worth having later.
 	Reason string `json:"reason"`
-	// Present only when re-issuing after `409 confirmation_required`. Single-use, bound to the plan
-	// `resource_version` it was issued against, and expiring on `QUOTACORE_CONFIRMATION_TTL`, because an
-	// abandoned token must not accumulate in a store that cannot evict (DR-048).
+	// Present only when re-issuing after `409 confirmation_required`. Single-use, bound to the plan, the
+	// `resource_version` and the `reason` it was issued against, and expiring on
+	// `QUOTACORE_CONFIRMATION_TTL`, because an abandoned token must not accumulate in a store that cannot
+	// evict (DR-048).
 	ConfirmationToken OptString `json:"confirmation_token"`
 }
 
@@ -5894,16 +5963,17 @@ func (s *PlanEntitlement) SetResetInterval(val ResetInterval) {
 	s.ResetInterval = val
 }
 
-// What an edit would affect, read-only. Nothing is re-anchored, no audit row records a mutation and no
-// token is issued (UC-19).
+// What an apply-now of the plan as saved would affect, read-only. Nothing is re-anchored, no audit row
+// records a mutation and no token is issued (UC-19).
 // Ref: #/components/schemas/PlanImpact
 type PlanImpact struct {
 	PlanKey PlanKey `json:"plan_key"`
-	// How many tenants the edit would affect, which is the number `exceeds_confirmation_threshold`
-	// compares against the configured threshold.
+	// How many non-deleted tenants are on the plan, suspended ones included, which is the number
+	// `exceeds_confirmation_threshold` compares against the configured threshold.
 	AffectedTenants int64 `json:"affected_tenants"`
-	// The earliest `cycle_end` among affected tenants, or null when none are affected. It is the same
-	// value `confirmation_required` reports, so the common case is a quiet read rather than a `409`.
+	// The earliest `cycle_end` among affected tenants' features that reset, in that tenant's zone, or null
+	// when there is none. It is the same value `confirmation_required` reports, so the common case is a
+	// quiet read rather than a `409`.
 	EarliestCycleEnd NilTimestamp `json:"earliest_cycle_end"`
 	// Whether `affected_tenants` is above `QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD`. The operator can tell
 	// whether to expect a confirmation without provoking one.
@@ -6066,8 +6136,10 @@ func (*PlanOKHeaders) archivePlanRes() {}
 func (*PlanOKHeaders) getPlanRes()     {}
 func (*PlanOKHeaders) updatePlanRes()  {}
 
-// An edit to a plan's entitlements. It applies to new assignments immediately and to existing tenants
-// at their next boundary; it does not touch an open balance and it does not move a boundary (DR-014).
+// An edit to a plan's entitlements. It applies to new assignments immediately; an existing tenant
+// takes a new limit at its next boundary and a new interval or an added feature at its next re-anchor,
+// and keeps a removed feature until the end of the window the edit landed in. It does not touch an
+// open balance and it does not move a boundary (DR-014).
 // Ref: #/components/schemas/PlanUpdate
 type PlanUpdate struct {
 	// Required. The plan is an offer that governs a customer's money, so last-write-wins is not
