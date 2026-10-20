@@ -14,6 +14,7 @@ import (
 	"github.com/quotacore/quotacore/internal/dataplane"
 	"github.com/quotacore/quotacore/internal/db"
 	"github.com/quotacore/quotacore/internal/envelope"
+	"github.com/quotacore/quotacore/internal/ledger"
 	"github.com/quotacore/quotacore/internal/observability"
 	"github.com/quotacore/quotacore/internal/script"
 	"github.com/quotacore/quotacore/internal/snapshot"
@@ -30,25 +31,88 @@ type enforcement struct {
 	Keys     *auth.Authenticator
 	Metrics  *observability.Metrics
 	Plane    *observability.DataPlane
-	Close    func()
+	// Ledger is the event queue and its writer (IP-12).
+	Ledger *ledger.Sink
+	// Drain stops the ledger taking events and writes what is queued, within
+	// ctx; main calls it after the HTTP server has finished its requests.
+	Drain func(ctx context.Context)
+	Close func()
 }
 
-// events is the ledger's sink; nil is the no-op sink, which is what ships
-// until IP-12 provides the queue and the writer.
+// tee hands every event to the ledger and to an observer, which is how the
+// integration tests see what a route enqueued without reading the table.
+type tee struct{ a, b dataplane.EventSink }
+
+func (t tee) Enqueue(e dataplane.Event) { t.a.Enqueue(e); t.b.Enqueue(e) }
+
 // assembleOptions are what the tests vary; the zero value is what ships.
 type assembleOptions struct {
 	// adminStore replaces the Postgres admin store, so a test can wrap it
 	// with a commit hook (IP-09 DoD 4).
 	adminStore admin.Store
+	// appender replaces the ledger's Postgres appender, so a test can stall
+	// it or lose an acknowledgement (IP-12 DoD 3, 4, 8).
+	appender func(*db.Ledger) ledger.Appender
+	// noWriter leaves the ledger's writer unstarted, so events queue and are
+	// never written (IP-12 DoD 8).
+	noWriter bool
+	// retentionFirstRun shortens the delay before the first retention tick.
+	retentionFirstRun time.Duration
 }
 
+// observe, when not nil, is handed every event the ledger is; production
+// passes nil.
 func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB, data *store.Store,
-	ready api.Readiness, events dataplane.EventSink, opts ...assembleOptions) (*enforcement, error) {
+	ready api.Readiness, observe dataplane.EventSink, opts ...assembleOptions) (*enforcement, error) {
 	var opt assembleOptions
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
+	// The ledger writer has its own pool of two connections, so a slow ledger
+	// cannot take the admin pool or the snapshot's bounded miss read
+	// (performance.md section 5, IP-12 D4).
+	ledgerConn, err := db.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return nil, err
+	}
+	ledgerConn.SetMaxOpenConns(2)
+	ledgerConn.SetMaxIdleConns(2)
+	var appender ledger.Appender = db.NewLedger(ledgerConn)
+	if opt.appender != nil {
+		appender = opt.appender(db.NewLedger(ledgerConn))
+	}
+	sink := ledger.New(ledger.Options{
+		QueueSize:     cfg.EventQueueSize,
+		BatchSize:     cfg.EventBatchSize,
+		FlushInterval: cfg.EventFlushInterval,
+		Appender:      appender,
+		Logger:        log,
+	})
+	var events dataplane.EventSink = sink
+	if observe != nil {
+		events = tee{sink, observe}
+	}
+	// The writer runs on its own context: Close cancels it last, after Drain
+	// has had the shutdown grace to write what is queued.
+	writerCtx, cancelWriter := context.WithCancel(context.WithoutCancel(ctx))
+	if !opt.noWriter {
+		go sink.Run(writerCtx)
+	}
 	ctx, cancel := context.WithCancel(ctx)
+	// Retention is a background job, never an API call (DR-044, NFR-C6). It
+	// runs in every instance and one prunes at a time.
+	go db.RunRetention(ctx, ledgerConn, db.RetentionOptions{
+		EventDays: cfg.EventRetentionDays,
+		AuditDays: cfg.AuditRetentionDays,
+		Interval:  cfg.RetentionInterval,
+		FirstRun:  opt.retentionFirstRun,
+		Logger:    log,
+		Metrics:   sink.Metrics(),
+	})
+	closeLedger := func() {
+		cancelWriter()
+		ledgerConn.Close()
+	}
 	snap := snapshot.New(snapshot.Options{
 		LimitEntries:        cfg.ConfigCacheEntries,
 		ByteCap:             int64(cfg.ConfigCacheMB) << 20,
@@ -87,6 +151,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 	if err != nil {
 		cancel()
 		snap.Close()
+		closeLedger()
 		return nil, err
 	}
 	loadCtx, cancelLoad := context.WithTimeout(ctx, cfg.ControlPlaneTimeout)
@@ -148,6 +213,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 				st := snap.Stats()
 				return contract.CacheStats{Entries: st.Entries, Tenants: st.Tenants, Features: st.Features, SizeBytes: st.Bytes}
 			},
+			Ledger: sink,
 		},
 	})
 	// Pending re-anchors are finished at start and on every refresh tick, so
@@ -173,9 +239,12 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		Keys:     keys,
 		Metrics:  metrics,
 		Plane:    plane,
+		Ledger:   sink,
+		Drain:    sink.Shutdown,
 		Close: func() {
 			cancel()
 			snap.Close()
+			closeLedger()
 		},
 	}, nil
 }

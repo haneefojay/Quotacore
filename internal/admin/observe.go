@@ -138,24 +138,27 @@ func (s *Service) serveStatus(w http.ResponseWriter, r *http.Request) {
 	if !s.status.Started.IsZero() {
 		uptime = int64(now.Sub(s.status.Started) / time.Second)
 	}
+	// The ledger's queue, writer and drops, for this instance (IP-12 D8). With
+	// no ledger wired, the honest values are an empty queue, a stopped writer
+	// and no drops.
+	depth, worker, dropped := int64(0), contract.StatusWorkerStopped, int64(0)
+	if l := s.status.Ledger; l != nil {
+		depth, worker, dropped = int64(l.Depth()), contract.StatusWorker(l.State()), l.Dropped()
+	}
 	respond(w, r, http.StatusOK, &contract.Status{
 		Status:  status,
 		Version: s.status.Version,
 		Commit:  s.status.Commit,
 		// The zone database is the one embedded by the toolchain that built
 		// the binary (time/tzdata), so the toolchain's release names it.
-		ZoneDataVersion: runtime.Version(),
-		ServerTime:      contract.Timestamp(now.UTC()),
-		UptimeS:         uptime,
-		Dependencies:    deps,
-		Cache:           cache,
-		// No queue, reset worker or ledger writer exists yet: IP-12 builds the
-		// ledger writer and its queue, and the reset worker belongs to no v0.1
-		// phase (the IP-09 plan's section 6). Until then the honest values are
-		// an empty queue, no drops and a worker that is not running.
-		QueueDepth:         0,
-		Worker:             contract.StatusWorkerStopped,
-		LedgerDroppedTotal: 0,
+		ZoneDataVersion:    runtime.Version(),
+		ServerTime:         contract.Timestamp(now.UTC()),
+		UptimeS:            uptime,
+		Dependencies:       deps,
+		Cache:              cache,
+		QueueDepth:         depth,
+		Worker:             worker,
+		LedgerDroppedTotal: dropped,
 	})
 }
 
