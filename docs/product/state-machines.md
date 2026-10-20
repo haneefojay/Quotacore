@@ -325,6 +325,18 @@ Append-only. There is no state machine: an event is written or it is not.
   `quotacore_event_sink_dropped_total` and a gap in history, never as a silent omission
   (ADR-0016).
 
+> **Amended 2026-10-20 (`IP-12`).** U-6 is written by whichever caller's script rolled the window —
+> consume, refund, check, grant, set or an immediate override — as `source: system` with the
+> triggering request's id, enqueued before that request's own event; a roll whose delta is zero
+> writes nothing (Q-22). U-7 carries its reason in `metadata`. An event the ledger refuses is kept in
+> the dead-letter table rather than dropped, so the gap INV-U3 describes is the queue's drops alone.
+> `IP-12`'s Definition of Done cites INV-W1 and INV-W2 (webhook delivery, section 10) and INV-WK1 and
+> INV-WK2 (the reset worker, section 11) for the ledger writer; it reads each for the writer — the
+> `event_id` a consumer deduplicates on, an enqueue that never blocks, a writer whose absence changes
+> no enforcement outcome, and a writer that appends and cannot touch a balance
+> ([security-model.md](../architecture/security-model.md#2-trust-boundaries)). The four invariants are
+> not changed.
+
 ---
 
 ## 10. Webhook delivery (v0.3)

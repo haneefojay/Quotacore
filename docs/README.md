@@ -47,7 +47,7 @@ Read in order; the documents build on each other. Start with
 | [state-machines.md](product/state-machines.md) | Every state, its transitions, guards and invariants | You are implementing transitions or reasoning about an edge case |
 | [error-catalog.md](product/error-catalog.md) | 35 error codes and 22 failure scenarios (`FS-01`–`FS-22`), with a client action for each | You are handling errors, or writing an SDK |
 | [user-journeys.md](product/user-journeys.md) | 10 end-to-end journeys (`J-1`–`J-10`), including the sceptical evaluator | You are validating that the product solves a real problem |
-| [assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) | 23 assumptions (`A-01`–`A-23`) with validation methods, a dated accepted-risk table and a corrections log, and 23 questions: 10 answered, 3 deferred, 10 open | You are about to build on an unverified assumption |
+| [assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) | 23 assumptions (`A-01`–`A-23`) with validation methods, a dated accepted-risk table and a corrections log, and 23 questions: 13 answered, 3 deferred, 7 open | You are about to build on an unverified assumption |
 | [glossary.md](product/glossary.md) | Every term, with the ones that are easy to confuse marked | Any time a word is ambiguous |
 
 ## Architecture — how it is built and proven

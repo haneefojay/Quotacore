@@ -208,11 +208,15 @@ Given  a consume of 30 that completed, with its idempotency record written
 When  the fast store is flushed, then rebuilt from the ledger
 And    the client retries the identical request inside the 24 h window
 Then   the second deduction is applied, because the record is gone
-And    reconciliation detects the duplicate event_id
+And    reconciliation detects the second deduction under that idempotency key
 And    exactly one refund of 30 is issued against that key
 And    the tenant's net balance equals a single charge of 30
 And    a second reconciliation pass issues no further refund
 ```
+
+Amended 2026-10-20 (`IP-12`): the fifth line read "detects the duplicate event_id". The replayed
+request is a new mutation with its own `event_id`; what repeats is the idempotency key, which is
+what the partial unique index detects (DR-049's note).
 
 The third assertion is the one that makes the guarantee honest: the system is not pretending the
 second charge did not happen, it is undoing it. Runs in the nightly suite because it requires a

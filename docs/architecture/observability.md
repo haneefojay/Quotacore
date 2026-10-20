@@ -96,6 +96,8 @@ directly, so a graph shows "p99 under 5 ms" without interpretation.
 | `quotacore_event_duplicate_detected_total` | counter | The partial unique index fired. Zero in normal operation. Non-zero is P0: either the runtime store failed to prevent a double charge (DR-030), or a total store loss lost the idempotency record and a client retried inside its window (FS-22). The two are told apart by whether a store-loss event is in the same window |
 | `quotacore_duplicate_reversal_total` | counter | Refunds issued by reconciliation for a detected duplicate (DR-049). Non-zero means a customer was charged twice for a moment. Idempotent on `event_id`, so a second reconciliation pass must not increment it |
 | `quotacore_event_reconcile_mismatch_total` | counter | Verification disagreements. Non-zero is P1 |
+| `quotacore_event_dead_lettered_total` | counter | **By `reason`: `duplicate_idempotency_key`, `rejected`.** Events the ledger refused and the writer kept in the dead-letter table rather than losing (INV-U3). Added 2026-10-20 (`IP-12`) |
+| `quotacore_event_dead_letters` | gauge | **By `reason`.** Dead-letter rows outstanding, refreshed on each retention tick. A `rejected` row that stays is one whose replay keeps failing. Added 2026-10-20 (`IP-12`) |
 
 `event_sink_dropped_total` and `event_duplicate_detected_total` are the two metrics that mean
 money. Both are P0-adjacent, both are asserted zero in tests, and both are described in the
@@ -200,7 +202,7 @@ the event an operator will need to explain afterwards.
 | --- | --- | --- | --- |
 | `GET /healthz` | none | The process is alive and not shutting down. **No dependency checks.** A liveness probe that fails on a database outage causes a restart loop during an outage | Orchestrator liveness |
 | `GET /readyz` | none | The process can serve enforcement: the data store answered within the timeout, the snapshot is populated, migrations are current, and the process is not draining. No detail in the body | Load balancer, compose healthcheck |
-| `GET /v1/admin/status` | `admin` | Dependency health, version, commit, zone-data version, server time, cache size, queue depth, worker state, and the ledger-drop counter | Operator and support |
+| `GET /v1/admin/status` | `admin` | Dependency health, version, commit, zone-data version, server time, cache size, the ledger queue's depth, the ledger writer's state, and the ledger-drop counter, each for the instance that answers (amended 2026-10-20, `IP-12`) | Operator and support |
 
 **Liveness and readiness are deliberately different, and liveness deliberately ignores
 dependencies.** Conflating them is the classic way an infrastructure outage becomes a crash loop
@@ -233,6 +235,8 @@ Severity definitions: **P0** money or data is wrong now. **P1** a stated guarant
 | DB pool wait | `quotacore_dbpool_wait_seconds{p99} > 0.05` | P2 | The coupling the architecture forbids is forming. Find which admin query is holding connections |
 | Ledger drops | `event_sink_dropped_total` rising for over 1 min | P2 | History has gaps. Enforcement is unaffected. See FS-10 before doing anything |
 | Ledger queue depth | `quotacore_event_queue_depth > 80% of cap` sustained | P2 | The writer is behind. Expect drops if it continues |
+| Ledger dead letter, duplicate | `quotacore_event_dead_letters{reason="duplicate_idempotency_key"} > 0` | P0 | The same condition as *Double charge detected*, seen from the table that holds the second deduction for reconciliation's reversal (DR-049). Follow that row |
+| Ledger dead letter, rejected | `quotacore_event_dead_letters{reason="rejected"} > 0` for over 1 h | P2 | An event the ledger refuses and whose hourly replay still fails. The `error` log line carries its `event_id` and the refusal; fix the cause and the next tick appends it |
 | Config invalidation lag | `invalidation_lag{p99} > 1 s` for 5 min | P2 | Pub/sub is degraded; the refresh interval is the backstop. NFR-D3 is not being met |
 | Cache eviction | `quotacore_config_cache_evictions_total` rising | P2 | NFR-T7 is undersized. Raise the bound or add memory |
 | Clock skew | Skew above the threshold | P1 | Boundaries are wrong. Fix NTP |

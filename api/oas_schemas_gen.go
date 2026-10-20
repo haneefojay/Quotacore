@@ -6393,13 +6393,16 @@ type Status struct {
 	// in `status`.
 	Dependencies []DependencyHealth `json:"dependencies"`
 	Cache        CacheStats         `json:"cache"`
-	// The reset worker's queue depth (ADR-0003).
+	// The ledger queue's current depth on the instance that answered: events accepted and not yet written.
+	// Growth toward `QUOTACORE_EVENT_QUEUE_SIZE` means the writer is behind, and drops follow (ADR-0016).
 	QueueDepth int64 `json:"queue_depth"`
-	// The reset worker's state, so a stalled rollover is visible before a customer's balance is wrong.
+	// The ledger writer's state on the instance that answered: `running`, `draining` while a shutdown
+	// writes what is queued, and `stopped` before it starts or after it has drained.
 	Worker StatusWorker `json:"worker"`
-	// Ledger events the external sink failed to accept. Non-zero means the downstream history is
-	// incomplete, and that is reported rather than hidden, because a silently incomplete history is worse
-	// than a documented one (ADR-0016).
+	// Ledger events this instance dropped since it started, over every reason. Non-zero means the history
+	// is incomplete, and that is reported rather than hidden, because a silently incomplete history is
+	// worse than a documented one (ADR-0016). An event the ledger refused is kept as a dead letter, not
+	// counted here.
 	LedgerDroppedTotal int64 `json:"ledger_dropped_total"`
 }
 
@@ -6582,7 +6585,8 @@ func (s *StatusStatus) UnmarshalText(data []byte) error {
 	}
 }
 
-// The reset worker's state, so a stalled rollover is visible before a customer's balance is wrong.
+// The ledger writer's state on the instance that answered: `running`, `draining` while a shutdown
+// writes what is queued, and `stopped` before it starts or after it has drained.
 type StatusWorker string
 
 const (

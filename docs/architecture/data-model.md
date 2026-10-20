@@ -274,6 +274,7 @@ CREATE TABLE usage_events (
   idempotency_key text,
   metadata       jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at     timestamptz NOT NULL DEFAULT now(),
+  cycle_start    timestamptz,                      -- the window the hash was in
   CONSTRAINT usage_events_delta_nonzero CHECK (delta <> 0),
   CONSTRAINT usage_events_seq_unique UNIQUE (seq)
 );
@@ -288,6 +289,29 @@ insert order, and is the tiebreaker that newest-first pagination needs (api-conv
 > also why the ledger's `seq` column exists", but this block had no `seq`. The column is added here
 > rather than the sentence deleted, because the within-batch order is the one the reconciliation
 > identity of DR-042 is read in.
+
+> **Amended 2026-10-20 (`IP-12`) — the writer sets `id` and `created_at`.** The ledger writer mints
+> `id`, the `event_id` a consumer deduplicates on, as a UUIDv7 once, when the event is enqueued, and
+> inserts with `ON CONFLICT DO NOTHING`, so a batch retried after a lost commit acknowledgement
+> writes nothing twice. It writes `created_at` from the instant the request accepted, not the
+> writer's transaction start, so the events route's window and retention both read when the
+> mutation happened; the defaults stay for any other insert. `seq` is still the tiebreaker inside
+> one instant.
+
+> **Amended 2026-10-20 (`IP-12`) — `cycle_start`, and how a cycle is identified.** ADR-0016 says a
+> row records the cycle window, and the block had only `cycle_index`. A re-anchor restarts the index
+> at 0 and a force-rollover can lower it, so an index alone does not name a cycle. `cycle_start` is
+> the start of the window the balance hash was in, taken from the same script reply as
+> `cycle_index`, so the two always agree even when the caller's snapshot was stale. It is nullable
+> only because rows written before migration `00010` have none; the writer always fills it.
+>
+> A cycle is `(tenant_id, feature_id, cycle_start, cycle_index)`. It is **opened** by a
+> `cycle_rolled_over`, `plan_changed` or `force_rolled_over` row, whose `balance_after` is the
+> cycle's opening allowance; a cycle with no opening row — a tenant's first, or one whose opening
+> delta was zero and so wrote nothing (Q-22) — opens at the effective limit. The reconciliation
+> identity is then: the last `balance_after` of a cycle equals its opening plus the deltas of every
+> other row in it. Every row carries its own `balance_after`, so order inside the cycle does not
+> matter to the sum.
 `delta <> 0` is enforced, which makes U-8 in the state machines a database guarantee rather than
 an application intention: an `amount: 0` consume cannot produce a row.
 
@@ -303,7 +327,10 @@ CREATE INDEX usage_events_tenant_cycle_idx ON usage_events (tenant_id, feature_i
 CREATE UNIQUE INDEX usage_events_idem_idx
   ON usage_events (tenant_id, idempotency_key)
   WHERE idempotency_key IS NOT NULL AND event_type IN ('consumed', 'refunded');
+CREATE INDEX usage_events_created_brin ON usage_events USING brin (created_at);
 ```
+
+The BRIN index is the time index the retention job deletes by (section 5), as ADR-0016 names it.
 
 The partial unique index is the asynchronous duplicate detector (DR-030). Its failure is a
 detected anomaly, logged and counted, not a customer-visible error — by the time it fires, the
@@ -311,6 +338,10 @@ runtime store has already prevented the duplicate.
 
 This table is append-only (INV-U2). There is no `UPDATE` and no `DELETE` path in the application;
 retention is a bounded background deletion (DR-044, NFR-C6).
+
+An event the writer could not append lands in `usage_event_dead_letters` (section 2.12), never
+silently nowhere: a second deduction under one idempotency key, which the partial unique index
+refuses, is kept there for reconciliation's reversal (DR-049).
 
 ### 2.8 Audit log
 
@@ -444,6 +475,31 @@ served under the wrong numbering. The request drains its own tenants inline whil
 every instance drains the rest at start and on each refresh tick, a hundred tenants at a time
 ([consistency-and-recovery.md](consistency-and-recovery.md#3-dependency-failure-matrix)). Every
 write that changes one tenant's balances drains that tenant first, under the same row lock.
+
+### 2.12 Usage event dead letters
+
+```sql
+CREATE TABLE usage_event_dead_letters (
+  event_id    uuid PRIMARY KEY,
+  reason      text NOT NULL,
+  payload     jsonb NOT NULL,
+  error       text NOT NULL,
+  attempts    integer NOT NULL DEFAULT 1,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT usage_event_dead_letters_reason
+    CHECK (reason IN ('duplicate_idempotency_key', 'rejected'))
+);
+
+CREATE INDEX usage_event_dead_letters_created_idx ON usage_event_dead_letters (created_at);
+```
+
+An event the ledger refused, kept whole in `payload` under its own `event_id` so it is visible and
+replayable rather than lost (INV-U3). Added 2026-10-20 by `IP-12`. `duplicate_idempotency_key` is a
+second deduction the partial unique index refused: the shape a total store loss produces (FS-22),
+and the input reconciliation reverses (DR-049); it is never replayed into the ledger.
+`rejected` is any other permanent refusal, such as a feature key that resolves to no feature; the
+retention job re-attempts each one on every tick, deletes it in the transaction that appends it,
+and raises `attempts` when it fails again. This table is not the ledger and is not append-only.
 
 ---
 
@@ -585,6 +641,14 @@ corrected at the next cycle.
 The retention job deletes in bounded batches with a `DELETE` using the time index, never a single
 unbounded statement, and it runs with a statement timeout. A retention job that locks a table for
 an hour is a self-inflicted outage.
+
+> **Amended 2026-10-20 (`IP-12`).** The job runs in every instance on
+> `QUOTACORE_RETENTION_INTERVAL` and takes a transaction-scoped advisory lock, so one instance prunes
+> at a time; it deletes by `created_at` alone, 5 000 rows a batch under a 5 s statement timeout, and
+> its `DELETE` statements are the only ones the source check permits on either append-only table.
+> Deletion is by age only, so a cycle longer than the event retention — a yearly or `never`
+> entitlement under the 90-day default — loses its earliest rows, and a rebuild of that cycle from
+> the ledger is no longer exact ([deployment.md](deployment.md#44-ledger-and-retention)).
 
 ---
 
