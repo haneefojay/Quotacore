@@ -216,6 +216,11 @@ func TestAPlanChangeIsAHardReset(t *testing.T) {
 	if d := s.eventsOf(tn.ID, f, "plan_changed"); len(d) != 1 || d[0] != 200 {
 		t.Errorf("plan_changed events for the tenant: %v, want one of +200", d)
 	}
+	// The same, as the rows the writer appended (IP-10 hand-on, IP-12).
+	if rows := rowsFor(s.ledger(tn), f); !sameShapes(rows, expect{"consumed", "api", -725, 275},
+		expect{"granted", "admin", 25, 300}, expect{"plan_changed", "admin", 200, 500}) {
+		t.Errorf("the ledger for %s is %v", f, shapes(rows))
+	}
 	if n := s.rows(`SELECT count(*) FROM pending_reanchors WHERE tenant_id = $1`, tn.ID); n != 0 {
 		t.Errorf("the inline drain left %d pending rows", n)
 	}

@@ -133,6 +133,9 @@ func (p panicStore) ClearOverride(ctx context.Context, a admin.Actor, id, featur
 // one column a request may move.
 func (s *stack) controlDigest() string {
 	s.t.Helper()
+	// The ledger is read after a flush, so a refusal that enqueued an event
+	// shows as a changed row count (IP-12, T-08).
+	s.flush()
 	var out []string
 	for _, q := range []string{
 		`SELECT coalesce(md5(string_agg(t::text, ',' ORDER BY t::text)), '') FROM features t`,
@@ -144,6 +147,8 @@ func (s *stack) controlDigest() string {
 		`SELECT coalesce(md5(string_agg(t::text, ',' ORDER BY t::text)), '') FROM pending_reanchors t`,
 		`SELECT coalesce(md5(string_agg(id::text || name || scope || coalesce(revoked_at::text, ''), ',' ORDER BY id)), '') FROM api_keys`,
 		`SELECT count(*)::text FROM audit_log`,
+		`SELECT count(*)::text FROM usage_events`,
+		`SELECT count(*)::text FROM usage_event_dead_letters`,
 	} {
 		var v string
 		if err := s.seedDB.QueryRow(q).Scan(&v); err != nil {

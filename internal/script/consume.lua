@@ -215,7 +215,9 @@ end
 -- One write, and the balance cannot go below zero between the check and the
 -- write because they are the same execution (INV-C2). An amount of zero is a
 -- valid request that changes no balance and records no event (DR-023).
-redis.call('HINCRBY', KEY, 'balance', -amount)
+-- The increment is formatted as an integer: Lua renders the negation of zero
+-- as -0, which HINCRBY refuses as not an integer.
+redis.call('HINCRBY', KEY, 'balance', num(-amount))
 -- The reply reports the balance the key holds now, not the one it held before
 -- this script ran, or a caller that spent the last unit would be told it still
 -- has one (INV-C2). The value is what HINCRBY computed, kept in step here rather

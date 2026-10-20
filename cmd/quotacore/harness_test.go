@@ -701,6 +701,9 @@ func (s *stack) counter(name string, labels ...string) float64 {
 					continue metric
 				}
 			}
+			if m.Gauge != nil {
+				return m.GetGauge().GetValue()
+			}
 			return m.GetCounter().GetValue()
 		}
 	}

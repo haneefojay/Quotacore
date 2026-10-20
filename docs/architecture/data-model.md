@@ -308,10 +308,11 @@ insert order, and is the tiebreaker that newest-first pagination needs (api-conv
 > A cycle is `(tenant_id, feature_id, cycle_start, cycle_index)`. It is **opened** by a
 > `cycle_rolled_over`, `plan_changed` or `force_rolled_over` row, whose `balance_after` is the
 > cycle's opening allowance; a cycle with no opening row — a tenant's first, or one whose opening
-> delta was zero and so wrote nothing (Q-22) — opens at the effective limit. The reconciliation
-> identity is then: the last `balance_after` of a cycle equals its opening plus the deltas of every
-> other row in it. Every row carries its own `balance_after`, so order inside the cycle does not
-> matter to the sum.
+> delta was zero and so wrote nothing (Q-22) — opens at the effective limit. A force-rollover
+> refills the window it is in, so its row reopens the same cycle rather than a new one. The
+> reconciliation identity is then: the last `balance_after` of a cycle equals its last opening plus
+> the deltas of every row written after that opening. Every row carries its own `balance_after`, so
+> the order of the rows after the opening does not matter to the sum.
 `delta <> 0` is enforced, which makes U-8 in the state machines a database guarantee rather than
 an application intention: an `amount: 0` consume cannot produce a row.
 
