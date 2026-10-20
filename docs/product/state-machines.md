@@ -71,8 +71,8 @@ sees the applied change or is told the version has advanced.
 | P-3b | active | apply-now, above the threshold, no token | active | `reason` ≥ 8 chars; assigned tenants above the threshold; no `confirmation_token` | **applies nothing**; `409 confirmation_required` with `affected_tenants`, `earliest_cycle_end` and a single-use token (DR-046) | yes, as a refusal |
 | P-3c | active | apply-now, with a valid token | active | token unused; plan `resource_version` equals the version it was issued against; not past `QUOTACORE_CONFIRMATION_TTL` | applies immediately, as P-3; token consumed | yes, with reason |
 | P-4 | active | archive | archived | — | not assignable; existing tenants continue unchanged | yes |
-| P-5 | archived | unarchive | active | — | assignable again; no effect on existing tenants | yes |
-| P-6 | any | delete | — | no tenant, plan assignment, or event reference | otherwise `409 plan_in_use` | no |
+| P-5 | archived | unarchive | active | no route in v0.1; archiving an archived plan is a no-op | assignable again; no effect on existing tenants | yes |
+| P-6 | any | delete | — | no tenant, plan assignment, or event reference | otherwise `409 plan_in_use` | yes, with reason; a refusal is not |
 
 **Invariants**
 - INV-P1 Archiving a plan does not alter any assigned tenant's balance or cycle. Stopping new
@@ -83,6 +83,12 @@ sees the applied change or is told the version has advanced.
 - INV-P4 A `409 confirmation_required` re-anchors nothing. The count is taken before any write, and
   the token is issued only on the refusal path, so a wide `apply-now` is a decision the operator
   makes twice rather than a change that half-happened (DR-046).
+
+> **Amended 2026-10-20 (`IP-09`).** P-5 has no route in v0.1: the diagram calls `archived`
+> terminal, no operation unarchives, and an archive of an archived plan is a no-op rather than a
+> reversal. P-6 and F-6 said a delete is not audited, while DR-041 audits every administrative
+> mutation; a delete that succeeds is audited with its reason, and only the `409` refusal writes
+> nothing, because nothing changed.
 
 ---
 
@@ -100,7 +106,7 @@ sees the applied change or is told the version has advanced.
 | F-3 | active | archive | archived | — | new consumption → `403 feature_archived`; balances intact (DR-016) | yes |
 | F-4 | active | set metered (default) | active | no assignment yet | defines unit and default interval | yes |
 | F-5 | active | set boolean | active | v0.2; no metered assignment yet | entitlement becomes inclusion-only | yes |
-| F-6 | any | delete | — | no plan, tenant, or event reference | otherwise `409 feature_in_use` | no |
+| F-6 | any | delete | — | no plan, tenant, or event reference | otherwise `409 feature_in_use` | yes, with reason; a refusal is not |
 
 **Invariants**
 - INV-F1 Archiving never resets a balance. The balance remains readable until its cycle ends and

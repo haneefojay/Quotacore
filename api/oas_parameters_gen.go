@@ -8,7 +8,9 @@ import (
 
 // ApplyPlanParams is parameters of applyPlan operation.
 type ApplyPlanParams struct {
-	// A plan identifier. Either the UUID or the plan key; both address a plan.
+	// A plan identifier. Either the UUID or the plan key; both address a plan. A UUID-shaped value is
+	// looked up as an id first and as a plan key second. An identifier that names no plan is
+	// `404 plan_not_found`, never `400`.
 	ID string
 }
 
@@ -20,7 +22,9 @@ type ArchiveFeatureParams struct {
 
 // ArchivePlanParams is parameters of archivePlan operation.
 type ArchivePlanParams struct {
-	// A plan identifier. Either the UUID or the plan key; both address a plan.
+	// A plan identifier. Either the UUID or the plan key; both address a plan. A UUID-shaped value is
+	// looked up as an id first and as a plan key second. An identifier that names no plan is
+	// `404 plan_not_found`, never `400`.
 	ID string
 }
 
@@ -36,7 +40,9 @@ type BalanceParams struct {
 
 // ClearTenantOverrideParams is parameters of clearTenantOverride operation.
 type ClearTenantOverrideParams struct {
-	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant.
+	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
+	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
+	// is `404 tenant_not_found`, never `400`, and is never echoed.
 	ID string
 	// The feature key, as in the catalogue.
 	FeatureKey FeatureKey
@@ -56,15 +62,33 @@ type ConsumeParams struct {
 	IdempotencyKey IdempotencyKey
 }
 
+// DeleteFeatureParams is parameters of deleteFeature operation.
+type DeleteFeatureParams struct {
+	// The feature key, as in the catalogue.
+	FeatureKey FeatureKey
+}
+
+// DeletePlanParams is parameters of deletePlan operation.
+type DeletePlanParams struct {
+	// A plan identifier. Either the UUID or the plan key; both address a plan. A UUID-shaped value is
+	// looked up as an id first and as a plan key second. An identifier that names no plan is
+	// `404 plan_not_found`, never `400`.
+	ID string
+}
+
 // DeleteTenantParams is parameters of deleteTenant operation.
 type DeleteTenantParams struct {
-	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant.
+	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
+	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
+	// is `404 tenant_not_found`, never `400`, and is never echoed.
 	ID string
 }
 
 // ForceRolloverParams is parameters of forceRollover operation.
 type ForceRolloverParams struct {
-	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant.
+	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
+	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
+	// is `404 tenant_not_found`, never `400`, and is never echoed.
 	ID string
 }
 
@@ -76,19 +100,25 @@ type GetFeatureParams struct {
 
 // GetPlanParams is parameters of getPlan operation.
 type GetPlanParams struct {
-	// A plan identifier. Either the UUID or the plan key; both address a plan.
+	// A plan identifier. Either the UUID or the plan key; both address a plan. A UUID-shaped value is
+	// looked up as an id first and as a plan key second. An identifier that names no plan is
+	// `404 plan_not_found`, never `400`.
 	ID string
 }
 
 // GetTenantParams is parameters of getTenant operation.
 type GetTenantParams struct {
-	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant.
+	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
+	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
+	// is `404 tenant_not_found`, never `400`, and is never echoed.
 	ID string
 }
 
 // GrantTenantParams is parameters of grantTenant operation.
 type GrantTenantParams struct {
-	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant.
+	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
+	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
+	// is `404 tenant_not_found`, never `400`, and is never echoed.
 	ID string
 }
 
@@ -167,13 +197,17 @@ type ListUsageEventsParams struct {
 	From OptTimestamp `json:",omitempty,omitzero"`
 	// End of the time range, RFC 3339 with an explicit offset.
 	To OptTimestamp `json:",omitempty,omitzero"`
-	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant.
+	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
+	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
+	// is `404 tenant_not_found`, never `400`, and is never echoed.
 	ID string
 }
 
 // PlanImpactParams is parameters of planImpact operation.
 type PlanImpactParams struct {
-	// A plan identifier. Either the UUID or the plan key; both address a plan.
+	// A plan identifier. Either the UUID or the plan key; both address a plan. A UUID-shaped value is
+	// looked up as an id first and as a plan key second. An identifier that names no plan is
+	// `404 plan_not_found`, never `400`.
 	ID string
 }
 
@@ -193,7 +227,9 @@ type RefundParams struct {
 
 // ResumeTenantParams is parameters of resumeTenant operation.
 type ResumeTenantParams struct {
-	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant.
+	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
+	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
+	// is `404 tenant_not_found`, never `400`, and is never echoed.
 	ID string
 }
 
@@ -205,13 +241,17 @@ type RevokeKeyParams struct {
 
 // SetTenantBalanceParams is parameters of setTenantBalance operation.
 type SetTenantBalanceParams struct {
-	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant.
+	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
+	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
+	// is `404 tenant_not_found`, never `400`, and is never echoed.
 	ID string
 }
 
 // SuspendTenantParams is parameters of suspendTenant operation.
 type SuspendTenantParams struct {
-	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant.
+	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
+	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
+	// is `404 tenant_not_found`, never `400`, and is never echoed.
 	ID string
 }
 
@@ -223,18 +263,24 @@ type UpdateFeatureParams struct {
 
 // UpdatePlanParams is parameters of updatePlan operation.
 type UpdatePlanParams struct {
-	// A plan identifier. Either the UUID or the plan key; both address a plan.
+	// A plan identifier. Either the UUID or the plan key; both address a plan. A UUID-shaped value is
+	// looked up as an id first and as a plan key second. An identifier that names no plan is
+	// `404 plan_not_found`, never `400`.
 	ID string
 }
 
 // UpdateTenantParams is parameters of updateTenant operation.
 type UpdateTenantParams struct {
-	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant.
+	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
+	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
+	// is `404 tenant_not_found`, never `400`, and is never echoed.
 	ID string
 }
 
 // UpsertTenantOverrideParams is parameters of upsertTenantOverride operation.
 type UpsertTenantOverrideParams struct {
-	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant.
+	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
+	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
+	// is `404 tenant_not_found`, never `400`, and is never echoed.
 	ID string
 }

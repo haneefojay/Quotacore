@@ -14,6 +14,7 @@ import (
 // Key is one api_keys row as authentication needs it.
 type Key struct {
 	ID        string
+	Name      string // the audit actor of an admin request (DR-041)
 	Prefix    string
 	Scope     Scope
 	State     string // active, revoked or expired
@@ -279,6 +280,12 @@ func (a *Authenticator) Run(ctx context.Context, refresh time.Duration, logErr f
 		}
 	}
 }
+
+// Forget drops a prefix from the cache, so the next request with it is a miss
+// that reads the stored row. The admin routes call it after issuing or
+// revoking a key, which is what makes a revocation hold on the serving
+// instance's very next request, without waiting for the invalidation (K-2).
+func (a *Authenticator) Forget(prefix string) { a.cache.forget(prefix) }
 
 // CachedKeys is the number of prefixes cached, known or not.
 func (a *Authenticator) CachedKeys() int { return a.cache.len() }

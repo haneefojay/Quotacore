@@ -22,8 +22,8 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-06` | Idempotency prevention in the data plane | `IP-05` | `COMPLETE`, started and closed 2026-09-30 |
 | `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `COMPLETE`, started and closed 2026-10-19 |
 | `IP-08` | Control-plane schema and migrations | `IP-02` | `COMPLETE`, 2026-10-19 |
-| `IP-09` | Control-plane API and API keys | `IP-08` | `NOT STARTED` |
-| `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `BLOCKED` |
+| `IP-09` | Control-plane API and API keys | `IP-08` | `COMPLETE`, opened 2026-10-19, closed 2026-10-20 |
+| `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `NOT STARTED` |
 | `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `BLOCKED` |
 | `IP-12` | Usage ledger, writer and archiver | `IP-08` | `NOT STARTED` |
 | `IP-13` | Observability | `IP-07` | `NOT STARTED` |
@@ -365,7 +365,7 @@ generator is pinned so the artefacts cannot be produced by a different version.
 | 6 | `TestMatrixAndContractAgree` | A matrix cell and the contract disagreeing about which code a route returns |
 | 7 | `TestDocsPageIsUpToDate`, `TestDocsPageIsSelfContained`, `TestServedDocsIsTheCommittedPage`, `make generate-check` | A stale page, a page needing the network, or a served page that is not the committed one |
 
-The contract is `api/openapi.yaml`: 39 operations, 67 named schemas, 34 error codes, 5,037 lines.
+The contract is `api/openapi.yaml`: 41 operations, 67 named schemas, 35 error codes, 5,361 lines.
 It declares no product behaviour — `TestNoProductBehaviour` and `TestOgenEmitsNoRoutes` assert that
 `disable_all` produced no router and no unimplemented handler, and an enforcement call still returns
 `404`, because `IP-07` owns the routes.
@@ -1122,13 +1122,25 @@ constraints rather than application logic.
 
 ## IP-09 — Control-plane API and API keys
 
-**Status** `NOT STARTED`; `IP-08` closed on 2026-10-19 and nothing else gates this phase.
+**Status** `COMPLETE`, opened 2026-10-19 and closed 2026-10-20. `IP-08` closed on 2026-10-19 and
+nothing else gated this phase; the status was set to `IN PROGRESS` before any file the phase owns was
+written, and was closed once all nine Definition-of-Done items were met and the obligations earlier
+phases deferred here were closed by named tests.
 
 **Objective.** The administrative surface, with hashed scoped keys, audit in the same transaction,
 and no anonymous path after bootstrap.
 
 **Scope.**
 - Feature, plan, tenant, override, key, event-read, audit-read, status and health routes.
+  > **Amended 2026-10-19 (`IP-09`) — the line between this phase and `IP-10`.** The two scopes
+  > overlapped on most of the admin surface. This phase builds the resource surface: keys and the
+  > bootstrap key; features (list, create, get, update, archive, delete); plans (list, create, get,
+  > archive, delete); tenants (list, create, get, update of `display_name`, `timezone` and
+  > `metadata`, suspend, resume, delete); the audit and event reads; and status. Everything that
+  > moves a balance or a boundary is `IP-10`'s: the plan entitlement edit, apply-now, impact, a
+  > tenant's plan change, grant, set, force-rollover and both override routes. Tenant creation stays
+  > here because [data-model.md](../architecture/data-model.md) §3.2 names this phase as the writer
+  > that materialises the balance hash.
 - Key creation, listing and deletion, with the plaintext returned exactly once.
 - The audit write, inside the same transaction as the mutation it records.
 - Soft delete, archive, suspension and resumption.
@@ -1167,6 +1179,48 @@ and no anonymous path after bootstrap.
 9. Concurrent edits to one control-plane resource produce `409 resource_version_conflict` rather
    than a lost write.
 
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The rows
+marked `(integration)` need real valkey and Postgres 16, live in `cmd/quotacore`, and run in CI's
+`service` job.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestNoKeyIsRecoverableAfterIssuance` (integration) | A token, its secret or the secret's bytes in any column of any table (read from `pg_catalog`, so a new column is covered), in the log output or in the `/metrics` exposition after a runtime and an admin key are issued through the API (NFR-S1) |
+| 2 | `TestTheSecretIsReturnedOnce` (integration), `TestOnlyKeyCreatedCarriesASecret` | A `key` field in any response but the create's, or a contract schema other than `KeyCreated` that could carry one (INV-K3) |
+| 3 | `TestRotationIsAnExplicitPair` (integration) | Issuing a second key changing the first; the first refused before it is revoked or accepted on the next request after; a second revoke auditing again; an unknown id answered with anything but `404 api_key_not_found` (INV-K1) |
+| 4 | `TestEveryMutationIsAuditedOnce`, `TestAnAbortedMutationLeavesNoAuditRow` (integration) | A mutating route writing no audit row, two, or one without the caller's key name and id, the response's `X-Request-Id`, `before`, `after` and the `reason` its route takes; or a commit failed after both inserts leaving the row, the resource or the audit row behind (DR-041, NFR-S5, INV-X3) |
+| 5 | `TestSuspensionDeniesAndPreservesState` (integration) | A suspended tenant served anything but `403 tenant_suspended`, suspension or resumption changing the hash, its expiry or the idempotency records, or a resumed tenant not continuing from its balance (DR-032, INV-T2) |
+| 6 | `TestArchivingAFeaturePreservesItsBalance` (integration) | An archived feature consumed, its hash or expiry changed, its balance unreadable on `GET /v1/balance`, a ledger row rewritten, or a second archive auditing again (DR-016, INV-F1) |
+| 7 | `TestBootstrapKeyIsIssuedOnceOnAnEmptyTable`, `TestBootstrapKeyIsIgnoredOnceKeysExist`, `TestConcurrentStartsBootstrapOnce`, `TestNoRouteCreatesTheBootstrapKey` (integration), `TestAMalformedBootstrapKeyRefusesToStart`, `TestLoadRefusesAnUnacknowledgedBootstrapKey`, and CI's two bootstrap steps | A bootstrap key inserted on a non-empty table or twice by two starting replicas, logged beyond its prefix, missing its `bootstrap` audit row, accepted when malformed or unacknowledged, or an API request writing an audit row whose actor is `bootstrap` (INV-K2, NFR-S9) |
+| 8 | `TestNoSecretOrBodyValueInAnyLogLine` (integration) | A log line carrying a key's secret, a display name, a metadata value, a refused identifier or an undeclared body value, or a log attribute named for any request field the contract defines (DR-043) |
+| 9 | `TestConcurrentEditsConflict` (integration) | Two writes with one `version` to a feature, a plan and a tenant both succeeding, the loser answered with anything but `409 resource_version_conflict` naming `current_version`, or the stored resource not the winner's with exactly one audit row (FS-12) |
+| — | `TestAnAdminKeyReachesEveryIP09Route` (integration) | An admin key refused on any of the 24 operations this phase serves, or any of `IP-10`'s eight answering anything but a bare `404` (`IP-07` item 8) |
+| — | `TestRotationIsAnExplicitPair`, `TestRevokeReachesASecondInstanceWithinTheBound` (integration) | A revoked key accepted on the serving instance's next request, or on a second instance after NFR-D3's second (`IP-07` item 8, K-2) |
+| — | `TestDeletingAnAssignedPlanIsPlanInUseOverHTTP`, `TestDeletingAReferencedFeatureIsFeatureInUseOverHTTP`, `TestChangingAReferencedUnitIsRefusedOverHTTP`, `TestTenantCreateRefusesPIIAtTheBoundary` (integration) | `IP-08` items 4, 5 and 7 on the wire: a held plan (by a soft-deleted tenant too) or a referenced feature deleted, a referenced unit changed, or an identifier from `IP-08`'s corpus stored or echoed in the body or the log |
+| — | `TestAdminEndpointErrorMatrix`, `TestT08EveryRefusalChangesNothing`, extended (integration) | An admin matrix code no request provokes, a refusal with a code its row does not list, or a refusal that changes a catalogue row, a tenant, a key or the audit log. `adminOnly` is deleted; the three codes only `IP-10` reaches are listed by name as `IP-10`'s |
+| — | `TestAdminRateLimitIsPerIPAndBeforeAuthentication` (integration), `TestTrustedProxiesDecideTheClientIP` | The admin limit counting anything but the client address, read after the credential, reaching the data plane, or believing an `X-Forwarded-For` from an untrusted peer or a hop a client prefixed |
+
+Four things are recorded here because the phase surfaced them.
+
+- **The contract's `timezone` pattern refused its own default.** `IP-02` wrote a pattern that
+  requires an `Area/Location` name, and the default and the commonest value, `UTC`, does not match
+  it; no route took a time zone until this one. The pattern now admits `UTC` and the three places
+  that carry it were regenerated.
+- **A revoke cannot wait for the key cache's reconcile.** The reconcile reads Postgres and can fail;
+  the revoke route evicts the key from the serving instance's cache itself, and the invalidation
+  carries it to the others.
+- **No v0.1 phase builds the rollover worker** that `Status.worker`, `QUOTACORE_WORKER_ENABLED` and
+  `Q-13` describe; status reports `stopped`. It is left unchanged here and named in the PR.
+- **`QUOTACORE_RATELIMIT_ADMIN_RPM`'s default of 60 assumes a human caller**, while ADR-0012 has the
+  customer's backend provisioning tenants through the admin API; a bulk onboarding may meet it.
+  `Q-18` defers bulk import, and the setting is the operator's.
+
+> **Amended 2026-10-20 — what this phase hands on.** The rows behind the events route are proved on
+> seeded rows; the writer is `IP-12`'s. `Status.worker`, `queue_depth` and `ledger_dropped_total`
+> report `stopped`, `0` and `0` until `IP-12` and `IP-13` fill them. Minting the bootstrap key is an
+> `openssl` recipe in [deployment.md](../architecture/deployment.md) until `IP-14`'s CLI has the
+> command INV-K2 names.
+
 **Exit criteria.** Every administrative action is attributable, and none of them is anonymous,
 unrecoverable or unaudited.
 
@@ -1176,8 +1230,8 @@ unrecoverable or unaudited.
 
 ## IP-10 — Plan lifecycle and cycle-boundary semantics
 
-**Status** `BLOCKED`, gated on `IP-09` and on the `Q-01`, `Q-02`, `Q-04` and `Q-14` answers from
-`IP-00`.
+**Status** `NOT STARTED`. `IP-09` closed on 2026-10-20, and the `Q-01`, `Q-02`, `Q-04` and `Q-14`
+answers from `IP-00` are accepted, so nothing gates this phase.
 
 **Objective.** The operations that change what a tenant is entitled to, each with the cycle
 semantics the specification fixes, and each answered by the rules `IP-00` produced.
@@ -1186,6 +1240,11 @@ semantics the specification fixes, and each answered by the rules `IP-00` produc
 - Feature and plan create, edit, archive.
 - Plan apply, `apply-now` with its confirmation above the tenant count the `Q-04` answer sets.
 - Tenant create, plan assignment, plan change, grant, set, force-rollover.
+  > **Amended 2026-10-19 (`IP-09`).** Feature and plan create and archive, and tenant create, are
+  > `IP-09`'s. This phase keeps the plan entitlement edit (`PATCH /v1/admin/plans/{id}`), apply-now,
+  > impact, a tenant's plan change, grant, set, force-rollover and both override routes, and with
+  > them the three codes only those routes reach: `confirmation_required`, `grant_exceeds_ceiling`
+  > and `reset_not_supported`.
 - The plan-impact route from `Q-14`.
 
 **Specification references.**
@@ -1378,7 +1437,7 @@ and what to do about it.
 
 ## IP-14 — The `quotacore` CLI
 
-**Status** `BLOCKED`, gated on `IP-09` and `IP-12`.
+**Status** `BLOCKED`, gated on `IP-12`. `IP-09` closed on 2026-10-20.
 
 **Objective.** One binary that administers the service, so an operator never needs a database client
 or a copy-pasted `curl`.

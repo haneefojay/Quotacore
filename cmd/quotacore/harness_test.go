@@ -25,6 +25,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/quotacore/quotacore/internal/admin"
 	"github.com/quotacore/quotacore/internal/auth"
 	"github.com/quotacore/quotacore/internal/cycle"
 	"github.com/quotacore/quotacore/internal/dataplane"
@@ -139,6 +140,10 @@ type stackOptions struct {
 	redisURL string // overrides the configured datastore, e.g. a proxy
 	dbURL    string // overrides the fresh database, e.g. a proxy in front of it
 	env      map[string]string
+	// adminStore wraps the Postgres admin store, e.g. with a commit hook.
+	adminStore func(*db.Admin) admin.Store
+	// logs, when set, is where the stack logs, so two stacks can share one.
+	logs *syncBuffer
 }
 
 func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
@@ -153,6 +158,9 @@ func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
 		"QUOTACORE_DATABASE_URL":            o.dbURL,
 		"QUOTACORE_REDIS_URL":               o.redisURL,
 		"QUOTACORE_CONFIG_REFRESH_INTERVAL": "1s",
+		// Every request of a test comes from one address, so the admin
+		// limit is lifted unless a test is about it.
+		"QUOTACORE_RATELIMIT_ADMIN_RPM": "6000000",
 	}
 	for k, v := range o.env {
 		env[k] = v
@@ -185,10 +193,17 @@ func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
 	rdb := redis.NewClient(direct)
 	t.Cleanup(func() { rdb.Close() })
 
-	logs := &syncBuffer{}
+	logs := o.logs
+	if logs == nil {
+		logs = &syncBuffer{}
+	}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	events := &capturedEvents{}
-	app, err := assemble(ctx, cfg, log, conn, data, func() bool { return true }, events)
+	var aopt assembleOptions
+	if o.adminStore != nil {
+		aopt.adminStore = o.adminStore(db.NewAdmin(conn))
+	}
+	app, err := assemble(ctx, cfg, log, conn, data, func() bool { return true }, events, aopt)
 	if err != nil {
 		t.Fatal(err)
 	}

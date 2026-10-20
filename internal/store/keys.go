@@ -103,6 +103,10 @@ func ConfigTenantsKey() string { return namespace + ":cfg:tenants" }
 // configuration version.
 func ConfigVersionKey() string { return namespace + ":cfg:version" }
 
+// CursorKeyName is `qc:cfg:cursor_key`, the key admin list cursors are signed
+// with (IP-09).
+func CursorKeyName() string { return namespace + ":cfg:cursor_key" }
+
 // ConfigInvalidateChannel is the pub/sub channel a committed control-plane
 // write publishes to (data-model.md section 3.4).
 func ConfigInvalidateChannel() string { return namespace + ":cfg:invalidate" }

@@ -45,6 +45,14 @@ type CreateTenantRes interface {
 	createTenantRes()
 }
 
+type DeleteFeatureRes interface {
+	deleteFeatureRes()
+}
+
+type DeletePlanRes interface {
+	deletePlanRes()
+}
+
 type DeleteTenantRes interface {
 	deleteTenantRes()
 }

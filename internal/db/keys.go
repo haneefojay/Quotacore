@@ -19,7 +19,7 @@ var _ auth.KeyLoader = (*KeyLoader)(nil)
 
 func NewKeyLoader(db *sql.DB) *KeyLoader { return &KeyLoader{db: db} }
 
-const keyColumns = `id, prefix, scope, state, expires_at, key_hash`
+const keyColumns = `id, name, prefix, scope, state, expires_at, key_hash`
 
 // LoadKey reads one key by its unique prefix.
 func (l *KeyLoader) LoadKey(ctx context.Context, prefix string) (auth.Key, error) {
@@ -89,7 +89,7 @@ func scanKey(r rowScanner) (auth.Key, error) {
 		scope   string
 		expires sql.NullTime
 	)
-	if err := r.Scan(&k.ID, &k.Prefix, &scope, &k.State, &expires, &k.Hash); err != nil {
+	if err := r.Scan(&k.ID, &k.Name, &k.Prefix, &scope, &k.State, &expires, &k.Hash); err != nil {
 		return auth.Key{}, err
 	}
 	k.Scope = auth.Scope(scope)

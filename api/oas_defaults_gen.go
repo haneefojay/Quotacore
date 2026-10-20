@@ -8,6 +8,10 @@ func (s *FeatureCreate) setDefaults() {
 		val := string("")
 		s.Description.SetTo(val)
 	}
+	{
+		val := FeatureCreateKind("metered")
+		s.Kind.SetTo(val)
+	}
 }
 
 // setDefaults set default value of fields.

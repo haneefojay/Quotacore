@@ -6,11 +6,13 @@ import (
 	"math"
 	"net/http"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 
 	contract "github.com/quotacore/quotacore/api"
+	"github.com/quotacore/quotacore/internal/admin"
 	"github.com/quotacore/quotacore/internal/auth"
 	"github.com/quotacore/quotacore/internal/envelope"
 )
@@ -140,9 +142,11 @@ func (rt *router) countError(code contract.ErrorCode, endpoint string) {
 	}
 }
 
-// operation wraps one contract route: the body cap, authentication, the
-// per-key rate limit on the data plane, the scope gate, and the request
-// timeout, in request-lifecycle.md's order. An operation whose contract lists
+// operation wraps one contract route: the per-client-address limit on the
+// admin API, the body cap, authentication, the per-key rate limit on the data
+// plane, the scope gate, and the request timeout, in request-lifecycle.md's
+// order. The admin limit runs before authentication, so a guessed key costs
+// the guesser and not the service (D4). An operation whose contract lists
 // no error codes (GET /v1/admin/status) is refused without an envelope.
 func (rt *router) operation(op envelope.Operation, h http.Handler) http.Handler {
 	endpoint := op.Endpoint()
@@ -158,10 +162,20 @@ func (rt *router) operation(op envelope.Operation, h http.Handler) http.Handler 
 		ex.Endpoint = endpoint
 		refuse := func(p envelope.Problem) {
 			if bare {
+				if p.RetryAfter > 0 {
+					w.Header().Set("Retry-After", strconv.Itoa(p.RetryAfter))
+				}
 				w.WriteHeader(envelope.Status(p.Code))
 				return
 			}
 			envelope.Write(w, r, p)
+		}
+
+		if required == auth.Admin && rt.adminRate != nil {
+			if ok, wait := rt.adminRate.Allow(admin.ClientAddress(r, rt.proxies), ex.Accepted); !ok {
+				refuse(rateLimited(wait, rt.adminRate.Rate(), "this client address is sending faster than the admin API's limit"))
+				return
+			}
 		}
 
 		if op.HasBody {
@@ -186,13 +200,13 @@ func (rt *router) operation(op envelope.Operation, h http.Handler) http.Handler 
 				refuse(p)
 				return
 			}
-			ex.KeyPrefix = key.Prefix
+			ex.KeyPrefix, ex.KeyID, ex.KeyName = key.Prefix, key.ID, key.Name
 			if dataPlane && rt.limiter != nil {
 				if ok, wait := rt.limiter.Allow(key.Prefix, ex.Accepted); !ok {
 					if rt.metrics != nil {
 						rt.metrics.RateLimited.WithLabelValues(key.Prefix).Inc()
 					}
-					refuse(rateLimited(wait, rt.limiter.Rate()))
+					refuse(rateLimited(wait, rt.limiter.Rate(), "this key is sending faster than the service's limit"))
 					return
 				}
 			}
@@ -234,13 +248,13 @@ func authProblem(err error) envelope.Problem {
 // rateLimited is DR-040's 429: Retry-After in whole seconds rounded up, the
 // same wait in milliseconds, and the limit that was hit. It carries no
 // cycle_end, which is what keeps it distinguishable from quota_exceeded.
-func rateLimited(wait time.Duration, rate float64) envelope.Problem {
+func rateLimited(wait time.Duration, rate float64, message string) envelope.Problem {
 	ms := int64(math.Ceil(float64(wait) / float64(time.Millisecond)))
 	if ms < 1 {
 		ms = 1
 	}
 	secs := int(math.Ceil(float64(ms) / 1000))
-	p := envelope.Error(contract.ErrorCodeRateLimited, "this key is sending faster than the service's limit").
+	p := envelope.Error(contract.ErrorCodeRateLimited, message).
 		Retry(ms).With("limit_per_second", rate)
 	p.RetryAfter = secs
 	return p

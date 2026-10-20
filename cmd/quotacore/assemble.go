@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	contract "github.com/quotacore/quotacore/api"
+	"github.com/quotacore/quotacore/internal/admin"
 	"github.com/quotacore/quotacore/internal/api"
 	"github.com/quotacore/quotacore/internal/auth"
 	"github.com/quotacore/quotacore/internal/dataplane"
@@ -33,8 +35,19 @@ type enforcement struct {
 
 // events is the ledger's sink; nil is the no-op sink, which is what ships
 // until IP-12 provides the queue and the writer.
+// assembleOptions are what the tests vary; the zero value is what ships.
+type assembleOptions struct {
+	// adminStore replaces the Postgres admin store, so a test can wrap it
+	// with a commit hook (IP-09 DoD 4).
+	adminStore admin.Store
+}
+
 func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB, data *store.Store,
-	ready api.Readiness, events dataplane.EventSink) (*enforcement, error) {
+	ready api.Readiness, events dataplane.EventSink, opts ...assembleOptions) (*enforcement, error) {
+	var opt assembleOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	snap := snapshot.New(snapshot.Options{
 		LimitEntries:        cfg.ConfigCacheEntries,
@@ -104,15 +117,42 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		MetadataMax: cfg.MetadataMaxBytes,
 		StoreBudget: cfg.DataScriptTimeout,
 	})
-	var limiter *dataplane.RateLimiter
+	var limiter, adminLimit *dataplane.RateLimiter
 	if cfg.RateLimitEnabled {
 		limiter = dataplane.NewRateLimiter(cfg.RateLimitRuntimeRPS, cfg.RateLimitBurst, cfg.RateLimiterMaxKeys)
+		// Per client address, refilling the per-minute rate with a burst of
+		// the same size (D4).
+		adminLimit = dataplane.NewRateLimiter(cfg.RateLimitAdminRPM/60, cfg.RateLimitAdminRPM, cfg.RateLimiterMaxKeys)
 	}
+	adminStore := opt.adminStore
+	if adminStore == nil {
+		adminStore = db.NewAdmin(dbConn)
+	}
+	control := admin.New(admin.Options{
+		Store:          adminStore,
+		Data:           data,
+		Keys:           keys,
+		Logger:         log,
+		MetadataMax:    cfg.MetadataMaxBytes,
+		PublishTimeout: cfg.ControlPlaneTimeout,
+		Status: admin.StatusInfo{
+			Version: buildVersion,
+			Commit:  buildCommit(),
+			Started: time.Now(),
+			Cache: func() contract.CacheStats {
+				st := snap.Stats()
+				return contract.CacheStats{Entries: st.Entries, Tenants: st.Tenants, Features: st.Features, SizeBytes: st.Bytes}
+			},
+		},
+	})
 	handler := api.NewRouter(api.RouterOptions{
 		Ready:          ready,
 		DataPlane:      service,
 		Auth:           keys,
 		RateLimit:      limiter,
+		Admin:          control.Handlers(),
+		AdminLimit:     adminLimit,
+		Proxies:        cfg.TrustedProxies,
 		Metrics:        plane,
 		Logger:         log,
 		MaxBodyBytes:   cfg.MaxBodyBytes,

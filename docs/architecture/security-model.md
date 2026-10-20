@@ -71,7 +71,7 @@ Three rules follow from these boundaries:
 | Brute force | Irrelevant. 256 bits of entropy | — |
 | Timing | Auth failures take the same time whether the prefix is unknown or the hash mismatches | A distinguishable path is an oracle |
 | Format | `qc_<runtime\|admin>_<hex prefix>.<base64url secret>`; the scope label is cosmetic and must agree with the stored row | One format, the contract's (ADR-0018) |
-| Bootstrap key | One admin key on first start, printed once at `warn`; the service **refuses to start** while an unacknowledged default exists | A service that starts with a known key is not secure, and NFR-S9 exists to make that impossible (INV-K2) |
+| Bootstrap key | One operator-supplied admin key, installed only while no key exists and audited; never generated or printed by the service; the service **refuses to start** while a supplied key is unacknowledged | A service that starts with a known key is not secure, and NFR-S9 exists to make that impossible (INV-K2) |
 | Comparison surface | Probes and `/docs` are unauthenticated; `/metrics` is bound to localhost or authenticated; `/openapi.json` is public because it describes the service, not the data | A published specification is not a disclosure |
 
 > **Amended 2026-10-19 ([ADR-0018](../decisions/0018-api-key-format-and-verifier.md)).** The storage row said Argon2id with a per-key

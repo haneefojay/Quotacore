@@ -5,6 +5,9 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/quotacore/quotacore/internal/admin"
+	"github.com/quotacore/quotacore/internal/auth"
 )
 
 const IdempotencyWindow = 24 * time.Hour
@@ -36,6 +39,11 @@ type Config struct {
 	RateLimitRuntimeRPS float64
 	RateLimitBurst      float64
 	RateLimiterMaxKeys  int
+
+	// The IP-09 keys: the per-client-address admin limit (D4) and the
+	// proxies whose X-Forwarded-For it believes.
+	RateLimitAdminRPM float64
+	TrustedProxies    admin.Proxies
 }
 
 type Getenv func(string) string
@@ -58,6 +66,7 @@ func Load(getenv Getenv) (Config, error) {
 		MaxBodyBytes:          65536,
 		MetadataMaxBytes:      4096,
 		KeyCacheEntries:       10000,
+		RateLimitAdminRPM:     60,
 		RateLimitEnabled:      true,
 		RateLimitRuntimeRPS:   2000,
 		RateLimitBurst:        4000,
@@ -179,6 +188,7 @@ func Load(getenv Getenv) (Config, error) {
 	}{
 		{"QUOTACORE_RATELIMIT_RUNTIME_RPS", &c.RateLimitRuntimeRPS},
 		{"QUOTACORE_RATELIMIT_RUNTIME_BURST", &c.RateLimitBurst},
+		{"QUOTACORE_RATELIMIT_ADMIN_RPM", &c.RateLimitAdminRPM},
 	} {
 		if raw := getenv(k.key); raw != "" {
 			r, err := strconv.ParseFloat(raw, 64)
@@ -195,10 +205,23 @@ func Load(getenv Getenv) (Config, error) {
 		}
 		c.RateLimitEnabled = b
 	}
+	proxies, err := admin.ParseProxies(getenv("QUOTACORE_TRUSTED_PROXIES"))
+	if err != nil {
+		return c, fmt.Errorf("QUOTACORE_TRUSTED_PROXIES: %w", err)
+	}
+	c.TrustedProxies = proxies
 	c.BootstrapAdminKey = getenv("QUOTACORE_BOOTSTRAP_ADMIN_KEY")
 	c.BootstrapKeyIsAcked = getenv("QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK") != ""
 	if c.BootstrapAdminKey != "" && !c.BootstrapKeyIsAcked {
 		return c, fmt.Errorf("refusing to start with a bootstrap admin key that has not been acknowledged; set QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK to any non-empty value to acknowledge it, and remove both from the environment once the key is issued")
+	}
+	// A malformed key refuses start rather than starting with no way in. The
+	// message never contains the value (DR-043).
+	if c.BootstrapAdminKey != "" {
+		tok, err := auth.Parse(c.BootstrapAdminKey)
+		if err != nil || tok.Label != auth.Admin {
+			return c, fmt.Errorf("refusing to start: QUOTACORE_BOOTSTRAP_ADMIN_KEY is not an admin key in the qc_admin_<prefix>.<secret> format (ADR-0018); deployment.md section 4.1 shows how to mint one")
+		}
 	}
 	return c, nil
 }
