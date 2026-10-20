@@ -152,7 +152,7 @@ func TestEveryRequestBodyIsStrict(t *testing.T) {
 		// `refund` and `check` share MeteredRequest, so they are covered by it.
 		{"MeteredRequest", &MeteredRequest{}, "unit"},
 		{"FeatureCreate", &FeatureCreate{}, "state"},
-		{"FeatureUpdate", &FeatureUpdate{}, "unit"},
+		{"FeatureUpdate", &FeatureUpdate{}, "feature_key"},
 		{"PlanCreate", &PlanCreate{}, "state"},
 		{"PlanUpdate", &PlanUpdate{}, "state"},
 		{"PlanApplyRequest", &PlanApplyRequest{}, "force"},

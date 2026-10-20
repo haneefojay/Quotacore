@@ -104,7 +104,7 @@ Authorization: Bearer qc_runtime_9f2c1a4e7b8d.kZ3nQ7xR2vT9wY4bH6mP1sD8fG5jL0cA�
 | Scopes | `runtime` for `/v1/*` data plane; `admin` for `/v1/admin/*`. An `admin` key also works on the data plane |
 | Expiry | Optional at issue time. Enforced on every request |
 | Revocation | Immediate on the instance that served the revoke, and within the propagation bound (NFR-D3) on every other, because each instance's cache re-reads its keys off the path on every invalidation and refresh tick (K-2) |
-| Bootstrap | One admin key on first start, printed once at `warn`. The service **refuses to start** if it would run with an unacknowledged default key (NFR-S9) |
+| Bootstrap | One operator-supplied admin key, installed only while no key exists, with an audit row and a `warn` naming its prefix. The service never generates or prints a key, and **refuses to start** if a supplied key is unacknowledged (NFR-S9) |
 | Cross-tenant | A runtime key is **not** bound to one tenant in the MVP. A key is a credential for the whole instance, and `external_id` in the request selects the tenant. Consequence, stated plainly: possession of a runtime key gives access to every tenant on the instance. This is why key issuance is an admin action, is audited, and is a per-customer decision |
 | Logging | Only the prefix appears, never the secret (DR-043) |
 
@@ -312,14 +312,14 @@ Full catalogue in [error-catalog.md](../product/error-catalog.md). Conventions:
 
 ## 9. Pagination and filtering
 
-Used by `GET /v1/admin/tenants`, `/events` and `/audit`.
+Used by every admin list: features, plans, tenants, keys, `/events` and `/audit`.
 
 | Aspect | Rule |
 | --- | --- |
 | Style | Opaque cursor. `?cursor=…&limit=…` |
 | Default limit | 50. Maximum 200 |
 | Ordering | Newest first, always, with a stable tiebreaker so a cursor is never ambiguous |
-| Cursor | Opaque and signed. A tampered cursor is `400 validation_failed`, not a silent full scan |
+| Cursor | Opaque and signed. A tampered cursor is `400 validation_failed`, not a silent full scan. The signature is HMAC-SHA256 under a key every instance shares at `qc:cfg:cursor_key` ([data-model.md](data-model.md#31-key-layout) §3.1), and covers the position and the filters, so a cursor replayed under different filters is refused rather than silently misread |
 | Filters | `tenant_external_id`, `feature_key`, `from`, `to`, `source`, `event_type` |
 | Filter values | `event_type` is one of `consumed`, `refunded`, `granted`, `set`, `plan_changed`, `cycle_rolled_over`, `force_rolled_over`. `source` is one of `api`, `admin`, `system`. Any other value is `400 validation_failed`, never an empty result |
 | Time filters | RFC 3339 with offset, matching the response format |

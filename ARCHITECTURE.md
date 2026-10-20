@@ -176,7 +176,7 @@ one balance per tenant — a trade that is stated rather than hidden.
 Structured JSON logs with a request ID on every line, Prometheus metrics, and no tracing, because
 there is no cross-service call to trace. Two metrics are treated as money counters and are alerted
 on at zero: `quotacore_event_duplicate_detected_total` and `quotacore_ceiling_violation_total`.
-Every one of the 34 error codes has a counter, and the alert table holds 16 alerts covering the
+Every one of the 35 error codes has a counter, and the alert table holds 16 alerts covering the
 failures worth waking someone for. Full list, cardinality
 discipline and the alert table: [observability.md](docs/architecture/observability.md).
 

@@ -18,10 +18,11 @@ expected to have plenty of headroom.
 
 1. **Discovery.** The customer reads the README. The quickstart is one `docker compose up`, no
    signup, no cloud account. The deciding factor is that nothing asks for an account.
-2. **First start.** Compose brings up the service, Postgres and Valkey. The service prints the
-   bootstrap admin key once, at `warn`, with a note that it will not be shown again. The customer
-   copies it. This is the first trust test: the key is shown once, which is mildly alarming, and
-   the log says so plainly.
+2. **First start.** Compose brings up the service, Postgres and Valkey. The customer mints an
+   admin key with the one-line recipe in the deployment guide, supplies it with its
+   acknowledgement, and the service logs at `warn` that it installed a bootstrap key, naming the
+   prefix and never the secret. This is the first trust test: the service never generated or
+   printed a credential, and the log says so plainly.
 3. **Model the offer.** One CLI command creates the feature, one creates the plan, one adds the
    entitlement. The commands are verbose but obvious, and the plan is printed back with the exact
    cycle window the first tenant will receive.

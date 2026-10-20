@@ -320,6 +320,7 @@ CREATE TABLE audit_log (
   after        jsonb,
   request_id   text NOT NULL,
   created_at   timestamptz NOT NULL DEFAULT now(),
+  reason       text,                             -- archive, delete, suspend, resume
   CONSTRAINT audit_log_subject_type
     CHECK (subject_type IN ('tenant', 'plan', 'feature', 'api_key'))
 );
@@ -339,6 +340,11 @@ api_keys` for that reason.
 
 > **Amended 2026-10-19 (`IP-08`).** The `subject_type` constraint is new. The column was free text,
 > while the API documents it as a four-value enum.
+
+> **Amended 2026-10-20 (`IP-09`).** `reason` is new. Archive, delete, suspend and resume each
+> require a reason on the wire, and the table had no column to keep it in, so the reason was
+> required and then discarded. It is last because a migration adds it, and a fresh database and an
+> upgraded one must have the same column order.
 
 The audit write happens **in the same transaction as the mutation it records** (NFR-D4). An audit
 log that is written best-effort is a log, not an audit trail, and the distinction is the entire
@@ -390,6 +396,7 @@ multi-key script is single-slot (ADR-0002, A-11).
 | `qc:{t:<tenant_id>}:w:<feature_key>` | string | rolling-window bucket boundary marker (v0.2) | `window_end + 24h` |
 | `qc:cfg:tenants` | hash | tenant → snapshot version, for invalidation diffing | none |
 | `qc:cfg:version` | string | monotonically increasing configuration version | none |
+| `qc:cfg:cursor_key` | string | the 32-byte key that signs admin list cursors, created once with `SET NX` so every instance signs alike (`IP-09`) | none |
 | `qc:admin:cnf:<token>` | hash | `plan_id`, `resource_version`, `affected_tenants`, `reason_hash` for a pending `apply-now` confirmation | `QUOTACORE_CONFIRMATION_TTL` |
 
 There is deliberately **no** `qc:idem:fingerprint:<key>` key. The fingerprint is a field of the

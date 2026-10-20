@@ -100,7 +100,7 @@ reading the source.
 | `QUOTACORE_TRUSTED_PROXIES` | *(none)* | CIDR list. Without it, `X-Forwarded-For` is ignored, so a rate limiter behind a proxy sees the proxy |
 | `QUOTACORE_STARTUP_MODE` | `normal` | `readonly` is used by the data-store recovery runbook and blocks every write to the fast store |
 | `QUOTACORE_MIGRATE` | `true` | `false` runs no migration at start-up, for operators who gate deploys and run migrations separately (ADR-0011) |
-| `QUOTACORE_BOOTSTRAP_ADMIN_KEY` | *(none)* | Used only when the `api_keys` table is empty (ADR-0012). Ignored, with a warning, once a key exists |
+| `QUOTACORE_BOOTSTRAP_ADMIN_KEY` | *(none)* | Used only when the `api_keys` table is empty (ADR-0012). Ignored, with a warning, once a key exists. A malformed key refuses start. Mint one with `printf 'qc_admin_%s.%s\n' "$(openssl rand -hex 8)" "$(openssl rand -base64 32 \| tr '+/' '-_' \| tr -d '=')"` (ADR-0018) |
 | `QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK` | *(none)* | NFR-S9. The service **refuses to start** if a bootstrap key is set without a non-empty acknowledgement. Any non-empty value acknowledges; the variable exists so that starting with a key is something the operator did on purpose rather than something a deployment inherited |
 
 ### 4.2 Limits and timeouts
@@ -156,7 +156,7 @@ reading the source.
 | `QUOTACORE_RATELIMIT_ENABLED` | `true` | Q-15 |
 | `QUOTACORE_RATELIMIT_RUNTIME_RPS` | `2000` | Per key. Generous by default; the point is blast-radius bounding, not throttling |
 | `QUOTACORE_RATELIMIT_RUNTIME_BURST` | `4000` | — |
-| `QUOTACORE_RATELIMIT_ADMIN_RPM` | `60` | Per IP. The admin API is human-driven |
+| `QUOTACORE_RATELIMIT_ADMIN_RPM` | `60` | Per client address, with a burst of the same size, on every `/v1/admin/*` route and before authentication. The address is the peer, or the right-most `X-Forwarded-For` entry not in `QUOTACORE_TRUSTED_PROXIES` when the peer is a trusted proxy. The admin API is human-driven |
 | `QUOTACORE_RATE_LIMITER_MAX_KEYS` | `100000` | Bounded, so a key-churn flood is not a memory attack |
 
 ## 5. Sizing
