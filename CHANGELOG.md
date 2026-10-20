@@ -218,6 +218,9 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **`IP-10` is `IN PROGRESS`**, opened 2026-10-20 after `IP-09` closed, before any file it owns
+  exists.
+
 - The bootstrap admin key is one the operator mints and supplies, never one the service generates
   or prints. api-conventions §5, security-model §3, UC-15, J-1 and SECURITY.md said it was "printed
   once", which ADR-0018's environment-variable model never did; deployment.md §4.1 gains a recipe
