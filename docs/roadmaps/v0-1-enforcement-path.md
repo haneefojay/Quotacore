@@ -23,7 +23,7 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `COMPLETE`, started and closed 2026-10-19 |
 | `IP-08` | Control-plane schema and migrations | `IP-02` | `COMPLETE`, 2026-10-19 |
 | `IP-09` | Control-plane API and API keys | `IP-08` | `COMPLETE`, opened 2026-10-19, closed 2026-10-20 |
-| `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `NOT STARTED` |
+| `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `IN PROGRESS`, opened 2026-10-20 |
 | `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `BLOCKED` |
 | `IP-12` | Usage ledger, writer and archiver | `IP-08` | `NOT STARTED` |
 | `IP-13` | Observability | `IP-07` | `NOT STARTED` |
@@ -1230,7 +1230,7 @@ unrecoverable or unaudited.
 
 ## IP-10 — Plan lifecycle and cycle-boundary semantics
 
-**Status** `NOT STARTED`. `IP-09` closed on 2026-10-20, and the `Q-01`, `Q-02`, `Q-04` and `Q-14`
+**Status** `IN PROGRESS`, opened 2026-10-20. `IP-09` closed on 2026-10-20, and the `Q-01`, `Q-02`, `Q-04` and `Q-14`
 answers from `IP-00` are accepted, so nothing gates this phase.
 
 **Objective.** The operations that change what a tenant is entitled to, each with the cycle
