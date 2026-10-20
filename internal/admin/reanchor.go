@@ -64,7 +64,8 @@ func (s *Service) rewrite(ctx context.Context, p Reanchor, lt *snapshot.LoadedTe
 		if delta, known := out.Delta(); known && delta != 0 {
 			events = append(events, dataplane.Event{
 				RequestID: p.RequestID, TenantID: t.ID, FeatureKey: f, Type: "plan_changed", Source: "admin",
-				Amount: abs(delta), Delta: delta, Balance: out.Balance, CycleIndex: out.Index, OccurredAt: now,
+				Amount: abs(delta), Delta: delta, Balance: out.Balance, CycleIndex: out.Index, CycleStart: out.Start,
+				OccurredAt: now,
 			})
 		}
 	}

@@ -92,6 +92,22 @@ func (s *Service) metered(w http.ResponseWriter, r *http.Request, op kind) {
 	ex.Add(slog.Int64("balance", out.Balance), slog.Int64("cycle_index", out.Index),
 		slog.Bool("replayed", out.Replayed()), slog.Bool("rolled_over", out.Rolled()))
 
+	// A rollover is recorded whatever the request's own decision was: a check,
+	// a denial or a refused refund that crossed a boundary still re-granted the
+	// allowance, and the ledger would otherwise have no opening for the cycle
+	// (IP-12 D3). It goes to the sink before the request's own event.
+	rolled := false
+	rollover := func() {
+		if rolled {
+			return
+		}
+		rolled = true
+		if ev, ok := Rollover(ex.RequestID, t.ID, in.FeatureKey, out, at); ok {
+			s.events.Enqueue(ev)
+		}
+	}
+	defer rollover()
+
 	start, end := render(out.Start, out.End, loc)
 	switch {
 	case op == opCheck:
@@ -173,6 +189,7 @@ func (s *Service) metered(w http.ResponseWriter, r *http.Request, op kind) {
 			if op == opRefund {
 				typ, delta = "refunded", in.Amount
 			}
+			rollover()
 			s.events.Enqueue(Event{
 				RequestID:  ex.RequestID,
 				TenantID:   t.ID,
@@ -183,6 +200,7 @@ func (s *Service) metered(w http.ResponseWriter, r *http.Request, op kind) {
 				Delta:      delta,
 				Balance:    out.Balance,
 				CycleIndex: out.Index,
+				CycleStart: out.Start,
 				ClientKey:  in.ClientKey,
 				Metadata:   in.Metadata,
 				OccurredAt: at,

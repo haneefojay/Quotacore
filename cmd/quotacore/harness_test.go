@@ -104,6 +104,29 @@ func (c *capturedEvents) count() int {
 	return len(c.events)
 }
 
+// since is the events enqueued after the first n.
+func (c *capturedEvents) since(n int) []dataplane.Event {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]dataplane.Event(nil), c.events[n:]...)
+}
+
+// ledgerRow is one usage_events row as a test compares it.
+type ledgerRow struct {
+	ID         string
+	Feature    string
+	Type       string
+	Source     string
+	Delta      int64
+	Balance    int64
+	Index      int64
+	Start      time.Time
+	RequestID  string
+	ClientKey  string
+	Metadata   string
+	OccurredAt time.Time
+}
+
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -618,6 +641,36 @@ func hostOf(t *testing.T, raw string) string {
 		t.Fatal(err)
 	}
 	return u.Host
+}
+
+// ledger flushes the sink and returns the tenant's usage_events rows in the
+// order they were written.
+func (s *stack) ledger(tn tenant) []ledgerRow {
+	s.t.Helper()
+	s.flush()
+	rows, err := s.seedDB.QueryContext(context.Background(), `
+SELECT u.id::text, f.key, u.event_type::text, u.source::text, u.delta, u.balance_after, u.cycle_index,
+       coalesce(u.cycle_start, 'epoch'), coalesce(u.request_id, ''), coalesce(u.idempotency_key, ''),
+       coalesce(u.metadata::text, ''), u.created_at
+  FROM usage_events u JOIN features f ON f.id = u.feature_id
+ WHERE u.tenant_id = $1 ORDER BY u.seq`, tn.ID)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []ledgerRow
+	for rows.Next() {
+		var r ledgerRow
+		if err := rows.Scan(&r.ID, &r.Feature, &r.Type, &r.Source, &r.Delta, &r.Balance, &r.Index, &r.Start,
+			&r.RequestID, &r.ClientKey, &r.Metadata, &r.OccurredAt); err != nil {
+			s.t.Fatal(err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		s.t.Fatal(err)
+	}
+	return out
 }
 
 // flush waits until every event enqueued so far is written, dropped or

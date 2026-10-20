@@ -54,8 +54,11 @@ local function field(v)
   return v
 end
 
+-- The ninth value is the balance a rollover discarded, empty unless the
+-- verdict is rolled. The caller records it as the closing of the cycle that
+-- ended, so the ledger shows every opening as a row (ADR-0016, DR-042, U-6).
 local function answer(decision, state)
-  local reply = { decision, '', '', '', '', '', '', '' }
+  local reply = { decision, '', '', '', '', '', '', '', '' }
   if state then
     reply[2] = state.verdict
     reply[3] = num(state.balance)
@@ -64,6 +67,7 @@ local function answer(decision, state)
     reply[6] = num(state.index)
     reply[7] = num(state.start)
     reply[8] = state.finish and num(state.finish) or ''
+    reply[9] = state.closed and num(state.closed) or ''
   end
   return reply
 end
@@ -118,6 +122,7 @@ local function transition()
     -- one, so a reduction takes effect and the re-grant is of the reduced
     -- figure (DR-018), and the bonus is spent (DR-020).
     state.verdict = 'rolled'
+    state.closed = state.balance
     state.balance = limit
     state.limit = limit
     state.bonus = 0

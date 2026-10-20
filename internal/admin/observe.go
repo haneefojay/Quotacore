@@ -96,7 +96,10 @@ func (s *Service) listEvents(w http.ResponseWriter, r *http.Request) {
 // window recomputes an event's cycle from the tenant's current anchor, zone
 // and cadence. It is null for an event older than the anchor, whose window
 // was defined by an anchor that has since been replaced, and for a feature
-// the tenant no longer holds; the end is null for a never entitlement.
+// the tenant no longer holds; the end is null for a never entitlement. It is
+// null too where the row's stored cycle_start names a different window: a
+// consume applied against a hash the re-anchor drain had not yet rewritten,
+// which the instant comparison cannot see (IP-12 S5).
 func window(anchor time.Time, loc *time.Location, e Event) (contract.NilTimestamp, contract.NilTimestamp) {
 	none := contract.NilTimestamp{Null: true}
 	if e.Interval == "" || time.Time(e.OccurredAt).Before(anchor) {
@@ -107,9 +110,15 @@ func window(anchor time.Time, loc *time.Location, e Event) (contract.NilTimestam
 		return none, none
 	}
 	if iv == cycle.Never {
+		if !e.Start.IsZero() && !e.Start.Equal(anchor) {
+			return none, none
+		}
 		return contract.NewNilTimestamp(contract.Timestamp(anchor.In(loc))), none
 	}
 	start := cycle.Add(anchor, iv, loc, e.Index)
+	if !e.Start.IsZero() && !e.Start.Equal(start) {
+		return none, none
+	}
 	end := cycle.Add(anchor, iv, loc, e.Index+1)
 	return contract.NewNilTimestamp(contract.Timestamp(start.In(loc))), contract.NewNilTimestamp(contract.Timestamp(end.In(loc)))
 }
