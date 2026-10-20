@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/quotacore/quotacore/internal/admin"
 	"github.com/quotacore/quotacore/internal/auth"
 	"github.com/quotacore/quotacore/internal/dataplane"
 	"github.com/quotacore/quotacore/internal/envelope"
@@ -29,8 +30,16 @@ type RouterOptions struct {
 	// RateLimit is the per-key limit on the data plane. Nil disables it
 	// (QUOTACORE_RATELIMIT_ENABLED=false).
 	RateLimit *dataplane.RateLimiter
-	Metrics   *observability.DataPlane
-	Logger    *slog.Logger
+	// Admin serves the admin operations it names, by operationId; an admin
+	// operation it does not name answers a bare 404 until its phase serves
+	// it. AdminLimit is the per-client-address limit in front of every admin
+	// route, before authentication (D4); nil disables it. Proxies decide whose
+	// X-Forwarded-For names the client.
+	Admin      map[string]http.HandlerFunc
+	AdminLimit *dataplane.RateLimiter
+	Proxies    admin.Proxies
+	Metrics    *observability.DataPlane
+	Logger     *slog.Logger
 	// MaxBodyBytes is QUOTACORE_MAX_BODY_BYTES; RequestTimeout is
 	// QUOTACORE_REQUEST_TIMEOUT, measured from accept.
 	MaxBodyBytes   int64
@@ -41,6 +50,8 @@ type RouterOptions struct {
 type router struct {
 	auth      Authenticator
 	limiter   *dataplane.RateLimiter
+	adminRate *dataplane.RateLimiter
+	proxies   admin.Proxies
 	metrics   *observability.DataPlane
 	log       *slog.Logger
 	maxBody   int64
@@ -50,13 +61,14 @@ type router struct {
 }
 
 // NewRouter builds the HTTP surface: the operational routes, the four
-// data-plane routes, and every /v1/admin route of the contract behind
-// authentication and the admin scope gate.
+// data-plane routes, and every /v1/admin route of the contract behind the
+// admin rate limit, authentication and the admin scope gate.
 //
-// The admin routes are registered so the gate holds on every one of them
-// before IP-09 writes a single handler (IP-07 DoD 8). An admin key that passes
-// the gate gets a bare 404 until then: the behaviour does not exist yet, and a
-// 501 would be the service raising a code for a surface it does have. A path
+// Every admin route is registered so the gate holds on every one of them
+// whether or not its handler exists (IP-07 DoD 8). IP-09 serves most of them;
+// an admin key that passes the gate on one of IP-10's gets a bare 404 until
+// IP-10 serves it: the behaviour does not exist yet, and a 501 would be the
+// service raising a code for a surface it does have. A path
 // that is in no contract route is a bare 404 and a wrong method a bare 405
 // with Allow, both without authentication, because neither names anything to
 // protect.
@@ -64,6 +76,8 @@ func NewRouter(opts RouterOptions) http.Handler {
 	rt := &router{
 		auth:      opts.Auth,
 		limiter:   opts.RateLimit,
+		adminRate: opts.AdminLimit,
+		proxies:   opts.Proxies,
 		metrics:   opts.Metrics,
 		log:       opts.Logger,
 		maxBody:   opts.MaxBodyBytes,
@@ -119,6 +133,8 @@ func NewRouter(opts RouterOptions) http.Handler {
 		case dp[op.ID] != nil:
 			rt.dataPlane[op.Endpoint()] = op.ID
 			h = rt.operation(op, dp[op.ID])
+		case opts.Admin[op.ID] != nil:
+			h = rt.operation(op, opts.Admin[op.ID])
 		default:
 			h = rt.operation(op, http.HandlerFunc(notYet))
 		}

@@ -4505,7 +4505,7 @@ components:
             An IANA name. The tenant's cycle boundaries are computed in this zone, so a wrong zone
             is a wrong bill. Abbreviations are `400 invalid_timezone`; a timezone is a set of rules
             and an abbreviation is not one (ADR-0007).
-          pattern: '^[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+$'
+          pattern: '^(?:UTC|[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+)$'
           examples:
             berlin:
               value: Europe/Berlin
@@ -4563,7 +4563,7 @@ components:
           description: |
             An IANA name; defaults to `UTC`. The zone the tenant's cycle boundaries are computed
             in.
-          pattern: '^[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+$'
+          pattern: '^(?:UTC|[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+)$'
           default: UTC
         metadata:
           $ref: '#/components/schemas/TenantMetadata'
@@ -4597,7 +4597,7 @@ components:
           description: A change here starts a fresh cycle and discards the open balance.
         timezone:
           type: string
-          pattern: '^[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+$'
+          pattern: '^(?:UTC|[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+)$'
           description: |
             An IANA name, as on `Tenant.timezone`, and an abbreviation is `400
             invalid_timezone` for the same reason. The zone boundaries are recomputed from the

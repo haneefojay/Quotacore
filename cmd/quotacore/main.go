@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,6 +17,7 @@ import (
 	// cannot shift a customer's boundaries retroactively (NFR-OPS8, IP-03 DoD 7).
 	_ "time/tzdata"
 
+	"github.com/quotacore/quotacore/internal/auth"
 	"github.com/quotacore/quotacore/internal/db"
 	"github.com/quotacore/quotacore/internal/snapshot"
 	"github.com/quotacore/quotacore/internal/store"
@@ -73,6 +76,10 @@ func run() error {
 		return err
 	}
 	state.Set(termMigrations, current)
+
+	if err := bootstrap(ctx, cfg, log, dbConn); err != nil {
+		return err
+	}
 
 	data, err := store.Open(store.Options{URL: cfg.RedisURL, DataScriptTimeout: cfg.DataScriptTimeout})
 	if err != nil {
@@ -139,6 +146,38 @@ func run() error {
 		return err
 	}
 	log.Info("stopped")
+	return nil
+}
+
+// bootstrap installs the operator-supplied admin key on an empty api_keys
+// table (D3). The key was already checked for its format by Load; only its
+// prefix ever reaches a log line (DR-043, NFR-S9).
+func bootstrap(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB) error {
+	if cfg.BootstrapAdminKey == "" {
+		has, err := db.HasKeys(ctx, dbConn)
+		if err != nil {
+			return fmt.Errorf("check for api keys: %w", err)
+		}
+		if !has {
+			log.Warn("no API key exists and no bootstrap key is set, so the admin API has no way in; set QUOTACORE_BOOTSTRAP_ADMIN_KEY and its acknowledgement (deployment.md section 4.1)")
+		}
+		return nil
+	}
+	tok, err := auth.Parse(cfg.BootstrapAdminKey)
+	if err != nil {
+		return errors.New("refusing to start: QUOTACORE_BOOTSTRAP_ADMIN_KEY is not an admin key in the token format")
+	}
+	outcome, err := db.Bootstrap(ctx, dbConn, tok.Prefix, tok.Hash())
+	if err != nil {
+		return fmt.Errorf("install the bootstrap admin key: %w", err)
+	}
+	if outcome == db.BootstrapInstalled {
+		log.Warn("installed the bootstrap admin key; remove it and its acknowledgement from the environment once another admin key is issued",
+			"key_prefix", tok.Prefix)
+		return nil
+	}
+	log.Warn("ignoring QUOTACORE_BOOTSTRAP_ADMIN_KEY, because API keys already exist; remove it from the environment",
+		"key_prefix", tok.Prefix)
 	return nil
 }
 

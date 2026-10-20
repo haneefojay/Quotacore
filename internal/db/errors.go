@@ -23,6 +23,19 @@ type Error struct {
 	Code   api.ErrorCode
 	Field  string
 	Reason string
+	// Current is the stored version a resource_version_conflict lost to.
+	Current *int64
+}
+
+// CatalogueCode, CatalogueField and CurrentVersion are what the admin routes
+// read a refusal by (admin.Coded), since they cannot import this package.
+func (e *Error) CatalogueCode() api.ErrorCode { return e.Code }
+func (e *Error) CatalogueField() string       { return e.Field }
+func (e *Error) CurrentVersion() (int64, bool) {
+	if e.Current == nil {
+		return 0, false
+	}
+	return *e.Current, true
 }
 
 func (e *Error) Error() string {
@@ -57,6 +70,9 @@ var (
 	ErrFeatureNotFound      = &Error{Code: api.ErrorCodeFeatureNotFound}
 	ErrTenantNotFound       = &Error{Code: api.ErrorCodeTenantNotFound}
 	ErrValidation           = &Error{Code: api.ErrorCodeValidationFailed}
+	ErrTenantDeleted        = &Error{Code: api.ErrorCodeTenantDeleted}
+	ErrKeyNotFound          = &Error{Code: api.ErrorCodeAPIKeyNotFound}
+	ErrVersionConflict      = &Error{Code: api.ErrorCodeResourceVersionConflict}
 
 	// The refusals below are never customer-visible. A duplicate event is the
 	// asynchronous detector of DR-030 firing after the data plane already
