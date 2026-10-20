@@ -35,6 +35,19 @@ func problem(w http.ResponseWriter, r *http.Request, p *envelope.Problem) { enve
 // the store named carries its code; an error the store could not classify is
 // the control plane failing to answer, or a defect.
 func (s *Service) fail(w http.ResponseWriter, r *http.Request, err error) {
+	var own *refusal
+	if errors.As(err, &own) {
+		envelope.Write(w, r, own.problem)
+		return
+	}
+	var down errDataStore
+	if errors.As(err, &down) {
+		s.log.Warn("the data store did not answer an admin write; nothing was committed",
+			"request_id", envelope.From(r.Context()).RequestID, "error", down.err)
+		envelope.Write(w, r, envelope.Error(contract.ErrorCodeServiceUnavailable,
+			"the data store did not answer, so nothing was changed").Retry(1000))
+		return
+	}
 	var big errTooLarge
 	if errors.As(err, &big) {
 		envelope.Write(w, r, envelope.Error(contract.ErrorCodePayloadTooLarge, big.field+" is larger than the limit").
@@ -109,3 +122,26 @@ func notFound(code contract.ErrorCode) *envelope.Problem {
 	p := envelope.Error(code, message(code))
 	return &p
 }
+
+// refusal is a route's own refusal, decided in Go rather than by the store,
+// with the details its catalogue entry carries. It rolls back the transaction
+// it is returned from, so like every refusal it changes nothing.
+type refusal struct{ problem envelope.Problem }
+
+func (e *refusal) Error() string { return "refused: " + string(e.problem.Code) }
+
+func refuse(p envelope.Problem) error { return &refusal{problem: p} }
+
+// invalidField is validation_failed naming one field, the shape the store's
+// refusals take.
+func invalidField(field, problem string) error {
+	return refuse(envelope.Error(contract.ErrorCodeValidationFailed, field+" "+problem).
+		With("errors", []issue{{Field: field, Issue: problem}}))
+}
+
+// errDataStore is the fast store failing inside a write, which rolls the
+// write back and is answered 503 service_unavailable.
+type errDataStore struct{ err error }
+
+func (e errDataStore) Error() string { return "data store: " + e.err.Error() }
+func (e errDataStore) Unwrap() error { return e.err }

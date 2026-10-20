@@ -60,7 +60,35 @@ type Tenant struct {
 	Anchor     time.Time
 	Plan       *Plan
 	Overrides  map[string]LoadedOverride
+	Pins       map[string]Pin
 	Version    int64
+	// pinKey is the interned pin set's identity, owned by the cache.
+	pinKey string
+}
+
+// NewTenant is the resolvable form of a loaded tenant. The data plane builds
+// it on a miss and the admin routes build it from a fresh read, so both
+// resolve with the one function, Effective (IP-10, S5).
+func NewTenant(loaded *LoadedTenant) *Tenant {
+	t := &Tenant{
+		ID:         loaded.ID,
+		ExternalID: loaded.ExternalID,
+		State:      loaded.State,
+		Timezone:   loaded.Timezone,
+		Anchor:     loaded.Anchor,
+		Overrides:  loaded.Overrides,
+		Pins:       loaded.Pins,
+		Version:    loaded.Version,
+	}
+	if loaded.Plan != nil {
+		t.Plan = &Plan{
+			ID:           loaded.Plan.ID,
+			Key:          loaded.Plan.Key,
+			Version:      loaded.Plan.Version,
+			Entitlements: loaded.Plan.Entitlements,
+		}
+	}
+	return t
 }
 
 // Snapshot is the bounded, invalidating projection the data plane resolves
@@ -220,7 +248,7 @@ func (s *Snapshot) HitRatio() float64 {
 func (s *Snapshot) Resolve(tenantID, featureKey string) (Resolution, error) {
 	if t := s.find(tenantID); t != nil {
 		s.hits.Add(1)
-		return s.decide(t, featureKey), nil
+		return s.decide(t, featureKey, s.now()), nil
 	}
 	s.misses.Add(1)
 	return s.resolveMiss(tenantID, featureKey)
@@ -288,16 +316,40 @@ func (s *Snapshot) firstSightOf(externalID string) (*Tenant, error) {
 	return nil, fmt.Errorf("%w: %v", ErrRefreshFailed, err)
 }
 
-// Decide resolves a feature for a tenant Tenant returned. It is Resolve's
-// decision with no lookup, so the order archived, suspended, in-plan lives in
-// one place still.
-func (s *Snapshot) Decide(t *Tenant, featureKey string) Resolution { return s.decide(t, featureKey) }
+// Decide resolves a feature for a tenant Tenant returned, at the instant the
+// request was accepted. It is Resolve's decision with no lookup, so the order
+// archived, suspended, in-plan lives in one place still.
+func (s *Snapshot) Decide(t *Tenant, featureKey string, at time.Time) Resolution {
+	return s.decide(t, featureKey, at)
+}
 
-// Features lists the features the tenant's plan names, each with whether it is
-// archived, for the balance route. An override cannot add a feature (DR-015),
-// so the plan's list is the whole list. The returned map is the shared plan's
-// and must not be modified.
-func (t *Tenant) Features() map[string]Entitlement { return t.Plan.Entitlements }
+// Features lists the tenant's effective feature set at an instant, each
+// resolved, for the balance route: the features it was anchored on, less any
+// retired one whose window has closed. An override cannot add a feature
+// (DR-015), and a feature added to the plan since the anchor is not the
+// tenant's until its next re-anchor (IP-10, D1).
+func (t *Tenant) Features(at time.Time) map[string]Entitlement {
+	out := make(map[string]Entitlement, len(t.Pins))
+	for f := range t.Pins {
+		if e, held := t.Entitlement(f, at); held {
+			out[f] = e
+		}
+	}
+	return out
+}
+
+// Entitlement resolves a feature the tenant holds at an instant, whatever the
+// tenant's state: its limit, its cadence, and whether the feature is archived.
+// It reports false for a feature the tenant does not hold. The admin routes
+// use it, because a suspended tenant can still be granted to or re-anchored.
+func (t *Tenant) Entitlement(featureKey string, at time.Time) (Entitlement, bool) {
+	pin, pinned := t.Pins[featureKey]
+	if !pinned || !pin.activeAt(at) {
+		return Entitlement{}, false
+	}
+	limit, _ := t.limit(featureKey, pin)
+	return Entitlement{Limit: limit, Interval: pin.Interval, Archived: pin.Archived}, true
+}
 
 // find takes the write lock, not the read lock, because a hit is a write: get
 // moves the entry to the front of the recency list, and two hits under a shared
@@ -332,7 +384,7 @@ func (s *Snapshot) resolveMiss(tenantID, featureKey string) (Resolution, error) 
 	s.countMiss(observability.MissLoaded)
 	s.fill(loaded)
 	if t := s.find(tenantID); t != nil {
-		return s.decide(t, featureKey), nil
+		return s.decide(t, featureKey, s.now()), nil
 	}
 	return Resolution{}, ErrStaleSnapshot
 }
@@ -351,21 +403,7 @@ func (s *Snapshot) fill(loaded *LoadedTenant) {
 	if loaded.Plan == nil {
 		return
 	}
-	plan := &Plan{
-		ID:           loaded.Plan.ID,
-		Key:          loaded.Plan.Key,
-		Entitlements: loaded.Plan.Entitlements,
-	}
-	t := &Tenant{
-		ID:         loaded.ID,
-		ExternalID: loaded.ExternalID,
-		State:      loaded.State,
-		Timezone:   loaded.Timezone,
-		Anchor:     loaded.Anchor,
-		Plan:       plan,
-		Overrides:  loaded.Overrides,
-		Version:    loaded.Version,
-	}
+	t := NewTenant(loaded)
 	s.mu.Lock()
 	s.cache.add(t)
 	if s.metrics != nil {
@@ -374,14 +412,26 @@ func (s *Snapshot) fill(loaded *LoadedTenant) {
 	s.mu.Unlock()
 }
 
-// decide applies the resolution order to a tenant that is in the cache:
-// archived over suspended over in-plan over not-in-plan (DR-015), and that
-// order lives here, in one place.
-func (s *Snapshot) decide(t *Tenant, featureKey string) Resolution {
+// decide applies the resolution order to a tenant that is in the cache. The
+// order itself is Effective's, in one place.
+func (s *Snapshot) decide(t *Tenant, featureKey string, at time.Time) Resolution {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return Effective(t, featureKey, at)
+}
+
+// Effective resolves one feature for a tenant at an instant (state-machines.md
+// section 5): archived over suspended over in-plan over not-in-plan (DR-015).
+// The feature set and the cadence are the tenant's pins, which change only at
+// a re-anchor; the limit is the override's, else the plan's as it is now,
+// else, for a feature retired from the plan, the limit it was retired with. A
+// limit edit therefore reaches the tenant at its next roll, which is the only
+// moment the scripts read the limit they are passed (DR-014). It is a pure
+// function, used by the data plane and the admin routes alike (IP-10, S5).
+func Effective(t *Tenant, featureKey string, at time.Time) Resolution {
 	r := Resolution{Timezone: t.Timezone, TenantVersion: t.Version}
-	if t.Plan.Entitlements[featureKey].Archived {
+	e, held := t.Entitlement(featureKey, at)
+	if held && e.Archived {
 		r.Archived = true
 		return r
 	}
@@ -389,8 +439,7 @@ func (s *Snapshot) decide(t *Tenant, featureKey string) Resolution {
 		r.Suspended = true
 		return r
 	}
-	e, inPlan := overrideOrPlan(t, featureKey)
-	if !inPlan {
+	if !held {
 		return r
 	}
 	r.InPlan = true
@@ -400,29 +449,23 @@ func (s *Snapshot) decide(t *Tenant, featureKey string) Resolution {
 	return r
 }
 
-// overrideOrPlan resolves an entitlement the way the tenant row says: an
-// override that sets a field wins that field, an override that leaves it nil
-// inherits the plan's value, and the resolution is a lie if the override names
-// a feature and the plan never did (DR-015: an override can never grant a
-// feature the plan excludes).
-func overrideOrPlan(t *Tenant, featureKey string) (Entitlement, bool) {
-	planEnt, inPlan := t.Plan.Entitlements[featureKey]
-	ov, overridden := t.Overrides[featureKey]
-	if !overridden {
-		return planEnt, inPlan
+// limit is a pinned feature's limit: an override's, else the plan's, else the
+// one it was retired with. It reports false only for a pin with none of the
+// three, which a store that retires a pin when it drops the entitlement never
+// writes.
+func (t *Tenant) limit(featureKey string, pin Pin) (int64, bool) {
+	if ov, ok := t.Overrides[featureKey]; ok && ov.Limit != nil {
+		return *ov.Limit, true
 	}
-	e := Entitlement{}
-	if ov.Limit != nil {
-		e.Limit = *ov.Limit
-	} else if inPlan {
-		e.Limit = planEnt.Limit
+	if t.Plan != nil {
+		if e, ok := t.Plan.Entitlements[featureKey]; ok {
+			return e.Limit, true
+		}
 	}
-	if ov.Interval != nil {
-		e.Interval = *ov.Interval
-	} else if inPlan {
-		e.Interval = planEnt.Interval
+	if pin.RetiredLimit != nil {
+		return *pin.RetiredLimit, true
 	}
-	return e, overridden && inPlan
+	return 0, false
 }
 
 // subscriberLoop applies invalidations off the channel. It re-subscribes on

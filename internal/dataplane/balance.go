@@ -50,7 +50,7 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 		fail(*problem)
 		return
 	}
-	plan := t.Features()
+	plan := t.Features(ex.Accepted)
 	var features []string
 	if q.Has("feature_key") {
 		if _, ok := plan[featureKey]; !ok {

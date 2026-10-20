@@ -239,6 +239,7 @@ func featureReferenced(ctx context.Context, q querier, featureID string) (bool, 
 	err := q.QueryRowContext(ctx, `SELECT
 			EXISTS (SELECT 1 FROM plan_entitlements WHERE feature_id = $1)
 			OR EXISTS (SELECT 1 FROM tenant_entitlement_overrides WHERE feature_id = $1)
+			OR EXISTS (SELECT 1 FROM tenant_entitlement_pins WHERE feature_id = $1)
 			OR EXISTS (SELECT 1 FROM usage_events WHERE feature_id = $1)`, featureID).Scan(&referenced)
 	return referenced, Classify(OpWrite, err)
 }
@@ -303,7 +304,9 @@ func (a *Admin) ArchiveFeature(ctx context.Context, actor admin.Actor, key strin
 SELECT t.id FROM tenants t JOIN plan_entitlements e ON e.plan_id = t.plan_id
  WHERE e.feature_id = $1 AND t.state <> 'deleted'
 UNION
-SELECT o.tenant_id FROM tenant_entitlement_overrides o WHERE o.feature_id = $1`, f.ID)
+SELECT o.tenant_id FROM tenant_entitlement_overrides o WHERE o.feature_id = $1
+UNION
+SELECT n.tenant_id FROM tenant_entitlement_pins n WHERE n.feature_id = $1`, f.ID)
 		if err != nil {
 			return Classify(OpWrite, err)
 		}
@@ -596,6 +599,12 @@ func (a *Admin) CreateTenant(ctx context.Context, actor admin.Actor, in admin.Ne
 		if err != nil {
 			return Classify(OpWrite, err)
 		}
+		// The tenant is anchored now, so it is pinned now: every feature of
+		// its plan at the plan's cadence, an archived one included so a
+		// request for it is still feature_archived (D1).
+		if err := repin(ctx, tx, []string{id}); err != nil {
+			return err
+		}
 		t, err := getTenant(ctx, tx, id, "")
 		if err != nil {
 			return err
@@ -642,12 +651,20 @@ func (a *Admin) UpdateTenant(ctx context.Context, actor admin.Actor, id string, 
  WHERE id = $1`, before.ID, c.DisplayName, c.Timezone, meta); err != nil {
 			return Classify(OpWrite, err)
 		}
+		// The tenant's own plan_key is not a plan change (S1).
+		action := "tenant.update"
+		if c.PlanKey != nil && *c.PlanKey != string(before.PlanKey) {
+			if err := changePlan(ctx, tx, before.ID.String(), *c.PlanKey, c.At, actor.RequestID); err != nil {
+				return err
+			}
+			action = "tenant.change_plan"
+		}
 		t, err := getTenant(ctx, tx, before.ID.String(), "")
 		if err != nil {
 			return err
 		}
 		out = t
-		return audit(ctx, tx, actor, "tenant.update", "tenant", t.ID.String(), &before, &t, "")
+		return audit(ctx, tx, actor, action, "tenant", t.ID.String(), &before, &t, "")
 	})
 	return out, err
 }
@@ -798,12 +815,10 @@ func (a *Admin) ListEvents(ctx context.Context, id string, f admin.EventFilter, 
 	}
 	rows, err := a.db.QueryContext(ctx, `
 SELECT u.id, f.key, u.cycle_index, u.delta, u.balance_after, u.source, u.event_type, u.request_id,
-       u.idempotency_key, u.created_at, u.seq, coalesce(o.interval, e.interval)::text
+       u.idempotency_key, u.created_at, u.seq, n.interval::text
   FROM usage_events u
   JOIN features f ON f.id = u.feature_id
-  JOIN tenants t ON t.id = u.tenant_id
-  LEFT JOIN plan_entitlements e ON e.plan_id = t.plan_id AND e.feature_id = u.feature_id
-  LEFT JOIN tenant_entitlement_overrides o ON o.tenant_id = u.tenant_id AND o.feature_id = u.feature_id
+  LEFT JOIN tenant_entitlement_pins n ON n.tenant_id = u.tenant_id AND n.feature_id = u.feature_id
  WHERE u.tenant_id = $1
    AND ($2::timestamptz IS NULL OR (u.created_at, u.seq) < ($2, $3::bigint))
    AND ($5 = '' OR f.key = $5)

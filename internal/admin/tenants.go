@@ -176,9 +176,11 @@ func parseInterval(label string) (cycle.Interval, error) {
 	return 0, fmt.Errorf("reset interval %q is not one this binary knows", label)
 }
 
-// updateTenant changes display_name, metadata and timezone. A timezone change
-// does not re-anchor: the next boundary is computed in the new zone (T-6,
-// DR-033). A plan change is IP-10's.
+// updateTenant changes display_name, metadata, timezone and plan_key. A
+// timezone change does not re-anchor: the next boundary is computed in the new
+// zone (T-6, DR-033). A plan change does: it is a hard reset at the request's
+// instant, committed with the tenant's new pins and a pending re-anchor that
+// the request then drains inline (T-5, DR-013, D2).
 func (s *Service) updateTenant(w http.ResponseWriter, r *http.Request) {
 	id, valid := tenantID(w, r)
 	if !valid {
@@ -189,12 +191,12 @@ func (s *Service) updateTenant(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	c := TenantChange{Version: b.version()}
+	c := TenantChange{Version: b.version(), At: accepted(r)}
 	if v, set := b.str("display_name", false, nil, 1, nameMax); set {
 		c.DisplayName = &v
 	}
-	if b.has("plan_key") {
-		b.add("plan_key", "plan changes are not served by this build yet")
+	if v, set := b.str("plan_key", false, planKeyShape, 1, 63); set {
+		c.PlanKey = &v
 	}
 	if v, set := b.str("timezone", false, nil, 1, 64); set {
 		c.Timezone = &v
@@ -219,6 +221,9 @@ func (s *Service) updateTenant(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.fail(w, r, err)
 		return
+	}
+	if c.PlanKey != nil {
+		s.drainInline(r, []string{t.ID.String()})
 	}
 	s.publish(r, []string{t.ID.String()})
 	respond(w, r, http.StatusOK, &t)

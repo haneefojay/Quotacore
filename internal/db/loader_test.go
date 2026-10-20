@@ -64,6 +64,20 @@ func TestPostgresLoaderProjectsATenant(t *testing.T) {
 		SELECT $1, id, 500 FROM features WHERE key = 'llm.tokens'`, tenant); err != nil {
 		t.Fatal(err)
 	}
+	// The pins are the plan's cadences with the override's in front, as
+	// provisioning writes them, and one feature retired from the plan with
+	// the limit it had and the end of the window it was removed in (IP-10).
+	if _, err := db.ExecContext(ctx, `INSERT INTO tenant_entitlement_pins (tenant_id, feature_id, interval)
+		SELECT $1, e.feature_id, coalesce(o.interval, e.interval) FROM plan_entitlements e
+		  LEFT JOIN tenant_entitlement_overrides o ON o.tenant_id = $1 AND o.feature_id = e.feature_id
+		 WHERE e.plan_id = $2`, tenant, f.planID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `WITH g AS (INSERT INTO features (key, name, unit) VALUES ('f.gone', 'F', 'token') RETURNING id)
+		INSERT INTO tenant_entitlement_pins (tenant_id, feature_id, interval, retired_limit, retired_until)
+		SELECT $1, id, 'monthly', 3, '2026-03-01T00:00:00+00' FROM g`, tenant); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := NewLoader(db, &fixedVersions{v: 9}).Load(ctx, tenant)
 	if err != nil {
@@ -92,6 +106,19 @@ func TestPostgresLoaderProjectsATenant(t *testing.T) {
 	}
 	if o := got.Overrides["llm.tokens"]; o.Limit == nil || *o.Limit != 500 || o.Interval != nil {
 		t.Errorf("an override of the limit only must inherit the interval: %+v", o)
+	}
+	if len(got.Pins) != 8 {
+		t.Errorf("pins = %d, want the plan's seven and the retired one", len(got.Pins))
+	}
+	if p := got.Pins["f.hourly"]; p.Interval != cycle.Daily || p.RetiredLimit != nil {
+		t.Errorf("the pin of an interval override = %+v", p)
+	}
+	if p := got.Pins["f.weekly"]; !p.Archived {
+		t.Errorf("the pin of an archived feature = %+v", p)
+	}
+	until := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	if p := got.Pins["f.gone"]; p.RetiredLimit == nil || *p.RetiredLimit != 3 || p.RetiredUntil == nil || !p.RetiredUntil.Equal(until) {
+		t.Errorf("a retired pin = %+v", p)
 	}
 
 	// The loaded tenant resolves through the snapshot the way the rows say.
@@ -181,32 +208,50 @@ func reopenClosed(t *testing.T, db *sql.DB) *sql.DB {
 }
 
 // TestPostgresLoaderIsOneQuery holds DR-039's bound in the source: Load
-// makes exactly one database call, so a miss is one round trip.
+// touches the database once, by handing it to loadTenantRow, and
+// loadTenantRow makes exactly one call on what it is handed, so a miss is one
+// round trip. The pins ride in the same statement (IP-10).
 func TestPostgresLoaderIsOneQuery(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	f, err := parser.ParseFile(token.NewFileSet(), filepath.Join(filepath.Dir(file), "loader.go"), nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls := 0
+	dbUses, rowLoads, queries := 0, 0, 0
 	ast.Inspect(f, func(n ast.Node) bool {
 		fn, ok := n.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "Load" {
+		if !ok {
 			return true
 		}
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			sel, ok := n.(*ast.SelectorExpr)
-			if !ok {
+		switch fn.Name.Name {
+		case "Load":
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				switch n := n.(type) {
+				case *ast.SelectorExpr:
+					if n.Sel.Name == "db" {
+						dbUses++
+					}
+				case *ast.CallExpr:
+					if id, ok := n.Fun.(*ast.Ident); ok && id.Name == "loadTenantRow" {
+						rowLoads++
+					}
+				}
 				return true
-			}
-			if inner, ok := sel.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "db" {
-				calls++
-			}
-			return true
-		})
+			})
+		case "loadTenantRow":
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if sel, ok := n.(*ast.SelectorExpr); ok {
+					if id, ok := sel.X.(*ast.Ident); ok && id.Name == "q" {
+						queries++
+					}
+				}
+				return true
+			})
+		}
 		return false
 	})
-	if calls != 1 {
-		t.Errorf("Load makes %d database calls, want 1 (DR-039)", calls)
+	if dbUses != 1 || rowLoads != 1 || queries != 1 {
+		t.Errorf("Load uses the database %d times and loads a row %d times, and the row load makes %d calls; want 1, 1 and 1 (DR-039)",
+			dbUses, rowLoads, queries)
 	}
 }

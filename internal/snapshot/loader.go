@@ -59,15 +59,40 @@ type LoadedTenant struct {
 	Anchor     time.Time
 	Plan       *LoadedPlan
 	Overrides  map[string]LoadedOverride
-	Version    int64
+	// Pins are what the tenant was anchored on, by feature: its cadence and
+	// its feature set, which change only at a re-anchor (IP-10, D1).
+	Pins    map[string]Pin
+	Version int64
 }
 
 // LoadedPlan is one plan with its entitlements. Plans are interned by the
 // snapshot: ten thousand tenants on three plans hold three plan objects.
+// Version is the plan's own version, which an entitlement edit bumps, so an
+// edited plan is a new interned object rather than a change to a shared one.
 type LoadedPlan struct {
 	ID           string
 	Key          string
+	Version      int64
 	Entitlements map[string]Entitlement
+}
+
+// Pin is one tenant_entitlement_pins row: a feature the tenant was anchored
+// on, the cadence its cycle index is counted in, and whether its feature is
+// archived. A feature removed from the plan since is retired: RetiredLimit is
+// the limit it had and RetiredUntil the end of the window it was removed in,
+// after which the tenant no longer has it. A retired `never` feature has no
+// window end, and keeps the feature until the next re-anchor (E-4, INV-E1).
+type Pin struct {
+	Interval     cycle.Interval
+	Archived     bool
+	RetiredLimit *int64
+	RetiredUntil *time.Time
+}
+
+// activeAt reports whether the pinned feature is still the tenant's at an
+// instant.
+func (p Pin) activeAt(at time.Time) bool {
+	return p.RetiredLimit == nil || p.RetiredUntil == nil || at.Before(*p.RetiredUntil)
 }
 
 // Entitlement is the enforceable content of one plan_entitlements row.
