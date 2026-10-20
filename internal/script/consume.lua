@@ -25,12 +25,12 @@
 -- applied, not the state as it stands now (DR-027).
 
 -- BEGIN transition
--- This block is byte-for-byte identical in consume.lua, refund.lua and
--- check.lua, and source_test.go fails if the three ever differ. Three copies
--- exist because Redis Lua has no include and a script is loaded whole, and
--- one script per endpoint is what performance.md section 5 asks for. The
--- duplication is what INV-C2 requires: there is no second implementation of
--- rollover to drift out of agreement with the first.
+-- This block is byte-for-byte identical in consume.lua, refund.lua,
+-- check.lua, grant.lua, set.lua and relimit.lua, and source_test.go fails if
+-- any two ever differ. Six copies exist because Redis Lua has no include and a
+-- script is loaded whole, and one script per operation is what performance.md
+-- section 5 asks for. The duplication is what INV-C2 requires: there is no
+-- second implementation of rollover to drift out of agreement with the first.
 local BOUND = 9007199254740991
 local DAY = 86400
 

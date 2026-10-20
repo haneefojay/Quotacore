@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"go.yaml.in/yaml/v3"
@@ -19,21 +20,8 @@ import (
 	"github.com/quotacore/quotacore/internal/admin"
 	"github.com/quotacore/quotacore/internal/db"
 	"github.com/quotacore/quotacore/internal/envelope"
+	"github.com/quotacore/quotacore/internal/snapshot"
 )
-
-// ip10Ops are the admin operations whose handlers are IP-10's. Until then each
-// is a bare 404, and the codes only they return are listed in ip10Only.
-var ip10Ops = map[string]bool{
-	"updatePlan": true, "applyPlan": true, "planImpact": true, "grantTenant": true,
-	"setTenantBalance": true, "forceRollover": true, "upsertTenantOverride": true, "clearTenantOverride": true,
-}
-
-// ip10Only are the catalogue's codes that only an IP-10 route returns. The
-// list has to be emptied there, not forgotten.
-var ip10Only = map[string]string{
-	"confirmation_required": "IP-10 (plan apply)", "grant_exceeds_ceiling": "IP-10 (grant)",
-	"reset_not_supported": "IP-10 (force-rollover)",
-}
 
 // adminRow is one row of the endpoint x error matrix that names admin routes.
 type adminRow struct {
@@ -124,10 +112,25 @@ func (p panicStore) ListEvents(ctx context.Context, id string, f admin.EventFilt
 	p.boom()
 	return p.Store.ListEvents(ctx, id, f, pg)
 }
+func (p panicStore) PlanCadences(ctx context.Context, id string) (contract.Plan, []admin.Cadence, error) {
+	p.boom()
+	return p.Store.PlanCadences(ctx, id)
+}
+func (p panicStore) AdjustBalance(ctx context.Context, a admin.Actor, id, feature string, drain admin.DrainFunc,
+	fn admin.TenantWrite) (string, error) {
+	p.boom()
+	return p.Store.AdjustBalance(ctx, a, id, feature, drain, fn)
+}
+func (p panicStore) ClearOverride(ctx context.Context, a admin.Actor, id, feature, applyAt string, drain admin.DrainFunc,
+	fn func(context.Context, *snapshot.LoadedTenant) error) (string, bool, error) {
+	p.boom()
+	return p.Store.ClearOverride(ctx, a, id, feature, applyAt, drain, fn)
+}
 
 // controlDigest is the control plane's resources as a refusal must leave them:
-// every row of the catalogue, the tenants and the keys, and the audit log's
-// length. A key's last use is the one column a request may move.
+// every row of the catalogue, the tenants, their overrides, pins and pending
+// re-anchors, the keys, and the audit log's length. A key's last use is the
+// one column a request may move.
 func (s *stack) controlDigest() string {
 	s.t.Helper()
 	var out []string
@@ -136,6 +139,9 @@ func (s *stack) controlDigest() string {
 		`SELECT coalesce(md5(string_agg(t::text, ',' ORDER BY t::text)), '') FROM plans t`,
 		`SELECT coalesce(md5(string_agg(t::text, ',' ORDER BY t::text)), '') FROM plan_entitlements t`,
 		`SELECT coalesce(md5(string_agg(t::text, ',' ORDER BY t::text)), '') FROM tenants t`,
+		`SELECT coalesce(md5(string_agg(t::text, ',' ORDER BY t::text)), '') FROM tenant_entitlement_overrides t`,
+		`SELECT coalesce(md5(string_agg(t::text, ',' ORDER BY t::text)), '') FROM tenant_entitlement_pins t`,
+		`SELECT coalesce(md5(string_agg(t::text, ',' ORDER BY t::text)), '') FROM pending_reanchors t`,
 		`SELECT coalesce(md5(string_agg(id::text || name || scope || coalesce(revoked_at::text, ''), ',' ORDER BY id)), '') FROM api_keys`,
 		`SELECT count(*)::text FROM audit_log`,
 	} {
@@ -148,6 +154,40 @@ func (s *stack) controlDigest() string {
 	return strings.Join(out, " ")
 }
 
+// fastDigest is the tenants' keys in the fast store as a refusal must leave
+// them: every hash with its fields and its expiry, and every string. It reads
+// the store directly, past any proxy a test has cut. An apply-now's
+// confirmation token lives outside every tenant's keys, which is the one write
+// a refusal makes (D7). Expiry is compared to the second: the transition block
+// every adjusting script opens with re-asserts it at that grain, as consume's
+// does on a refused request, and hydration sets it to the millisecond.
+func (s *stack) fastDigest(tenantIDs ...string) string {
+	s.t.Helper()
+	ctx := context.Background()
+	var out []string
+	for _, id := range tenantIDs {
+		keys, err := s.rdb.Keys(ctx, "qc:{t:"+id+"}:*").Result()
+		if err != nil {
+			s.t.Fatal(err)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			exp := s.rdb.PExpireTime(ctx, k).Val().Truncate(time.Second)
+			if h, err := s.rdb.HGetAll(ctx, k).Result(); err == nil {
+				fields := make([]string, 0, len(h))
+				for f, v := range h {
+					fields = append(fields, f+"="+v)
+				}
+				sort.Strings(fields)
+				out = append(out, k+"{"+strings.Join(fields, ",")+"}"+exp.String())
+				continue
+			}
+			out = append(out, k+"="+s.rdb.Get(ctx, k).Val()+exp.String())
+		}
+	}
+	return strings.Join(out, " ")
+}
+
 // adminProvocation is one admin request that must be refused with code.
 type adminProvocation struct {
 	code     string
@@ -155,9 +195,10 @@ type adminProvocation struct {
 	send     func() response
 }
 
-// adminProvocations runs every refusal IP-09's routes can give, checking each
-// against its matrix row and checking that it changed nothing (T-08 on the
-// control plane). It returns the codes provoked, by matrix row.
+// adminProvocations runs every refusal the admin routes can give, checking
+// each against its matrix row and checking that it changed nothing in either
+// store (T-08 on the control plane). It returns the codes provoked, by matrix
+// row.
 func adminProvocations(t *testing.T) map[int]map[string]bool {
 	t.Helper()
 	rows := adminRows(t)
@@ -175,10 +216,20 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	s := newStack(t, func(o *stackOptions) {
 		o.redisURL = urlVia(t, redisURL, cut.addr())
 		o.adminStore = func(a *db.Admin) admin.Store { return panicStore{Store: a, on: &panics} }
+		// Two live tenants on the plan are above it, so an apply is a 409.
+		o.env["QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD"] = "1"
 	})
 	f, plan, tn := s.provisioned(10)
 	gone := asTenant(t, s.createTenant(externalID("gone"), plan, "UTC"))
 	mustStatus(t, s.adminDo(http.MethodDelete, "/v1/admin/tenants/"+gone.ID, `{"reason":"churned"}`), http.StatusOK)
+	tn2 := asTenant(t, s.createTenant(externalID("pt2"), plan, "UTC"))
+	mustStatus(t, s.adminDo(http.MethodPost, "/v1/admin/tenants/"+tn2.ID+"/overrides",
+		`{"feature_key":"`+f+`","limit_value":20,"interval":null,"apply_at":"next_boundary"}`), http.StatusOK)
+	nf, np := uniq("nf"), uniq("np")
+	s.createFeature(nf)
+	s.createPlan(np, 5, "never", nf)
+	forever := asTenant(t, s.createTenant(externalID("never"), np, "UTC"))
+	watched := []string{tn.ID, tn2.ID, gone.ID, forever.ID}
 	invalidTok := "qc_admin_0123456789abcdef.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	huge := `{"name":"` + strings.Repeat("a", 70000) + `"}`
 
@@ -194,8 +245,8 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 		return func() response { return s.adminDo(method, path, body) }
 	}
 
-	// Authentication and scope on every route IP-09 serves; the body cap on
-	// every one that takes a body.
+	// Authentication and scope on every admin route; the body cap on every one
+	// that takes a body.
 	var endpoints []string
 	for e := range ops {
 		endpoints = append(endpoints, e)
@@ -203,7 +254,7 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	sort.Strings(endpoints)
 	for _, e := range endpoints {
 		op := ops[e]
-		if ip10Ops[op.ID] || len(op.Codes) == 0 {
+		if len(op.Codes) == 0 {
 			continue
 		}
 		body := ""
@@ -234,6 +285,16 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 		`{"plan_key":"`+plan+`","name":"P","entitlements":[{"feature_key":"`+f+`","limit":1,"reset_interval":"never"}]}`))
 	at("plan_in_use", "DELETE /v1/admin/plans/{id}", adm(http.MethodDelete, pp, `{"reason":"x"}`))
 	at("resource_version_conflict", "POST /v1/admin/plans/{id}/archive", adm(http.MethodPost, pp+"/archive", `{"version":99,"reason":"x"}`))
+	// Plan edit, apply-now and impact (IP-10).
+	nowhere := "/v1/admin/plans/nothing"
+	at("validation_failed", "PATCH /v1/admin/plans/{id}", adm(http.MethodPatch, pp, `{}`))
+	at("plan_not_found", "PATCH /v1/admin/plans/{id}", adm(http.MethodPatch, nowhere, `{"version":1,"name":"N"}`))
+	at("resource_version_conflict", "PATCH /v1/admin/plans/{id}", adm(http.MethodPatch, pp, `{"version":99,"name":"N"}`))
+	at("validation_failed", "POST /v1/admin/plans/{id}/apply", adm(http.MethodPost, pp+"/apply", `{}`))
+	at("plan_not_found", "POST /v1/admin/plans/{id}/apply", adm(http.MethodPost, nowhere+"/apply", `{"reason":"x"}`))
+	at("confirmation_required", "POST /v1/admin/plans/{id}/apply", adm(http.MethodPost, pp+"/apply", `{"reason":"the matrix"}`))
+	at("validation_failed", "GET /v1/admin/plans/{id}/impact", adm(http.MethodGet, pp+"/impact?resource_version=1", ""))
+	at("plan_not_found", "GET /v1/admin/plans/{id}/impact", adm(http.MethodGet, nowhere+"/impact", ""))
 	// Tenants.
 	at("validation_failed", "POST /v1/admin/tenants", adm(http.MethodPost, "/v1/admin/tenants", `{}`))
 	at("invalid_timezone", "POST /v1/admin/tenants", adm(http.MethodPost, "/v1/admin/tenants",
@@ -243,6 +304,34 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 		`{"external_id":"`+tn.External+`","display_name":"T","plan_key":"`+plan+`"}`))
 	at("tenant_deleted", "POST /v1/admin/tenants/{id}/suspend", adm(http.MethodPost, "/v1/admin/tenants/"+gone.ID+"/suspend", `{"version":2,"reason":"x"}`))
 	at("resource_version_conflict", "PATCH /v1/admin/tenants/{id}", adm(http.MethodPatch, tp, `{"version":99,"display_name":"N"}`))
+	at("validation_failed", "PATCH /v1/admin/tenants/{id}", adm(http.MethodPatch, tp, `{"version":1,"plan_key":"no-such-plan"}`))
+	// Grant, set, force-rollover and overrides (IP-10).
+	gp, unknown := "/v1/admin/tenants/"+gone.ID, "/v1/admin/tenants/"+uuid.NewString()
+	grant := `{"feature_key":"` + f + `","amount":1,"reason":"goodwill"}`
+	at("validation_failed", "POST /v1/admin/tenants/{id}/grant", adm(http.MethodPost, tp+"/grant", `{}`))
+	at("validation_failed", "POST /v1/admin/tenants/{id}/grant", adm(http.MethodPost, tp+"/grant", `{"feature_key":"`+nf+`","amount":1,"reason":"x"}`))
+	at("tenant_not_found", "POST /v1/admin/tenants/{id}/grant", adm(http.MethodPost, unknown+"/grant", grant))
+	at("feature_not_found", "POST /v1/admin/tenants/{id}/grant", adm(http.MethodPost, tp+"/grant", `{"feature_key":"nothing.here","amount":1,"reason":"x"}`))
+	at("tenant_deleted", "POST /v1/admin/tenants/{id}/grant", adm(http.MethodPost, gp+"/grant", grant))
+	at("grant_exceeds_ceiling", "POST /v1/admin/tenants/{id}/set", adm(http.MethodPost, tp+"/set", `{"feature_key":"`+f+`","value":11,"reason":"x"}`))
+	at("tenant_deleted", "POST /v1/admin/tenants/{id}/set", adm(http.MethodPost, gp+"/set", `{"feature_key":"`+f+`","value":1,"reason":"x"}`))
+	at("reset_not_supported", "POST /v1/admin/tenants/{id}/force-rollover", adm(http.MethodPost,
+		"/v1/admin/tenants/"+forever.ID+"/force-rollover", `{"feature_key":"`+nf+`","reason":"x"}`))
+	at("tenant_deleted", "POST /v1/admin/tenants/{id}/force-rollover", adm(http.MethodPost, gp+"/force-rollover", `{"feature_key":"`+f+`","reason":"x"}`))
+	at("validation_failed", "POST /v1/admin/tenants/{id}/overrides", adm(http.MethodPost, tp+"/overrides",
+		`{"feature_key":"`+f+`","limit_value":null,"interval":null}`))
+	at("validation_failed", "POST /v1/admin/tenants/{id}/overrides", adm(http.MethodPost, tp+"/overrides",
+		`{"feature_key":"`+nf+`","limit_value":5,"interval":null}`))
+	at("resource_version_conflict", "POST /v1/admin/tenants/{id}/overrides", adm(http.MethodPost, tp+"/overrides",
+		`{"feature_key":"`+f+`","limit_value":5,"interval":null,"version":99}`))
+	at("resource_version_conflict", "POST /v1/admin/tenants/{id}/overrides", adm(http.MethodPost, "/v1/admin/tenants/"+tn2.ID+"/overrides",
+		`{"feature_key":"`+f+`","limit_value":5,"interval":null,"version":99}`))
+	at("tenant_deleted", "POST /v1/admin/tenants/{id}/overrides", adm(http.MethodPost, gp+"/overrides",
+		`{"feature_key":"`+f+`","limit_value":5,"interval":null}`))
+	at("validation_failed", "DELETE /v1/admin/tenants/{id}/overrides/{feature_key}", adm(http.MethodDelete, tp+"/overrides/"+f, `{}`))
+	at("tenant_not_found", "DELETE /v1/admin/tenants/{id}/overrides/{feature_key}", adm(http.MethodDelete, unknown+"/overrides/"+f, `{"apply_at":"immediate"}`))
+	at("feature_not_found", "DELETE /v1/admin/tenants/{id}/overrides/{feature_key}", adm(http.MethodDelete, tp+"/overrides/nothing.here", `{"apply_at":"immediate"}`))
+	at("tenant_deleted", "DELETE /v1/admin/tenants/{id}/overrides/{feature_key}", adm(http.MethodDelete, gp+"/overrides/"+f, `{"apply_at":"immediate"}`))
 	at("payload_too_large", "POST /v1/admin/tenants", adm(http.MethodPost, "/v1/admin/tenants",
 		`{"external_id":"`+externalID("big")+`","display_name":"T","plan_key":"`+plan+`","metadata":{"x":"`+strings.Repeat("a", 5000)+`"}}`))
 	// Events, audit and keys.
@@ -267,6 +356,9 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	at("service_unavailable", "GET /v1/admin/tenants/{id}/events", adm(http.MethodGet, tp+"/events?cursor="+cursor, ""))
 	at("service_unavailable", "GET /v1/admin/audit", adm(http.MethodGet, "/v1/admin/audit?cursor="+cursor, ""))
 	at("service_unavailable", "GET /v1/admin/keys", adm(http.MethodGet, "/v1/admin/keys?cursor="+cursor, ""))
+	at("service_unavailable", "POST /v1/admin/tenants/{id}/grant", adm(http.MethodPost, tp+"/grant", grant))
+	at("service_unavailable", "DELETE /v1/admin/tenants/{id}/overrides/{feature_key}", adm(http.MethodDelete,
+		"/v1/admin/tenants/"+tn2.ID+"/overrides/"+f, `{"apply_at":"immediate"}`))
 
 	// The store panics: the route's recovery answers internal_error.
 	panicking := func(send func() response) func() response {
@@ -278,6 +370,9 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	at("internal_error", "GET /v1/admin/tenants/{id}/events", adm(http.MethodGet, tp+"/events", ""))
 	at("internal_error", "GET /v1/admin/audit", adm(http.MethodGet, "/v1/admin/audit", ""))
 	at("internal_error", "GET /v1/admin/keys", adm(http.MethodGet, "/v1/admin/keys", ""))
+	at("internal_error", "GET /v1/admin/plans/{id}/impact", adm(http.MethodGet, pp+"/impact", ""))
+	at("internal_error", "POST /v1/admin/tenants/{id}/grant", adm(http.MethodPost, tp+"/grant", grant))
+	at("internal_error", "DELETE /v1/admin/tenants/{id}/overrides/{feature_key}", adm(http.MethodDelete, tp+"/overrides/"+f, `{"apply_at":"immediate"}`))
 
 	// The control plane goes away last; the admin key stays cached.
 	pgDown := func(send func() response) func() response {
@@ -289,6 +384,9 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	at("control_plane_unavailable", "GET /v1/admin/tenants/{id}/events", adm(http.MethodGet, tp+"/events", ""))
 	at("control_plane_unavailable", "GET /v1/admin/audit", adm(http.MethodGet, "/v1/admin/audit", ""))
 	at("control_plane_unavailable", "GET /v1/admin/keys", adm(http.MethodGet, "/v1/admin/keys", ""))
+	at("control_plane_unavailable", "GET /v1/admin/plans/{id}/impact", adm(http.MethodGet, pp+"/impact", ""))
+	at("control_plane_unavailable", "POST /v1/admin/tenants/{id}/grant", adm(http.MethodPost, tp+"/grant", grant))
+	at("control_plane_unavailable", "DELETE /v1/admin/tenants/{id}/overrides/{feature_key}", adm(http.MethodDelete, tp+"/overrides/"+f, `{"apply_at":"immediate"}`))
 
 	seen := map[int]map[string]bool{}
 	for _, p := range ps {
@@ -296,7 +394,7 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 		if !found {
 			t.Fatalf("%s is in no matrix row", p.endpoint)
 		}
-		before := s.controlDigest()
+		before, fast := s.controlDigest(), s.fastDigest(watched...)
 		r := p.send()
 		got := r.code(t)
 		if got != p.code {
@@ -306,8 +404,13 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 		if !rows[i].codes[got] {
 			t.Errorf("%s returned %s, which its matrix row does not list", p.endpoint, got)
 		}
-		if after := s.controlDigest(); after != before {
-			t.Errorf("%s on %s changed the control plane: %s, then %s", got, p.endpoint, before, after)
+		if p.code != "control_plane_unavailable" {
+			if after := s.controlDigest(); after != before {
+				t.Errorf("%s on %s changed the control plane: %s, then %s", got, p.endpoint, before, after)
+			}
+		}
+		if after := s.fastDigest(watched...); after != fast {
+			t.Errorf("%s on %s changed the fast store:\n%s\nthen\n%s", got, p.endpoint, fast, after)
 		}
 		if seen[i] == nil {
 			seen[i] = map[string]bool{}
@@ -321,7 +424,7 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	ls.adminDo(http.MethodGet, "/v1/admin/features", "")
 	for i, row := range rows {
 		op := ops[row.endpoints[0]]
-		if ip10Ops[op.ID] || len(op.Codes) == 0 {
+		if len(op.Codes) == 0 {
 			continue
 		}
 		before := ls.controlDigest()
@@ -339,11 +442,11 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 		seen[i]["rate_limited"] = true
 	}
 
-	// Every code an IP-09 row lists is provoked, unless only IP-10 reaches it.
+	// Every code an admin row lists is provoked.
 	for i, row := range rows {
 		served := false
 		for _, e := range row.endpoints {
-			if op := ops[e]; !ip10Ops[op.ID] && len(op.Codes) > 0 {
+			if op := ops[e]; len(op.Codes) > 0 {
 				served = true
 			}
 		}
@@ -352,7 +455,7 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 		}
 		var missing []string
 		for code := range row.codes {
-			if !seen[i][code] && ip10Only[code] == "" {
+			if !seen[i][code] {
 				missing = append(missing, code)
 			}
 		}
@@ -364,17 +467,18 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	return seen
 }
 
-// TestAdminEndpointErrorMatrix is IP-09's half of the endpoint x error matrix
-// and of T-08: on every admin route IP-09 serves, every code its row lists is
-// provoked (the IP-10-only codes excepted), each refusal is a code the row
-// lists, and none changes a catalogue row, a tenant, a key or the audit log.
+// TestAdminEndpointErrorMatrix is the admin half of the endpoint x error
+// matrix and of T-08: on every admin route, every code its row lists is
+// provoked, each refusal is a code the row lists, and none changes a catalogue
+// row, a tenant, its pins or pending re-anchors, a key, the audit log or a
+// tenant's keys in the fast store.
 func TestAdminEndpointErrorMatrix(t *testing.T) {
 	adminProvocations(t)
 }
 
-// TestAnAdminKeyReachesEveryIP09Route: an admin key reaches every admin route
-// IP-09 serves, and each IP-10 route is a bare 404 until IP-10 mounts it.
-func TestAnAdminKeyReachesEveryIP09Route(t *testing.T) {
+// TestAnAdminKeyReachesEveryAdminRoute: an admin key reaches every admin
+// route, and none answers a bare 404 (IP-09 D1, closed by IP-10).
+func TestAnAdminKeyReachesEveryAdminRoute(t *testing.T) {
 	s := newStack(t)
 	ops := adminOps()
 	served := 0
@@ -384,19 +488,13 @@ func TestAnAdminKeyReachesEveryIP09Route(t *testing.T) {
 			body = `{}`
 		}
 		r := s.adminDo(op.Method, samplePath(op.Path), body)
-		if ip10Ops[op.ID] {
-			if r.Status != http.StatusNotFound || len(r.Body) != 0 {
-				t.Errorf("%s is IP-10's and answered %d %s", op.Endpoint(), r.Status, r.Body)
-			}
-			continue
-		}
 		served++
 		if r.Status == http.StatusUnauthorized || r.Status == http.StatusForbidden || (r.Status == http.StatusNotFound && len(r.Body) == 0) {
 			t.Errorf("an admin key on %s: %d %s", op.Endpoint(), r.Status, r.Body)
 		}
 	}
-	if served != 24 {
-		t.Errorf("IP-09 serves %d admin operations, want 24", served)
+	if served != 32 {
+		t.Errorf("the contract has %d admin operations, want 32", served)
 	}
 	// status takes no envelope: refused bare.
 	if r := s.do(http.MethodGet, "/v1/admin/status", "", ""); r.Status != http.StatusUnauthorized || len(r.Body) != 0 {

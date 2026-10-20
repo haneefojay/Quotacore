@@ -286,6 +286,12 @@ func (s *stack) tenant(external, zone string, anchor time.Time, ents ...ent) ten
 		VALUES ($1, 'T', $2, $3, $4) RETURNING id`, external, planID, zone, anchor).Scan(&tn.ID); err != nil {
 		s.t.Fatal(err)
 	}
+	// The tenant is pinned to its plan's cadences, as provisioning pins it
+	// (IP-10, D1).
+	if _, err := s.seedDB.ExecContext(ctx, `INSERT INTO tenant_entitlement_pins (tenant_id, feature_id, interval)
+		SELECT $1, feature_id, interval FROM plan_entitlements WHERE plan_id = $2`, tn.ID, planID); err != nil {
+		s.t.Fatal(err)
+	}
 	if err := s.rdb.HSet(ctx, store.ConfigTenantsKey(), tn.ID, 1).Err(); err != nil {
 		s.t.Fatal(err)
 	}

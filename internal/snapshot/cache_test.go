@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/quotacore/quotacore/internal/cycle"
 )
 
 func planFixture(features int, id string) *LoadedPlan {
@@ -85,8 +87,37 @@ func TestCacheSharesInternedPlans(t *testing.T) {
 			t.Fatalf("tenant %s does not share the interned plan", id)
 		}
 	}
-	if got := c.plans["p1"].refs; got != 10_000 {
+	if got := c.plans[plan.internKey()].refs; got != 10_000 {
 		t.Errorf("plan refs = %d, want 10000", got)
+	}
+}
+
+// TestCacheSharesInternedPins: tenants pinned alike share one set of pins
+// whatever loads built them, a tenant pinned differently has its own, and the
+// sets are refunded when their last tenant leaves (IP-10, NFR-T7).
+func TestCacheSharesInternedPins(t *testing.T) {
+	c := newTenantCache(50_000, 1<<30)
+	plan := &Plan{ID: "p1", Key: "starter"}
+	pins := func(iv cycle.Interval) map[string]Pin {
+		return map[string]Pin{"feature_a": {Interval: iv}, "feature_b": {Interval: cycle.Hourly}}
+	}
+	for i := 0; i < 1000; i++ {
+		c.add(&Tenant{ID: fmt.Sprintf("t%05d", i), Plan: plan, Pins: pins(cycle.Monthly)})
+	}
+	c.add(&Tenant{ID: "weekly", Plan: plan, Pins: pins(cycle.Weekly)})
+	if len(c.pinSets) != 2 {
+		t.Fatalf("interned pin sets = %d, want 2", len(c.pinSets))
+	}
+	first := c.byID["t00000"].Value.(*cacheEntry).tenant.Pins
+	last := c.byID["t00999"].Value.(*cacheEntry).tenant.Pins
+	if fmt.Sprintf("%p", first) != fmt.Sprintf("%p", last) {
+		t.Error("two tenants pinned alike do not share one set")
+	}
+	for c.len() > 0 {
+		c.evictOldest()
+	}
+	if len(c.pinSets) != 0 || c.planMem != 0 {
+		t.Errorf("pin sets = %d, planMem = %d, want 0 and 0", len(c.pinSets), c.planMem)
 	}
 }
 
@@ -124,10 +155,16 @@ type memoryLoader struct {
 }
 
 func (l *memoryLoader) Load(_ context.Context, id string) (*LoadedTenant, error) {
+	// Each load builds its own pins, as the database loader does; the cache
+	// interning them is what keeps them inside the budget (IP-10).
+	pins := make(map[string]Pin, len(l.plan.Entitlements))
+	for f, e := range l.plan.Entitlements {
+		pins[f] = Pin{Interval: e.Interval}
+	}
 	return &LoadedTenant{
 		ID: id, ExternalID: "ext-" + id, State: "active", Timezone: "UTC",
 		Anchor: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		Plan:   l.plan,
+		Plan:   l.plan, Pins: pins,
 	}, nil
 }
 
@@ -177,11 +214,11 @@ func TestReloadingATenantKeepsOnePlanReference(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		c.add(&Tenant{ID: "a", ExternalID: "acme", Plan: &Plan{ID: "p", Key: "k"}})
 	}
-	if refs := c.plans["p"].refs; refs != 1 {
+	if refs := c.plans["p@0"].refs; refs != 1 {
 		t.Fatalf("after three loads of one tenant the plan has %d references, want 1", refs)
 	}
 	c.evictOldest()
-	if _, ok := c.plans["p"]; ok || c.planMem != 0 {
+	if _, ok := c.plans["p@0"]; ok || c.planMem != 0 {
 		t.Errorf("evicting the only tenant left the plan cached (%d bytes)", c.planMem)
 	}
 }

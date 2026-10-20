@@ -124,14 +124,14 @@ func TestExternalIDFailuresAreTyped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := s.Decide(tn, "feature_a"); !r.InPlan || r.Limit != 1000 {
+	if r := s.Decide(tn, "feature_a", time.Now()); !r.InPlan || r.Limit != 1000 {
 		t.Errorf("Decide = %+v", r)
 	}
-	if r := s.Decide(tn, "nope"); r.InPlan {
+	if r := s.Decide(tn, "nope", time.Now()); r.InPlan {
 		t.Errorf("Decide on a feature outside the plan = %+v", r)
 	}
-	if len(tn.Features()) != 2 {
-		t.Errorf("Features = %v", tn.Features())
+	if len(tn.Features(time.Now())) != 2 {
+		t.Errorf("Features = %v", tn.Features(time.Now()))
 	}
 }
 

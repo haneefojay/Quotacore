@@ -28,7 +28,7 @@ import (
 // Tenants is the slice of the snapshot the handlers use.
 type Tenants interface {
 	Tenant(externalID string) (*snapshot.Tenant, error)
-	Decide(t *snapshot.Tenant, featureKey string) snapshot.Resolution
+	Decide(t *snapshot.Tenant, featureKey string, at time.Time) snapshot.Resolution
 }
 
 // Scripts is the slice of the script runner the handlers use.

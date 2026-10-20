@@ -351,10 +351,10 @@ func TestTheStoreThatForgotTheScriptsIsRecoveredFrom(t *testing.T) {
 				t.Errorf("Balance = %d, want 70", out.Balance)
 			}
 			evals, loads, _ := fake.counts()
-			// Load restores all three, not only the one that was missing, so the
+			// Load restores all eight, not only the one that was missing, so the
 			// next request on another operation does not pay the same penalty.
-			if evals != 2 || loads != 3 {
-				t.Errorf("a recovered call made %d evaluations and %d loads, want 2 and 3", evals, loads)
+			if evals != 2 || loads != len(allBodies()) {
+				t.Errorf("a recovered call made %d evaluations and %d loads, want 2 and %d", evals, loads, len(allBodies()))
 			}
 		})
 	}
@@ -371,8 +371,8 @@ func TestARecoveredCallIsRetriedOnceAndNoMore(t *testing.T) {
 		t.Fatal("Consume succeeded, and a store that has lost the scripts twice is not a store that answered")
 	}
 	evals, loads, _ := fake.counts()
-	if evals != 2 || loads != 3 {
-		t.Errorf("a call made %d evaluations and %d loads, want 2 and 3: one retry, no loop", evals, loads)
+	if evals != 2 || loads != len(allBodies()) {
+		t.Errorf("a call made %d evaluations and %d loads, want 2 and %d: one retry, no loop", evals, loads, len(allBodies()))
 	}
 }
 

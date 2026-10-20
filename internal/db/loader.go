@@ -38,10 +38,12 @@ func NewLoader(db *sql.DB, versions VersionSource) *Loader {
 
 // loadTenant is one statement, so one round trip and one consistent read: the
 // tenant, its plan, the plan's entitlements with each feature's archive
-// state, and the tenant's overrides. A deleted tenant is not returned
-// (INV-T1), so it reads as unknown.
+// state, the tenant's overrides, and its pins, the cadence and feature set it
+// was anchored on (IP-10). A deleted tenant is not returned (INV-T1), so it
+// reads as unknown. lock is empty for the data plane's read and FOR UPDATE OF
+// t for an admin write that resolves the tenant it has locked.
 const loadTenant = `
-SELECT t.id, t.external_id, t.state, t.timezone, t.anchor_at, p.id, p.key,
+SELECT t.id, t.external_id, t.state, t.timezone, t.anchor_at, t.version, p.id, p.key, p.version,
        coalesce((SELECT jsonb_agg(jsonb_build_object(
                     'feature', f.key, 'limit', e.limit_value, 'interval', e.interval,
                     'archived', f.state = 'archived'))
@@ -50,7 +52,12 @@ SELECT t.id, t.external_id, t.state, t.timezone, t.anchor_at, p.id, p.key,
        coalesce((SELECT jsonb_agg(jsonb_build_object(
                     'feature', f.key, 'limit', o.limit_value, 'interval', o.interval))
                    FROM tenant_entitlement_overrides o JOIN features f ON f.id = o.feature_id
-                  WHERE o.tenant_id = t.id), '[]'::jsonb)
+                  WHERE o.tenant_id = t.id), '[]'::jsonb),
+       coalesce((SELECT jsonb_agg(jsonb_build_object(
+                    'feature', f.key, 'interval', n.interval, 'archived', f.state = 'archived',
+                    'limit', n.retired_limit, 'until', n.retired_until))
+                   FROM tenant_entitlement_pins n JOIN features f ON f.id = n.feature_id
+                  WHERE n.tenant_id = t.id), '[]'::jsonb)
   FROM tenants t
   JOIN plans p ON p.id = t.plan_id
  WHERE t.id = $1 AND t.state <> 'deleted'`
@@ -58,10 +65,11 @@ SELECT t.id, t.external_id, t.state, t.timezone, t.anchor_at, p.id, p.key,
 var uuidShape = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 type loadedRow struct {
-	Feature  string  `json:"feature"`
-	Limit    *int64  `json:"limit"`
-	Interval *string `json:"interval"`
-	Archived bool    `json:"archived"`
+	Feature  string     `json:"feature"`
+	Limit    *int64     `json:"limit"`
+	Interval *string    `json:"interval"`
+	Archived bool       `json:"archived"`
+	Until    *time.Time `json:"until"`
 }
 
 // Load implements snapshot.Loader. A tenant that provably does not exist,
@@ -76,14 +84,27 @@ func (l *Loader) Load(ctx context.Context, tenantID string) (*snapshot.LoadedTen
 	if err != nil {
 		return nil, err
 	}
+	t, err := loadTenantRow(ctx, l.db, tenantID, "")
+	if err != nil {
+		return nil, err
+	}
+	t.Version = version
+	return t, nil
+}
+
+// loadTenantRow runs loadTenant, with a lock clause appended, and decodes it.
+// Version is the tenant row's own version; the data plane's Load replaces it
+// with the propagation version it compares against.
+func loadTenantRow(ctx context.Context, q querier, tenantID, lock string) (*snapshot.LoadedTenant, error) {
 	var (
-		t                  snapshot.LoadedTenant
-		plan               snapshot.LoadedPlan
-		anchor             time.Time
-		entsJSON, overJSON []byte
+		t                            snapshot.LoadedTenant
+		plan                         snapshot.LoadedPlan
+		anchor                       time.Time
+		entsJSON, overJSON, pinsJSON []byte
 	)
-	err = l.db.QueryRowContext(ctx, loadTenant, tenantID).Scan(
-		&t.ID, &t.ExternalID, &t.State, &t.Timezone, &anchor, &plan.ID, &plan.Key, &entsJSON, &overJSON)
+	err := q.QueryRowContext(ctx, loadTenant+" "+lock, tenantID).Scan(
+		&t.ID, &t.ExternalID, &t.State, &t.Timezone, &anchor, &t.Version, &plan.ID, &plan.Key, &plan.Version,
+		&entsJSON, &overJSON, &pinsJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, snapshot.ErrTenantUnknown
 	}
@@ -91,14 +112,16 @@ func (l *Loader) Load(ctx context.Context, tenantID string) (*snapshot.LoadedTen
 		return nil, fmt.Errorf("load tenant: %w", err)
 	}
 	t.Anchor = anchor.UTC()
-	t.Version = version
 
-	var ents, overs []loadedRow
+	var ents, overs, pins []loadedRow
 	if err := json.Unmarshal(entsJSON, &ents); err != nil {
 		return nil, fmt.Errorf("decode entitlements: %w", err)
 	}
 	if err := json.Unmarshal(overJSON, &overs); err != nil {
 		return nil, fmt.Errorf("decode overrides: %w", err)
+	}
+	if err := json.Unmarshal(pinsJSON, &pins); err != nil {
+		return nil, fmt.Errorf("decode pins: %w", err)
 	}
 	plan.Entitlements = make(map[string]snapshot.Entitlement, len(ents))
 	for _, e := range ents {
@@ -124,6 +147,22 @@ func (l *Loader) Load(ctx context.Context, tenantID string) (*snapshot.LoadedTen
 			ov.Interval = &iv
 		}
 		t.Overrides[o.Feature] = ov
+	}
+	t.Pins = make(map[string]snapshot.Pin, len(pins))
+	for _, p := range pins {
+		if p.Interval == nil {
+			return nil, fmt.Errorf("pin for %s has no interval", p.Feature)
+		}
+		iv, err := parseInterval(*p.Interval)
+		if err != nil {
+			return nil, err
+		}
+		pin := snapshot.Pin{Interval: iv, Archived: p.Archived, RetiredLimit: p.Limit}
+		if p.Until != nil {
+			until := p.Until.UTC()
+			pin.RetiredUntil = &until
+		}
+		t.Pins[p.Feature] = pin
 	}
 	t.Plan = &plan
 	return &t, nil

@@ -233,8 +233,7 @@ func TestEndpointErrorMatrix(t *testing.T) {
 // catalogue a data-plane route can return, the refusal leaves the balance
 // hash, its expiry, the tenant's idempotency records and the events handed to
 // the ledger exactly as they were. The control plane's refusals are provoked
-// by adminProvocations, which checks they change nothing there; the codes only
-// an IP-10 route returns are listed as IP-10's.
+// by adminProvocations, which checks they change nothing in either store.
 func TestT08EveryRefusalChangesNothing(t *testing.T) {
 	s := newStack(t)
 	all := provocations(t, s)
@@ -276,11 +275,8 @@ func TestT08EveryRefusalChangesNothing(t *testing.T) {
 	}
 
 	for code := range catalogue(t) {
-		if !covered[code] && ip10Only[code] == "" {
-			t.Errorf("%s is neither provoked here nor listed as IP-10's", code)
-		}
-		if covered[code] && ip10Only[code] != "" {
-			t.Errorf("%s is provoked here and also listed as IP-10's; take it off the list", code)
+		if !covered[code] {
+			t.Errorf("%s is not provoked", code)
 		}
 	}
 }

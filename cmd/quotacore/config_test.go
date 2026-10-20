@@ -298,3 +298,38 @@ func TestLoadAcceptsOverridesForIP07Keys(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadReadsThePlanLifecycleKeys: IP-10's two keys default to 50 tenants
+// and 15 minutes, carry an override through, and refuse a value that would
+// disable the confirmation or outlive the drain's bound; the refresh interval
+// is refused at an hour, the shortest first window the drain's stale-anchor
+// argument relies on (D2).
+func TestLoadReadsThePlanLifecycleKeys(t *testing.T) {
+	c, err := Load(env(baseEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.PlanApplyConfirmThreshold != 50 || c.ConfirmationTTL != 15*time.Minute {
+		t.Errorf("defaults: threshold %d, TTL %v", c.PlanApplyConfirmThreshold, c.ConfirmationTTL)
+	}
+	e := baseEnv()
+	e["QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD"] = "7"
+	e["QUOTACORE_CONFIRMATION_TTL"] = "2m"
+	if c, err = Load(env(e)); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.PlanApplyConfirmThreshold != 7 || c.ConfirmationTTL != 2*time.Minute {
+		t.Errorf("overrides not carried through: threshold %d, TTL %v", c.PlanApplyConfirmThreshold, c.ConfirmationTTL)
+	}
+	for key, bad := range map[string]string{
+		"QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD": "0",
+		"QUOTACORE_CONFIRMATION_TTL":             "500ms",
+		"QUOTACORE_CONFIG_REFRESH_INTERVAL":      "1h",
+	} {
+		e := baseEnv()
+		e[key] = bad
+		if _, err := Load(env(e)); err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("%s=%q: err = %v, want a refusal naming the key", key, bad, err)
+		}
+	}
+}

@@ -19,7 +19,7 @@ import (
 // not survive a round trip through Lua and come back changed (DR-022).
 const bound = int64(1<<53 - 1)
 
-// Runner executes the three scripts against the fast store. It is safe for
+// Runner executes the scripts against the fast store. It is safe for
 // concurrent use: the bodies are immutable, the digest is fixed at build time
 // and nothing here is written to after construction.
 type Runner struct {
@@ -143,7 +143,7 @@ func (r *Runner) run(ctx context.Context, b body, req Request) (Outcome, error) 
 		return out, err
 	}
 	// The store's script cache was flushed, or the store restarted, and the
-	// digest is gone. Put the three back and repeat the call once. The reload
+	// digest is gone. Put the scripts back and repeat the call once. The reload
 	// and the retry share the budget above, so recovering costs a request
 	// nothing in latency that it would not have spent anyway (ADR-0002).
 	if loadErr := Load(ctx, r.client); loadErr != nil {
@@ -239,7 +239,7 @@ func windowEndArg(w cycle.Window) string {
 // is built.
 func (r Request) validate(op Operation) error {
 	switch {
-	case op != Check && r.IdempotencyKey == "":
+	case (op == Consume || op == Refund) && r.IdempotencyKey == "":
 		return fmt.Errorf("the %s script: %w", op, ErrMissingIdempotencyKey)
 	case r.Amount < 0 || r.Amount > bound:
 		return fmt.Errorf("the %s script: %w: amount %d is negative or above 2^53", op, ErrInvalidArgument, r.Amount)

@@ -50,6 +50,8 @@ func (s *Store) Provision(ctx context.Context, tenantID string, openings []Openi
 	return nil
 }
 
+const publishChunk = 1000
+
 // Publish is the propagation step of a committed control-plane write
 // (request-lifecycle.md section 4): one INCR of qc:cfg:version, the new
 // version recorded for every tenant whose configuration changed, and the
@@ -60,14 +62,18 @@ func (s *Store) Publish(ctx context.Context, tenantIDs []string) (int64, error) 
 	if err != nil {
 		return 0, fmt.Errorf("bump config version: %w", err)
 	}
-	if len(tenantIDs) > 0 {
-		fields := make([]any, 0, 2*len(tenantIDs))
-		for _, id := range tenantIDs {
+	// An apply-now publishes every tenant on a plan, so the versions go in
+	// chunks of a thousand rather than as one unbounded command (IP-10, S8).
+	for len(tenantIDs) > 0 {
+		n := min(len(tenantIDs), publishChunk)
+		fields := make([]any, 0, 2*n)
+		for _, id := range tenantIDs[:n] {
 			fields = append(fields, id, version)
 		}
 		if err := s.client.HSet(ctx, ConfigTenantsKey(), fields...).Err(); err != nil {
 			return version, fmt.Errorf("record tenant versions: %w", err)
 		}
+		tenantIDs = tenantIDs[n:]
 	}
 	return version, s.PublishInvalidation(ctx, version)
 }

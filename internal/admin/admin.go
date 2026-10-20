@@ -9,12 +9,17 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	contract "github.com/quotacore/quotacore/api"
 	"github.com/quotacore/quotacore/internal/auth"
+	"github.com/quotacore/quotacore/internal/dataplane"
+	"github.com/quotacore/quotacore/internal/script"
+	"github.com/quotacore/quotacore/internal/snapshot"
 	"github.com/quotacore/quotacore/internal/store"
 )
 
@@ -81,13 +86,95 @@ type NewTenant struct {
 	Anchor                                     time.Time
 }
 
-// TenantChange is a tenant PATCH of the fields IP-09 serves. A timezone
-// change does not re-anchor the cycle (T-6, DR-033).
+// TenantChange is a tenant PATCH. A timezone change does not re-anchor the
+// cycle (T-6, DR-033); a plan_key other than the tenant's own is a plan change,
+// which does (T-5, DR-013), at At or 1 ms after the previous anchor, whichever
+// is later, so the anchor only moves forward (INV-T3, S3).
 type TenantChange struct {
 	Version     int64
 	DisplayName *string
 	Timezone    *string
 	Metadata    []byte // nil leaves it as it is
+	PlanKey     *string
+	At          time.Time
+}
+
+// PlanChange is a plan PATCH: nil leaves a field as it is, and Entitlements,
+// when set, replaces the whole set (S13). The edit changes the offer; each
+// assigned tenant keeps the cadence and features it was anchored on until its
+// next re-anchor, a removed feature until the end of the window At falls in
+// (D1).
+type PlanChange struct {
+	Version      int64
+	Name         *string
+	Description  *string
+	Entitlements []Entitlement
+	At           time.Time
+}
+
+// Reanchor is a re-anchor committed in Postgres whose balance hashes have not
+// been rewritten yet (D2).
+type Reanchor struct {
+	TenantID  string
+	Anchor    time.Time
+	Kind      string // plan_change or apply_now
+	RequestID string
+}
+
+// DrainFunc rewrites one tenant's balance hashes for its new anchor. A store
+// calls it with the tenant locked and deletes the pending row only if it
+// succeeds.
+type DrainFunc func(ctx context.Context, p Reanchor, t *snapshot.LoadedTenant) error
+
+// Cadence is one non-deleted tenant on a plan as impact counts it: its anchor,
+// its zone and the distinct cadences of its pinned, non-archived features.
+type Cadence struct {
+	Anchor    time.Time
+	Timezone  string
+	Intervals []string
+}
+
+// ApplyInput is a confirmed apply-now. Version is the plan version it was
+// counted against and Max the most tenants it may touch, -1 for any; either
+// no longer holding is ErrApplyMoved, and the route counts again.
+type ApplyInput struct {
+	Version int64
+	Max     int64
+	Reason  string
+	At      time.Time
+}
+
+// Applied is a committed apply-now: the plan after it, and every tenant it
+// re-anchored.
+type Applied struct {
+	Plan    contract.Plan
+	Tenants []string
+}
+
+// ErrApplyMoved is an apply-now whose plan changed, or whose tenant count
+// grew past what was confirmed, between the count and the write.
+var ErrApplyMoved = errors.New("the plan or its tenants changed since they were counted")
+
+// Audit is the row a locked tenant write records: its action, its before and
+// after, and the reason the route took.
+type Audit struct {
+	Action        string
+	Before, After json.Marshaler
+	Reason        string
+}
+
+// TenantWrite runs under a tenant's lock, after any pending re-anchor has been
+// drained, and returns the audit row to record with it (S4).
+type TenantWrite func(ctx context.Context, t *snapshot.LoadedTenant) (Audit, error)
+
+// OverrideInput is an override upsert (S9). Version, when set, must be the
+// stored override's.
+type OverrideInput struct {
+	Feature  string
+	Limit    *int64
+	Interval *string
+	ApplyAt  string
+	Version  *int64
 }
 
 // Opening is what a new tenant's balance hashes are written from, inside the
@@ -110,8 +197,8 @@ type EventFilter struct {
 }
 
 // Event is one ledger row as the events route renders it, before its cycle
-// window is computed. Interval is the cadence the tenant's plan or override
-// holds for the feature now, empty when it holds none.
+// window is computed. Interval is the cadence the tenant is pinned to for the
+// feature now, empty when it holds none.
 type Event struct {
 	contract.UsageEvent
 	Seq      int64
@@ -159,6 +246,32 @@ type Store interface {
 	SetTenantState(ctx context.Context, a Actor, id string, version int64, reason, to string) (contract.Tenant, error)
 	DeleteTenant(ctx context.Context, a Actor, id, reason string, at time.Time) (contract.Tenant, error)
 
+	// UpdatePlan edits a plan and returns the tenants on it, whose snapshot
+	// the edit changes. It touches no balance (DR-014).
+	UpdatePlan(ctx context.Context, a Actor, id string, c PlanChange) (contract.Plan, []string, error)
+	// PlanCadences is impact's read: the plan and each of its tenants.
+	PlanCadences(ctx context.Context, id string) (contract.Plan, []Cadence, error)
+	// ApplyPlan re-anchors every non-deleted tenant on the plan in one
+	// transaction, leaving a pending re-anchor for each (D2, D7).
+	ApplyPlan(ctx context.Context, a Actor, id string, in ApplyInput) (Applied, error)
+	// AdjustBalance locks the tenant, refuses an unknown feature, drains the
+	// tenant's pending re-anchor, runs fn and records its audit row, in one
+	// transaction (S4). It returns the tenant's id.
+	AdjustBalance(ctx context.Context, a Actor, id, feature string, drain DrainFunc, fn TenantWrite) (string, error)
+	// UpsertOverride and ClearOverride change an override under the
+	// tenant's lock and then run fn, which re-limits for apply_at=immediate
+	// (D6). ClearOverride reports false for an override that did not exist,
+	// which writes nothing.
+	UpsertOverride(ctx context.Context, a Actor, id string, in OverrideInput, drain DrainFunc,
+		fn func(context.Context, *snapshot.LoadedTenant) error) (contract.Override, string, error)
+	ClearOverride(ctx context.Context, a Actor, id, feature, applyAt string, drain DrainFunc,
+		fn func(context.Context, *snapshot.LoadedTenant) error) (string, bool, error)
+	// DrainReanchors finishes up to max pending re-anchors, of the listed
+	// tenants or of any when the list is nil, one tenant per transaction,
+	// skipping a tenant another drain holds. It returns how many it
+	// finished.
+	DrainReanchors(ctx context.Context, tenantIDs []string, max int, drain DrainFunc) (int, error)
+
 	ListAudit(ctx context.Context, f AuditFilter, p Page) ([]contract.AuditEntry, error)
 	ListEvents(ctx context.Context, tenantID string, f EventFilter, p Page) (EventPage, error)
 
@@ -176,13 +289,27 @@ type Coded interface {
 }
 
 // Data is the fast store as the admin routes need it: the balance hashes a
-// new tenant starts with, the propagation of a committed write, and the key
-// that signs cursors. internal/store's Store satisfies it.
+// new tenant starts with, the propagation of a committed write, the key that
+// signs cursors, the balance reads a re-anchor decides from, and apply-now's
+// confirmation tokens. internal/store's Store satisfies it.
 type Data interface {
 	Provision(ctx context.Context, tenantID string, openings []store.Opening) error
 	Publish(ctx context.Context, tenantIDs []string) (int64, error)
 	CursorKey(ctx context.Context) ([]byte, error)
 	Ping(ctx context.Context) error
+	ReadBalances(ctx context.Context, tenantID string, features []string) ([]store.Stored, error)
+	PutConfirmation(ctx context.Context, token string, c store.Confirmation, ttl time.Duration) error
+	TakeConfirmation(ctx context.Context, token string) (store.Confirmation, bool, error)
+}
+
+// Scripts are the control-plane scripts (IP-10, D8). internal/script's Runner
+// satisfies it.
+type Scripts interface {
+	Grant(ctx context.Context, req script.Request) (script.AdminOutcome, error)
+	Set(ctx context.Context, req script.Request) (script.AdminOutcome, error)
+	Relimit(ctx context.Context, req script.Request) (script.AdminOutcome, error)
+	Reanchor(ctx context.Context, w script.Rewrite) (script.AdminOutcome, error)
+	Rollover(ctx context.Context, w script.Rewrite) (script.AdminOutcome, error)
 }
 
 // KeyCache is the serving instance's key cache. A key issued or revoked is
@@ -205,6 +332,18 @@ type Options struct {
 	// best-effort: the refresh tick converges a missed publish.
 	PublishTimeout time.Duration
 	Status         StatusInfo
+	// Scripts and Events serve the routes that move a balance (IP-10): the
+	// control-plane scripts, and the ledger's sink, which is the no-op sink
+	// until IP-12.
+	Scripts Scripts
+	Events  dataplane.EventSink
+	// ConfirmThreshold is QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD and
+	// ConfirmationTTL QUOTACORE_CONFIRMATION_TTL (DR-046).
+	ConfirmThreshold int64
+	ConfirmationTTL  time.Duration
+	// Now is the drain's clock; a request's own instant is its accepted
+	// time.
+	Now func() time.Time
 }
 
 // StatusInfo is what GET /v1/admin/status reports beyond its probes.
@@ -227,6 +366,11 @@ type Service struct {
 	pubTimeout  time.Duration
 	status      StatusInfo
 	sign        signer
+	scripts     Scripts
+	events      dataplane.EventSink
+	threshold   int64
+	cnfTTL      time.Duration
+	now         func() time.Time
 }
 
 func New(opts Options) *Service {
@@ -238,6 +382,23 @@ func New(opts Options) *Service {
 		metadataMax: opts.MetadataMax,
 		pubTimeout:  opts.PublishTimeout,
 		status:      opts.Status,
+		scripts:     opts.Scripts,
+		events:      opts.Events,
+		threshold:   opts.ConfirmThreshold,
+		cnfTTL:      opts.ConfirmationTTL,
+		now:         opts.Now,
+	}
+	if s.events == nil {
+		s.events = dataplane.NopSink{}
+	}
+	if s.threshold <= 0 {
+		s.threshold = 50
+	}
+	if s.cnfTTL <= 0 {
+		s.cnfTTL = 15 * time.Minute
+	}
+	if s.now == nil {
+		s.now = time.Now
 	}
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
@@ -254,9 +415,9 @@ func New(opts Options) *Service {
 	return s
 }
 
-// Handlers maps each operation IP-09 serves to its handler, by operationId.
-// An admin operation missing from this map is IP-10's, and the router keeps
-// answering it with a bare 404 until IP-10 serves it.
+// Handlers maps every admin operation to its handler, by operationId: IP-09's
+// resource surface and IP-10's eight operations that move a balance or a
+// boundary.
 func (s *Service) Handlers() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
 		"listKeys":  s.listKeys,
@@ -273,6 +434,9 @@ func (s *Service) Handlers() map[string]http.HandlerFunc {
 		"listPlans":   s.listPlans,
 		"createPlan":  s.createPlan,
 		"getPlan":     s.getPlan,
+		"updatePlan":  s.updatePlan,
+		"applyPlan":   s.applyPlan,
+		"planImpact":  s.planImpact,
 		"archivePlan": s.archivePlan,
 		"deletePlan":  s.deletePlan,
 
@@ -283,6 +447,12 @@ func (s *Service) Handlers() map[string]http.HandlerFunc {
 		"suspendTenant": s.suspendTenant,
 		"resumeTenant":  s.resumeTenant,
 		"deleteTenant":  s.deleteTenant,
+
+		"grantTenant":          s.grant,
+		"setTenantBalance":     s.setBalance,
+		"forceRollover":        s.forceRollover,
+		"upsertTenantOverride": s.upsertOverride,
+		"clearTenantOverride":  s.clearOverride,
 
 		"listUsageEvents": s.listEvents,
 		"listAudit":       s.listAudit,
