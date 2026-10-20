@@ -7,11 +7,11 @@ import (
 )
 
 var regexMap = map[string]ogenregex.Regexp{
+	"^(?:UTC|[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+)$":                                                   ogenregex.MustCompile("^(?:UTC|[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+)$"),
 	"^(?:[0-9A-HJKMNP-TV-Z]{26}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$": ogenregex.MustCompile("^(?:[0-9A-HJKMNP-TV-Z]{26}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"),
 	"^[0-9a-f]{8,64}$":                                         ogenregex.MustCompile("^[0-9a-f]{8,64}$"),
 	"^[A-Za-z0-9._:-]{1,128}$":                                 ogenregex.MustCompile("^[A-Za-z0-9._:-]{1,128}$"),
 	"^[A-Za-z0-9._:-]{8,255}$":                                 ogenregex.MustCompile("^[A-Za-z0-9._:-]{8,255}$"),
-	"^[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+$":           ogenregex.MustCompile("^[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+$"),
 	"^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$":                 ogenregex.MustCompile("^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$"),
 	"^[a-z0-9][a-z0-9_-]{0,62}$":                               ogenregex.MustCompile("^[a-z0-9][a-z0-9_-]{0,62}$"),
 	"^[a-z][a-z0-9_]{0,31}$":                                   ogenregex.MustCompile("^[a-z][a-z0-9_]{0,31}$"),

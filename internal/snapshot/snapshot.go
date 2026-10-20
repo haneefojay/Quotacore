@@ -174,6 +174,35 @@ func (s *Snapshot) Close() { s.stopOnce.Do(func() { close(s.stop) }) }
 // teardown.
 func (s *Snapshot) Wait() { <-s.stopped }
 
+// Stats is what GET /v1/admin/status reports of the snapshot (IP-09): the
+// tenants it holds, the distinct features they name, the tenant-feature
+// entries, and the approximate bytes the eviction loop counts.
+type Stats struct {
+	Tenants, Features, Entries, Bytes int64
+}
+
+// Stats takes the read lock once and counts; it is off the request path.
+func (s *Snapshot) Stats() Stats {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	st := Stats{Tenants: int64(s.cache.len()), Bytes: s.cache.mem()}
+	features := map[string]struct{}{}
+	for _, e := range s.cache.byID {
+		t := e.Value.(*cacheEntry).tenant
+		if t.Plan != nil {
+			for f := range t.Plan.Entitlements {
+				features[f] = struct{}{}
+			}
+			st.Entries += int64(len(t.Plan.Entitlements))
+		}
+		for f := range t.Overrides {
+			features[f] = struct{}{}
+		}
+	}
+	st.Features = int64(len(features))
+	return st
+}
+
 // HitRatio returns hits over hits-plus-misses, the scrape-time value of
 // quotacore_config_cache_hit_ratio.
 func (s *Snapshot) HitRatio() float64 {

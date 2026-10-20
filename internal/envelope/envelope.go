@@ -35,6 +35,9 @@ type Exchange struct {
 	// KeyPrefix is the authenticated key's public prefix, the one key
 	// identifier a log or a label may carry (DR-043).
 	KeyPrefix string
+	// KeyID and KeyName are the authenticated key's id and name, which an
+	// admin route records as the actor of its audit row (DR-041).
+	KeyID, KeyName string
 
 	attrs   []slog.Attr
 	onError func(code contract.ErrorCode, endpoint string)

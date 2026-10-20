@@ -91,16 +91,66 @@ func TestLoadRefusesAnUnacknowledgedBootstrapKey(t *testing.T) {
 	}
 }
 
+// wellFormedAdminKey is an admin key in ADR-0018's format, minted for the
+// tests and never valid anywhere else.
+const wellFormedAdminKey = "qc_admin_0123456789abcdef.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
 func TestLoadAcceptsAnAcknowledgedBootstrapKey(t *testing.T) {
 	e := baseEnv()
-	e["QUOTACORE_BOOTSTRAP_ADMIN_KEY"] = "qc_admin_abc.def"
+	e["QUOTACORE_BOOTSTRAP_ADMIN_KEY"] = wellFormedAdminKey
 	e["QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK"] = "yes"
 	c, err := Load(env(e))
 	if err != nil {
 		t.Fatalf("Load refused an acknowledged key: %v", err)
 	}
-	if c.BootstrapAdminKey != "qc_admin_abc.def" || !c.BootstrapKeyIsAcked {
+	if c.BootstrapAdminKey != wellFormedAdminKey || !c.BootstrapKeyIsAcked {
 		t.Errorf("bootstrap key not carried through: %+v", c)
+	}
+}
+
+// TestAMalformedBootstrapKeyRefusesToStart is part of IP-09 DoD 7: a key that
+// is not an admin key in the token format refuses start, acknowledged or not,
+// and the refusal never repeats the value.
+func TestAMalformedBootstrapKeyRefusesToStart(t *testing.T) {
+	for _, bad := range []string{
+		"qc_admin_abc.def",
+		"qc_runtime_0123456789abcdef.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"correct horse battery staple",
+	} {
+		e := baseEnv()
+		e["QUOTACORE_BOOTSTRAP_ADMIN_KEY"] = bad
+		e["QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK"] = "yes"
+		_, err := Load(env(e))
+		if err == nil {
+			t.Errorf("Load accepted a malformed bootstrap key")
+			continue
+		}
+		if strings.Contains(err.Error(), bad) {
+			t.Errorf("the refusal repeats the key: %v", err)
+		}
+	}
+}
+
+func TestLoadReadsTheAdminLimitAndTrustedProxies(t *testing.T) {
+	c, err := Load(env(baseEnv()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.RateLimitAdminRPM != 60 || len(c.TrustedProxies) != 0 {
+		t.Errorf("defaults = %v rpm, %v proxies; want 60 and none", c.RateLimitAdminRPM, c.TrustedProxies)
+	}
+	e := baseEnv()
+	e["QUOTACORE_RATELIMIT_ADMIN_RPM"] = "120"
+	e["QUOTACORE_TRUSTED_PROXIES"] = "10.0.0.0/8, 192.168.1.7"
+	if c, err = Load(env(e)); err != nil {
+		t.Fatal(err)
+	}
+	if c.RateLimitAdminRPM != 120 || len(c.TrustedProxies) != 2 {
+		t.Errorf("got %v rpm and %v; want 120 and two proxies", c.RateLimitAdminRPM, c.TrustedProxies)
+	}
+	e["QUOTACORE_TRUSTED_PROXIES"] = "not-a-network"
+	if _, err := Load(env(e)); err == nil {
+		t.Error("Load accepted a trusted proxy that is not an address or a network")
 	}
 }
 

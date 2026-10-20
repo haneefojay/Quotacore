@@ -68,7 +68,13 @@ import (
 // code from the contract. `internal/dataplane` is the four routes: it decides
 // which refusal a request gets before the script and maps what the script
 // decided, but the decision about a balance is still the script's alone, so
-// the symbol rules below hold for it unchanged. The name of this test is kept
+// the symbol rules below hold for it unchanged.
+//
+// `internal/admin` is here because IP-09 owns it: the control-plane routes,
+// which create, archive, suspend and delete configuration and keys. It writes
+// the opening balance of a new tenant from the window the engine computes and
+// decides nothing about a request's balance, so the symbol rules hold for it
+// unchanged, and it reaches Postgres only through internal/db. The name of this test is kept
 // for its history; what it guards now is that the package set is exactly the
 // set the phases own, and that the calendar and the script stay single.
 func TestNoProductBehaviour(t *testing.T) {
@@ -80,6 +86,7 @@ func TestNoProductBehaviour(t *testing.T) {
 
 	wantPackages := map[string]bool{
 		"api":                    true,
+		"internal/admin":         true,
 		"cmd/quotacore":          true,
 		"internal/api":           true,
 		"internal/auth":          true,
