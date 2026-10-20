@@ -290,7 +290,9 @@ SELECT $1, id, 0, -40, 60, 'api', 'consumed', 'r-1' FROM features WHERE key = $2
 	beforeLedger, before := ledger(), s.state(tn, f)
 	fp := "/v1/admin/features/" + f
 	mustStatus(t, s.adminDo(http.MethodPost, fp+"/archive", `{"version":`+fmt.Sprint(s.version(fp))+`,"reason":"replaced"}`), http.StatusOK)
-	until(t, "feature_archived", func() response { return s.consume(s.runtime, f, 1, tn.External, newKey()) })
+	// The probe is a check: a consume that lands before the invalidation
+	// does would itself change the hash this test compares.
+	until(t, "feature_archived", func() response { return s.check(f, tn.External) })
 	if after := s.state(tn, f); !reflect.DeepEqual(before, after) {
 		t.Fatalf("archiving changed the hash:\nbefore %+v\nafter  %+v", before, after)
 	}

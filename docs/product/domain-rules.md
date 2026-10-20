@@ -133,12 +133,20 @@ Editing a plan's entitlement changes the limit that applies to new assignments i
 to existing tenants at their next boundary. It does not change any current balance.
 `POST /v1/admin/plans/{plan_id}/apply` overrides this by re-anchoring and re-limiting every
 assigned tenant immediately, and is audited with a required reason. (ADR-0006)
+(Amended 2026-10-20, `IP-10`: a limit is what this rule moves at the boundary. An interval edit
+and a feature added to the plan reach an existing tenant at its next re-anchor, and a removed
+feature stays until the end of the window the edit landed in, because each tenant keeps the
+cadence and feature set it was anchored on; see E-3 and E-4 in
+[state-machines.md](state-machines.md#4-plan-entitlement).)
 *Verified by:* T-05, which asserts that a limit change never moves a boundary and never rewrites an open cycle.
 
 ### DR-015 — An override can never exceed what the plan allows unless it is a grant
 A tenant override may raise a limit above the plan's limit. This is intentional and is the
 mechanism for "custom limits for an enterprise customer". It cannot, however, grant a feature
 the plan does not include (DR-012).
+(Amended 2026-10-20, `IP-10`: the title reads as a cap on the limit, and the body is the rule. An
+override above the plan's limit is accepted; what it can never do is add a feature, so an override
+on a feature the plan later drops is inert from the end of that feature's window.)
 *Verified by:* T-04.
 
 ### DR-016 — Archived features are preserved, not deleted
@@ -161,7 +169,9 @@ the number of assigned tenants. A guard that engages on blast radius rather than
 is the only one that catches the accident, because the operator's intent is exactly what is wrong in
 the accident.
 *Consequence:* a token is consumed on use, is bound to the plan `resource_version` it was issued
-against, and expires on `QUOTACORE_CONFIRMATION_TTL`. A plan edited between issue and use invalidates
+against, and expires on `QUOTACORE_CONFIRMATION_TTL`. (Amended 2026-10-20, `IP-10`: it is also
+bound to the request's `reason`, and it is honoured only while the plan's count has not grown past
+the count it was issued against, because tenants can join a plan without moving its version.) A plan edited between issue and use invalidates
 the token, which forces a fresh count rather than applying a stale number. The threshold is a
 configuration key rather than a constant so that the guard can be moved without a code change; its
 default is an operator-workflow judgement, sourced and dated in
@@ -189,6 +199,11 @@ explicitly, to suspend consumption for an abusive customer, and the system honou
 subsequent `consume` is denied until the next boundary or an admin correction.
 *Consequence:* a negative balance is a deliberate administrative state, distinguishable in the
 event history by `source = admin`.
+(Amended 2026-10-20, `IP-10`: v0.1 does not represent a negative balance. The contract's amounts
+are non-negative and every script reads a negative stored balance as a damaged hash, so `set`
+takes `0` to `limit + bonus`, and setting `0` or suspending the tenant is how v0.1 stops an
+abusive customer until the boundary. Whether to widen it is
+[Q-23](assumptions-and-open-questions.md#2-open-questions).)
 *Verified by:* T-01, for the atomic refusal of an over-deduction, and T-08 for the denial that follows an administratively negative balance.
 
 ### DR-019 — The allowance ceiling is `limit + bonus`
@@ -470,6 +485,9 @@ balance hash encountered on the request path is **not** an initialisation opport
 fault: the service returns `503 service_unavailable`, increments
 `quotacore_balance_key_missing_total`, and queues the tenant-feature for the ledger rebuild in the
 recovery runbook.
+(Amended 2026-10-20, `IP-10`: "its plan assignment changes" includes an apply-now, which is the
+same moment for every tenant on the plan, and a force-rollover refills a hash that exists. All
+three are written by the control plane after the change commits, never by a request.)
 *Consequence:* a mid-cycle loss of the fast store degrades enforcement for the affected
 tenant-features to fail-closed until the rebuild runs. It never restores a full allowance, because
 a full allowance is indistinguishable from free service, and the data store's eviction policy is

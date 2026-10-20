@@ -100,6 +100,12 @@ Run over every state in a generated state space: all combinations of limit, bonu
 within range, with every operation applied in every order. This is a property test, and it is the
 one that most reliably finds an ordering bug in a script (see section 3).
 
+> **Amended 2026-10-20 (`IP-10`).** The grant line contradicted DR-020: a grant raises the bonus
+> with the balance, so a grant of 1 here makes `balance 101`, `bonus 1`, under a ceiling of 101,
+> and holds the invariant by construction. The ceiling a grant can break is `2^53 − 1` (DR-022),
+> and the admin operation the invariant refuses is a `set` above `limit + bonus`: with the state
+> above, a `set` of 101 is `409 grant_exceeds_ceiling` and the balance is still 100.
+
 ### T-05 — Monotonic rollover
 
 ```
@@ -126,6 +132,13 @@ And   the cycle_index jumped by 3, not by 1
 
 Parametrised over 1 hour, 1 day, 31 days, 97 days, 400 days and 4 years, because a rollover bug
 that only appears after a long idle period is the kind that is discovered in an incident.
+
+> **Amended 2026-10-20 (`IP-10`).** A second half covers a plan applied across an outage. A plan
+> edit followed by each idle period above produces one transition, to the current window, at the
+> new limit. An apply-now and a plan change committed while the fast store is unreachable leave
+> pending re-anchors; no tenant is served a fresh allowance before its drain, no pending row is
+> lost, two instances draining together re-anchor a tenant once, a restart or a second drain
+> changes nothing, and no tenant is left on its old anchor once the store returns.
 
 ### T-07 — Boundary table
 

@@ -175,6 +175,11 @@ func newHarness(t *testing.T, opts ...func(*RouterOptions)) *harness {
 				"api.requests":      {Limit: 50, Interval: cycle.Never},
 				"old.feature":       {Limit: 10, Interval: cycle.Monthly, Archived: true},
 			}},
+			Pins: map[string]snapshot.Pin{
+				"llm.tokens.output": {Interval: cycle.Monthly},
+				"api.requests":      {Interval: cycle.Never},
+				"old.feature":       {Interval: cycle.Monthly, Archived: true},
+			},
 		},
 		"paused": {
 			ID: "1192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b", ExternalID: "paused", State: "suspended", Timezone: "UTC",
@@ -182,6 +187,7 @@ func newHarness(t *testing.T, opts ...func(*RouterOptions)) *harness {
 			Plan: &snapshot.LoadedPlan{ID: "plan-basic", Key: "basic", Entitlements: map[string]snapshot.Entitlement{
 				"llm.tokens.output": {Limit: 1000, Interval: cycle.Monthly},
 			}},
+			Pins: map[string]snapshot.Pin{"llm.tokens.output": {Interval: cycle.Monthly}},
 		},
 	}}
 	snap := snapshot.New(snapshot.Options{Loader: tenants, MissRate: 1000})

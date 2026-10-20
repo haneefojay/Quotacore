@@ -135,6 +135,11 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		Logger:         log,
 		MetadataMax:    cfg.MetadataMaxBytes,
 		PublishTimeout: cfg.ControlPlaneTimeout,
+		Scripts:        runner,
+		Events:         events,
+		// The confirmation threshold and the token's lifetime (DR-046).
+		ConfirmThreshold: cfg.PlanApplyConfirmThreshold,
+		ConfirmationTTL:  cfg.ConfirmationTTL,
 		Status: admin.StatusInfo{
 			Version: buildVersion,
 			Commit:  buildCommit(),
@@ -145,6 +150,10 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 			},
 		},
 	})
+	// Pending re-anchors are finished at start and on every refresh tick, so
+	// one a request could not finish inline, or an instance that stopped
+	// mid-drain, is finished by whichever instance reaches it first (D2).
+	go control.RunDrain(ctx, cfg.ConfigRefreshInterval)
 	handler := api.NewRouter(api.RouterOptions{
 		Ready:          ready,
 		DataPlane:      service,
