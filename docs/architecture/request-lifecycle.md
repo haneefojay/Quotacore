@@ -123,7 +123,8 @@ in this order and without yielding:
    plan-assignment time, and at no other moment (DR-045, NFR-D7).
 3. **Cycle transition.** The four-step transition in
    [cycle-engine.md](cycle-engine.md#5-the-transition), including the monotonicity guard, the reset
-   to `limit`, `bonus = 0`, and the `EXPIREAT` at `window_end + 24h`.
+   to `limit`, `bonus = 0`, and a `PERSIST`, because a balance hash never expires (INV-C3; amended
+   2026-10-20, this was an `EXPIREAT` at `window_end + 24h`).
 4. **Denial check.** `balance < amount` → return a denial carrying the balance, limit, bonus and
    cycle end. No write, no event (DR-025, DR-017).
 5. **Deduct.** `balance -= amount`, using `HINCRBY` so the arithmetic cannot overflow silently.

@@ -110,8 +110,8 @@ local function transition()
   }
   if now < from or index > target or (index < target and (until_ == nil or now < until_)) then
     -- The caller is behind the stored state. The state is left exactly as it
-    -- stands and the call proceeds against it, so the expiry below still
-    -- describes the window that is really stored (INV-C1, C-3, DR-004).
+    -- stands and the call proceeds against it, so the answer describes the
+    -- window that is really stored (INV-C1, C-3, DR-004).
     state.verdict = 'stale'
   elseif index == target then
     state.verdict = 'current'
@@ -133,17 +133,12 @@ local function transition()
                'cycle_index', num(target), 'window_start', num(start), 'window_end', end_arg)
   end
 
-  -- The key lives until 24 hours after its window closes, which is the
-  -- idempotency window, and for a window that never closes it never expires
-  -- (data-model.md section 6, INV-X5, INV-X6). Set on every call rather than
-  -- on rollover alone, because a hash written by the control plane carries no
-  -- expiry, and repeating the same value costs one command inside the one
-  -- round trip the request is allowed.
-  if state.finish == nil then
-    redis.call('PERSIST', KEY)
-  else
-    redis.call('EXPIREAT', KEY, math.floor(state.finish / 1000) + DAY)
-  end
+  -- A balance hash never expires (INV-C3, as amended 2026-10-20). An expiry
+  -- at window_end + 24h removed an idle tenant's hash a day after its window
+  -- closed, and nothing on the request path may write one again (DR-045), so
+  -- the tenant was refused until a rebuild. PERSIST runs on every call, so a
+  -- hash an earlier binary wrote with an expiry loses it at its next request.
+  redis.call('PERSIST', KEY)
   return state, nil
 end
 -- END transition

@@ -384,12 +384,7 @@ func (s *stack) seed(tn tenant, feature string, st stored) {
 	pipe.Del(ctx, key)
 	pipe.HSet(ctx, key, "balance", st.Balance, "limit", st.Limit, "bonus", st.Bonus, "cycle_index", st.Index,
 		"window_start", st.Start.UnixMilli(), "window_end", end)
-	// The scripts' rule is window_end + 24h. A test that seeds a window
-	// which ended longer ago than that, to read it back verbatim, leaves the
-	// key without an expiry rather than have the store delete it at once.
-	if st.End != nil && st.End.Add(24*time.Hour).After(time.Now()) {
-		pipe.ExpireAt(ctx, key, st.End.Add(24*time.Hour))
-	}
+	// A balance hash never expires (INV-C3), so the seed writes none.
 	if _, err := pipe.Exec(ctx); err != nil {
 		s.t.Fatal(err)
 	}
