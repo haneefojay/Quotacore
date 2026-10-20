@@ -23,13 +23,13 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `COMPLETE`, started and closed 2026-10-19 |
 | `IP-08` | Control-plane schema and migrations | `IP-02` | `COMPLETE`, 2026-10-19 |
 | `IP-09` | Control-plane API and API keys | `IP-08` | `COMPLETE`, opened 2026-10-19, closed 2026-10-20 |
-| `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `NOT STARTED` |
+| `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `BLOCKED` |
 | `IP-12` | Usage ledger, writer and archiver | `IP-08` | `NOT STARTED` |
 | `IP-13` | Observability | `IP-07` | `NOT STARTED` |
 | `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `BLOCKED` |
 | `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `BLOCKED` |
-| `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `BLOCKED` |
+| `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `BLOCKED` on `IP-11`, `IP-15` |
 
 ---
 
@@ -1230,8 +1230,9 @@ unrecoverable or unaudited.
 
 ## IP-10 — Plan lifecycle and cycle-boundary semantics
 
-**Status** `NOT STARTED`. `IP-09` closed on 2026-10-20, and the `Q-01`, `Q-02`, `Q-04` and `Q-14`
-answers from `IP-00` are accepted, so nothing gates this phase.
+**Status** `COMPLETE`, opened and closed 2026-10-20. `IP-09` closed on 2026-10-20, and the `Q-01`,
+`Q-02`, `Q-04` and `Q-14` answers from `IP-00` are accepted, so nothing gated this phase. All 9 DoD
+items are met, each closed by a test in the evidence table below.
 
 **Objective.** The operations that change what a tenant is entitled to, each with the cycle
 semantics the specification fixes, and each answered by the rules `IP-00` produced.
@@ -1269,6 +1270,9 @@ semantics the specification fixes, and each answered by the rules `IP-00` produc
    cycle.
 4. An override can never exceed the plan allowance unless it is a grant, and the step ordering that
    makes that true is asserted (DR-015, INV-TE1).
+   > **Amended 2026-10-20 (`IP-10`).** The item echoes DR-015's title, and it is read by the rule's
+   > body, which T-04 and INV-TE1 test: an override may set a limit above the plan's, and what it can
+   > never do is give a tenant a feature its plan does not. The rule is not edited.
 5. `apply-now` re-anchors, requires a reason, is audited, and above the tenant count the `Q-04`
    answer sets, returns `409 confirmation_required` with a token rather than re-anchoring
    everything at once.
@@ -1279,6 +1283,64 @@ semantics the specification fixes, and each answered by the rules `IP-00` produc
 8. Archiving a plan alters no assigned tenant's balance or cycle (INV-P1).
 9. `T-06` passes for a plan applied across a service outage, so no tenant's transition is replayed
    or skipped.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The rows
+marked `(integration)` need real valkey and Postgres 16, live in `cmd/quotacore`, and run in CI's
+`service` job. Windows are moved as `IP-07`'s boundary tests move them: a tenant is seeded with an
+anchor in the past and a stored window, so the real clock sits where the test needs it.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestPlanEditLandsAtEachTenantsOwnBoundary` (integration), with `IP-05`'s `TestT05TheTransitionIsMonotonic` unchanged | An edit changing any field or the expiry of an assigned tenant's hash; three tenants anchored across a month taking the new limit anywhere but at their own boundary; an interval edit moving an existing tenant's boundary; or a tenant created after the edit not getting the new limit and interval at once (DR-014, T-05, E-2, E-3) |
+| 2 | `TestAPlanChangeIsAHardReset` (integration) | After a change from a 1000-limit plan at balance 300 to a 500-limit plan: a balance other than 500, a window not starting at the change, a bonus left, an anchor that did not move forward, an override dropped, no `tenant.change_plan` audit row, no `plan_changed` event of +200 handed to the sink, or a second instance still serving a feature only the old plan had after NFR-D3's second (DR-013, UC-06, Q-01, Q-02, INV-T3) |
+| 3 | `TestAGrantIsCycleScoped` (integration) | A grant's bonus or balance surviving a plan change, or the next natural boundary (DR-020, Q-01, INV-C5) |
+| 4 | `TestAnOverrideCannotAddAFeature` (integration), `TestResolutionPutsMembershipBeforeTheOverride` | An override accepted for a feature outside the plan; one above the plan's limit refused; one on a feature the plan later drops enforcing past the retirement boundary instead of `403 feature_not_in_plan`. The unit test runs the resolution over every combination of archived, suspended, pinned, retired, overridden and listed (DR-015, INV-TE1) |
+| 5 | `TestApplyNowReanchorsAndIsAudited`, `TestT12WideApplyNeedsAConfirmation` (integration) | An apply without a reason accepted; a tenant not re-anchored or re-anchored twice; no `plan.apply_now` row with the reason; and every T-12 case: a `409` that re-anchored anything or wrote an audit row, a count or earliest end that is not the computed one, a confirmed apply refused, a reused, expired, other-plan, other-reason or old-version token honoured, a token honoured after the count grew, and a plan with exactly the threshold refused (DR-046, P-3, INV-P2, INV-P4) |
+| 6 | `TestImpactChangesNothing` (integration) | Twelve tenants over three months not answering 12 and the earliest of their boundaries; a `never`-only plan not answering null; or any change to the plan version, an anchor, a pin, the audit count or the fast store's keys, a `qc:admin:cnf:*` key included (UC-19, Q-14) |
+| 7 | `TestAbsentIsNotZero` (integration) | An absent feature answered with anything but `403 feature_not_in_plan` or listed by the balance route; a `0`-limit feature answered with anything but `429 quota_exceeded` and `balance: 0` on consume, `allowed: false` on check, or missing from the balance route; both again after a feature is added to the plan (absent for an existing tenant, present for a new one) and after one is removed (present until the boundary, absent after) (DR-012, E-1, E-4, INV-E1) |
+| 8 | `TestArchivingAPlanChangesNoTenant` (integration) | An archive changing an assigned tenant's hash, expiry, anchor or pins, a tenant on the archived plan refused on the data plane, or a plan change to the archived plan accepted (INV-P1, P-4) |
+| 9 | `TestT06PlanAppliedAcrossAnOutage` (integration) | An edit followed by an idle of 1 hour, 1 day, 31 days, 97 days, 400 days or 4 years producing anything but one transition, to the current window, at the new limit; and for a plan change and an apply-now committed while the fast store is unreachable: a hash moved before the store returns, a pending row lost, a tenant re-anchored twice when two instances drain together, or a restart changing the drained state (DR-009) |
+| — | `TestAnAdminKeyReachesEveryAdminRoute` (integration) | An admin key refused on any of the 32 admin operations, or any of them answering a bare `404` (`IP-09`'s scope amendment, `IP-07` item 8) |
+| — | `TestAdminEndpointErrorMatrix`, `TestT08EveryRefusalChangesNothing`, `TestEndpointErrorMatrix` (integration) | A catalogue code no request provokes, `confirmation_required`, `grant_exceeds_ceiling` and `reset_not_supported` included; a refusal with a code its row does not list; or a refusal that changes a catalogue row, a tenant, its pins or pending re-anchors, a key, the audit log, or any of the tenants' keys in the fast store. The confirmation token is the one write a refusal makes. `ip10Ops` and `ip10Only` are deleted |
+| — | `TestTheSixScriptsShareOneTransitionBlock`, `TestTheControlScriptsKeepTheSourceRules`, `TestTheControlScriptsReadTheArgumentsTheRunnerSends`, `TestLoadNamesAllEightScripts` | A control-plane script that rolls a window differently from consume (INV-C2), calls outside the data plane's command list, reads fewer arguments than its runner sends, or is not loaded |
+| — | `TestCacheSharesInternedPins`, `TestLoadReadsThePlanLifecycleKeys` | Each cached tenant holding its own copy of a pin set its plan's tenants share; the threshold or the token's lifetime not read, or a refresh interval of an hour or more accepted |
+
+> **Amended 2026-10-20 — what this phase hands on.** The `granted`, `set`, `plan_changed` and
+> `force_rolled_over` events are handed to the sink here; the queue and the writer are `IP-12`'s, as
+> for consume and refund. A re-anchor restarts the index at 0 and force-rollover can lower it, so a
+> cycle is identified by the anchor and the index together, which the reconciler must know
+> (`IP-11`, `IP-12`). The drain logs each chunk; a gauge of pending re-anchors and its alert are
+> `IP-13`'s. `quotacore apply`, `impact` and the override commands wrap these routes in `IP-14`. An
+> idempotency key on grant, a negative balance (`Q-23`) and an impact that previews an unsaved edit
+> are recorded with defaults and are not v0.1.
+
+Seven things are recorded here because the phase surfaced them.
+
+- **A re-anchor that finds no hash hands over no event.** The rewrite writes the new window, but
+  with nothing stored there is no balance to discard, so no `plan_changed` event is enqueued and
+  nothing is logged.
+- **The events of a re-anchor are enqueued before the pending row's delete commits.** A rollback
+  after the rewrite leaves a row whose next drain finds every hash already under the new anchor and
+  hands over nothing a second time.
+- **A retired pin whose window has closed is deleted** when the plan takes its feature back, or at
+  the tenant's next re-anchor; while it stands it holds its feature against deletion as an
+  entitlement does.
+- **S3's nudge off an old boundary was dropped.** A new anchor is the request's instant or the old
+  one plus a millisecond, whichever is later. The drain's guard matches a stored window by its index
+  and its start together, and an anchor that moved forward puts no index's boundary where the old
+  anchor put the same index's, so a new anchor that lands on an old boundary is not mistaken for
+  one already written.
+- **An immediate override rewrites the hash's limit and emits no ledger event**, because no balance
+  moves; the limit is read back from the audit row.
+- **Impact's `503` is the control plane's only.** It reads Postgres and nothing else, so its
+  matrix row lists `control_plane_unavailable` and no longer `service_unavailable`, and it refuses a
+  query parameter rather than read one as a preview it does not compute.
+- **No resolution benchmark exists**, so the plan's comparison of the request path against `dev`
+  was not run; the resolution adds a map read per request and no I/O.
+
+Found in passing and not this phase's, left unchanged and named in the PR: no v0.1 phase builds the
+rollover worker (`IP-09` recorded it), so an idle tenant still rolls only on its next request, and
+the re-anchor drain is not that worker and emits no rollover event.
 
 **Exit criteria.** An operator can change an entitlement and can predict, before committing, which
 tenants it affects.

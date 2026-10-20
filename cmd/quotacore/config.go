@@ -44,7 +44,16 @@ type Config struct {
 	// proxies whose X-Forwarded-For it believes.
 	RateLimitAdminRPM float64
 	TrustedProxies    admin.Proxies
+
+	// The IP-10 keys: apply-now's confirmation handshake (DR-046, S11).
+	PlanApplyConfirmThreshold int64
+	ConfirmationTTL           time.Duration
 }
+
+// maxRefreshInterval bounds QUOTACORE_CONFIG_REFRESH_INTERVAL. A snapshot can
+// be stale for at most one interval, and a stale anchor must never outlive the
+// shortest first window under a new one, which is an hour (IP-10 D2, S11).
+const maxRefreshInterval = time.Hour
 
 type Getenv func(string) string
 
@@ -71,6 +80,9 @@ func Load(getenv Getenv) (Config, error) {
 		RateLimitRuntimeRPS:   2000,
 		RateLimitBurst:        4000,
 		RateLimiterMaxKeys:    100000,
+
+		PlanApplyConfirmThreshold: 50,
+		ConfirmationTTL:           900 * time.Second,
 	}
 	if c.DatabaseURL == "" {
 		return c, fmt.Errorf("QUOTACORE_DATABASE_URL is required and is not set")
@@ -97,7 +109,27 @@ func Load(getenv Getenv) (Config, error) {
 		if err != nil {
 			return c, err
 		}
+		if d >= maxRefreshInterval {
+			return c, fmt.Errorf("QUOTACORE_CONFIG_REFRESH_INTERVAL is %q, which is not below one hour; a snapshot that stale could serve a window of an anchor that has moved", raw)
+		}
 		c.ConfigRefreshInterval = d
+	}
+	if raw := getenv("QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD"); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 1 {
+			return c, fmt.Errorf("QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD is %q, which is not a positive integer", raw)
+		}
+		c.PlanApplyConfirmThreshold = n
+	}
+	if raw := getenv("QUOTACORE_CONFIRMATION_TTL"); raw != "" {
+		d, err := parseDuration(raw, "QUOTACORE_CONFIRMATION_TTL")
+		if err != nil {
+			return c, err
+		}
+		if d < time.Second {
+			return c, fmt.Errorf("QUOTACORE_CONFIRMATION_TTL is %q, which is shorter than a second", raw)
+		}
+		c.ConfirmationTTL = d
 	}
 	if raw := getenv("QUOTACORE_CONFIG_REFRESH_MISS_RATE_LIMIT"); raw != "" {
 		r, err := strconv.ParseFloat(raw, 64)

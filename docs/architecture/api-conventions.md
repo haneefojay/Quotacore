@@ -360,7 +360,8 @@ rather than by operator intent (DR-046). The threshold is
       "earliest_cycle_end": "2026-10-01T00:00:00+02:00",
       "confirmation_token": "cnf_01J...",
       "threshold": 50,
-      "expires_in_s": 900
+      "expires_in_s": 900,
+      "plan_version": 7
     }
   }
 }
@@ -387,6 +388,13 @@ adding a second exactly-once mechanism to the same operation is a way to have tw
 whether it happened.
 *Answers:* [Q-04](../product/assumptions-and-open-questions.md#2-open-questions), which asked
 whether `apply-now` requires a confirmation token when more than N tenants are affected.
+
+> **Amended 2026-10-20 (`IP-10`).** The example gains `plan_version`, which the contract's example
+> carries and the response does. The token is also bound to the request's `reason`, and is
+> honoured only while the plan's count has not grown past the count it was issued against,
+> because tenants can join a plan without moving its version. A token that is not honoured is not
+> a separate refusal: the request is counted afresh, which above the threshold is a new `409`
+> with a new token. The `409` writes no audit row; the token in the fast store is its only write.
 
 ### 10.2 `GET /v1/admin/plans/{id}/impact`
 
@@ -415,6 +423,13 @@ meaningless against a version the operator has not read.
 `earliest_cycle_end` is the answer to "when does this land first", which is the question that
 actually decides whether an `apply-now` is safe to run on a plan whose tenants are on monthly
 cycles with scattered anchors.
+
+> **Amended 2026-10-20 (`IP-10`).** The example above is not the contract's `PlanImpact`, and the
+> contract wins on wire shape: the route takes no query parameter and answers `plan_key`,
+> `affected_tenants`, `earliest_cycle_end` and `exceeds_confirmation_threshold`. It previews an
+> apply-now of the plan **as saved**, over every non-deleted tenant on it, suspended ones
+> included; `earliest_cycle_end` is over their features that reset, in the zone of the tenant it
+> belongs to, and `null` when there is none. A preview of an unsaved edit is a later release.
 *Answers:* [Q-14](../product/assumptions-and-open-questions.md#2-open-questions), which asked
 whether an operator can see a plan edit's blast radius before committing it. This route is the
 answer, and the `409` above is the fallback for an operator who does not call it.

@@ -51,7 +51,7 @@ func (s *Service) metered(w http.ResponseWriter, r *http.Request, op kind) {
 		fail(*problem)
 		return
 	}
-	res := s.tenants.Decide(t, in.FeatureKey)
+	res := s.tenants.Decide(t, in.FeatureKey, at)
 	if problem := gate(res, in.FeatureKey); problem != nil {
 		fail(*problem)
 		return
@@ -169,16 +169,18 @@ func (s *Service) metered(w http.ResponseWriter, r *http.Request, op kind) {
 			s.metrics.ConsumeAmount.WithLabelValues(in.FeatureKey).Add(float64(in.Amount))
 		}
 		if in.Amount > 0 {
-			typ := "consumed"
+			typ, delta := "consumed", -in.Amount
 			if op == opRefund {
-				typ = "refunded"
+				typ, delta = "refunded", in.Amount
 			}
 			s.events.Enqueue(Event{
 				RequestID:  ex.RequestID,
 				TenantID:   t.ID,
 				FeatureKey: in.FeatureKey,
 				Type:       typ,
+				Source:     "api",
 				Amount:     in.Amount,
+				Delta:      delta,
 				Balance:    out.Balance,
 				CycleIndex: out.Index,
 				ClientKey:  in.ClientKey,

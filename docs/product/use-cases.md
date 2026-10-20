@@ -384,6 +384,14 @@ reason.
   the before window, the after window and the reason
 - *And* calling it twice produces one transition, because the tenant is already current
 
+> **Amended 2026-10-20 (`IP-10`).** Mid-cycle, "the same monotonic transition" does nothing, so
+> this flow's own acceptance cannot be met by it. A force-rollover refills the cycle the anchor
+> puts the current instant in: the balance becomes the effective limit and the bonus `0`,
+> whatever cycle was stored, which also repairs a stored index that is ahead (C-5's note). It
+> takes no new anchor: the anchor moves only on a plan change or an apply-now (DR-033), and the
+> contract has no field for one. Calling it twice refills twice; if nothing was spent in between
+> the second changes nothing and hands the ledger nothing (Q-22).
+
 ---
 
 ### UC-13 — Apply a tenant override
@@ -413,6 +421,13 @@ value; this precedence rule is stated once and used by every read path.
 - *Then* the new cycle's balance is `5000` and `GET /v1/balance` reports `limit: 5000`
 - *And* clearing the override returns the tenant to the plan's `1000` at the next boundary
 
+> **Amended 2026-10-20 (`IP-10`).** The acceptance above is `apply_at: next_boundary`. With
+> `immediate`, the default, a limit re-limits the open cycle and keeps what was spent: the
+> balance moves by the same difference as the limit, floored at zero. An **interval**, set or
+> cleared, reaches the tenant at its next re-anchor in either mode, because a live interval would
+> renumber the open cycle (E-3's note). An override survives a plan change (UC-06); one on a
+> feature the new plan lacks is inert until a plan includes it again.
+
 ---
 
 ### UC-14 — Grant bonus quota
@@ -440,6 +455,13 @@ history.
 - *And* a grant of `51` returns `409 grant_exceeds_ceiling` with no change
 - *And* after the next boundary both `balance` and `bonus` equal the new limit and `0`
   respectively
+
+> **Amended 2026-10-20 (`IP-10`).** "A grant of `51` returns `409`" contradicts DR-020, which this
+> flow's own step 2 follows: a grant raises the bonus with the balance, so a grant of `51` makes
+> `balance: 101`, `bonus: 101`, under a ceiling of `201`. `409 grant_exceeds_ceiling` is a grant
+> that would take the balance or the bonus past `2^53 − 1` (DR-022), and a `set` above
+> `limit + bonus`. A grant has no `version` and no `Idempotency-Key`, so a grant retried after a
+> timeout is a second grant, visible in the audit log.
 
 ---
 
@@ -577,6 +599,12 @@ no token is issued.
 - *Then* `affected_tenants` is `12`
 - *And* `cycle_end` is the earliest of the twelve boundaries
 - *And* the plan `resource_version`, and every tenant's anchor, is unchanged
+
+> **Amended 2026-10-20 (`IP-10`).** The route previews an apply-now of the plan **as saved**, so
+> step 1's edit is saved first; a preview of an unsaved edit is a later release. It counts every
+> non-deleted tenant on the plan, suspended ones included, and the earliest `cycle_end` is over
+> their features that reset, in the zone of the tenant it belongs to, or `null` when there is
+> none.
 
 ---
 

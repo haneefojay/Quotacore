@@ -15,6 +15,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -106,6 +107,18 @@ func ConfigVersionKey() string { return namespace + ":cfg:version" }
 // CursorKeyName is `qc:cfg:cursor_key`, the key admin list cursors are signed
 // with (IP-09).
 func CursorKeyName() string { return namespace + ":cfg:cursor_key" }
+
+// ConfirmationKey is `qc:admin:cnf:<token>`, a pending apply-now
+// confirmation (IP-10). The token is one this service minted, so only its
+// shape is checked: cnf_ and 26 Crockford base32 characters.
+func ConfirmationKey(token string) (string, error) {
+	if !confirmationShape.MatchString(token) {
+		return "", errors.New("store: a confirmation token is cnf_ and 26 Crockford base32 characters")
+	}
+	return namespace + ":admin:cnf:" + token, nil
+}
+
+var confirmationShape = regexp.MustCompile(`^cnf_[0-9A-HJKMNP-TV-Z]{26}$`)
 
 // ConfigInvalidateChannel is the pub/sub channel a committed control-plane
 // write publishes to (data-model.md section 3.4).

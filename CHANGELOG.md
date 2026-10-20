@@ -12,6 +12,30 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **Plan lifecycle and cycle-boundary semantics (`IP-10`).** `internal/admin` serves the eight
+  operations that move a balance or a boundary: the plan entitlement edit, apply-now, impact, a
+  tenant's plan change, grant, set, force-rollover, and setting and clearing an override. A plan edit
+  takes effect at each tenant's own next boundary; a plan change and an apply-now re-anchor the
+  tenant to a fresh cycle at the new limit and hand the discarded balance to the sink as a
+  `plan_changed` event. An apply-now above `QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD` (50) tenants
+  answers `409 confirmation_required` with a single-use token that lives for
+  `QUOTACORE_CONFIRMATION_TTL` (15m) and is honoured only for the same plan, version and reason while
+  the count has not grown. Impact answers the count and the earliest boundary and writes nothing.
+- Migration `00009`: `tenant_entitlement_pins`, the cadence and feature set each tenant was anchored
+  on, with a retired feature's limit and the end of the window it stays for; and `pending_reanchors`,
+  one row per tenant whose hashes still have to be rewritten after a committed plan change or apply.
+  The snapshot interns pin sets as it interns plans.
+- Five control-plane scripts beside the data plane's three: `grant`, `set` and `relimit` open with
+  consume's transition block byte for byte; `reanchor` overwrites a hash under a compare-and-set
+  guard; `rollover` refills the computed window.
+- The re-anchor drain: a request drains its own tenants inline, and every instance drains the rest
+  in chunks of 100 on start and on each refresh tick, so a change committed while the fast store is
+  away lands when it returns, once. `QUOTACORE_CONFIG_REFRESH_INTERVAL` is refused at an hour or
+  more, the bound the drain's stale-anchor argument needs.
+- Integration tests for the nine DoD items: the admin half of the endpoint × error matrix and of
+  T-08 over all 32 admin routes, with the tenants' fast-store keys added to what a refusal must leave
+  unchanged; `ip10Ops` and `ip10Only` are deleted, and no admin route answers a bare `404`.
+
 - **The control-plane API (`IP-09`).** `internal/admin` serves 24 admin operations: keys (create,
   list, revoke), features (list, create, get, update, archive, delete), plans (list, create, get,
   archive, delete), tenants (list, create, get, update, suspend, resume, delete), the audit and
@@ -217,6 +241,31 @@ exists, because a future implementer needs to know which statements are new.
   different `QUOTACORE_IDEMPOTENCY_TTL` — by a test on each boundary.
 
 ### Changed
+
+- **`IP-10` is `COMPLETE`**, opened 2026-10-20 after `IP-09` closed, before any file it owns
+  existed, and closed the same day with 9 of 9 DoD items met. Item 4 is read by DR-015's body, and
+  the ledger rows, the reconciler's view of a re-anchor, a pending-re-anchor gauge and the CLI
+  commands are handed to `IP-11` to `IP-14` by dated amendments. `IP-16` still waits on `IP-11` and
+  `IP-15`.
+
+- **Plan lifecycle and cycle-boundary semantics, specified (`IP-10`).** Each tenant is pinned to the
+  cadence and feature set it was anchored on, so an interval edit or an added feature reaches an
+  existing tenant at its next re-anchor and a removed feature stays until the end of the window it
+  was removed in (E-3, E-4, DR-014's note, data-model §2.10). A plan change or an apply-now commits a
+  pending re-anchor that a drain finishes in the fast store, which replaces consistency-and-recovery's
+  "self-correcting" (§2.11, §1, §3, §6). A grant raises the bonus with the balance, so
+  `grant_exceeds_ceiling` is a `set` above `limit + bonus` or a grant past `2^53 − 1`; T-04's grant
+  line, UC-14's `51` line, the contract example and the catalogue's remedy are corrected. A `set`
+  takes `0` to `limit + bonus`, and DR-018's negative balance is `Q-23` (23 open questions).
+  Force-rollover refills the window the anchor puts the current instant in (C-5, UC-12, INV-C1,
+  INV-X4). An override's `immediate` re-limits the open cycle and keeps what was spent (cycle-engine
+  §7, data-model §2.5, UC-13). The confirmation token is also bound to the reason and to the count it
+  was issued against, its `409` writes no audit row (P-3b), and impact previews the plan as saved
+  (UC-19, api-conventions §10.1 and §10.2). T-5 allows a suspended tenant. The tenant balance routes
+  and the override clear gain `409 tenant_deleted`, and the clear gains `404 feature_not_found`.
+  Impact takes no query parameter and, reading only Postgres, answers `control_plane_unavailable`
+  rather than `service_unavailable`. `QUOTACORE_CONFIG_REFRESH_INTERVAL` is refused at or above one
+  hour.
 
 - The bootstrap admin key is one the operator mints and supplies, never one the service generates
   or prints. api-conventions §5, security-model §3, UC-15, J-1 and SECURITY.md said it was "printed
@@ -524,6 +573,10 @@ exists, because a future implementer needs to know which statements are new.
   point-in-time records they are.
 
 ### Fixed
+
+- **`TestArchivingAFeaturePreservesItsBalance` failed about one run in fifteen** (`IP-09`). It
+  waited for the archive to reach the data plane by consuming, and a consume that landed before the
+  invalidation changed the very hash the test compares. It waits with a check, which writes nothing.
 
 - **The contract's `timezone` pattern refused `UTC`** (`IP-02`), its own default, because it
   required an `Area/Location` name. No route took a time zone until `IP-09`'s tenant create. The

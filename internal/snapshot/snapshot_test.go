@@ -147,6 +147,10 @@ func tenantFixture(id string) *LoadedTenant {
 				"feature_b": {Limit: 5, Interval: cycle.Hourly},
 			},
 		},
+		Pins: map[string]Pin{
+			"feature_a": {Interval: cycle.Monthly},
+			"feature_b": {Interval: cycle.Hourly},
+		},
 	}
 }
 
@@ -208,6 +212,7 @@ func TestResolveMissLoadsExactlyOncePerTenant(t *testing.T) {
 func TestResolveOrderArchivedOverSuspendedOverInPlan(t *testing.T) {
 	archived := tenantFixture(tenantID)
 	archived.Plan.Entitlements = map[string]Entitlement{"feature_a": {Limit: 1, Interval: cycle.Daily, Archived: true}}
+	archived.Pins = map[string]Pin{"feature_a": {Interval: cycle.Daily, Archived: true}}
 	loader := &fakeLoader{byID: map[string]*LoadedTenant{tenantID: archived}}
 	s := New(Options{Loader: loader, MissRate: 1e9})
 
@@ -224,6 +229,7 @@ func TestResolveOrderArchivedOverSuspendedOverInPlan(t *testing.T) {
 	// state (state-machines.md section 5, request-lifecycle.md step 3).
 	s.fill(&LoadedTenant{ID: otherID, ExternalID: "y", State: "suspended", Timezone: "UTC",
 		Plan:    &LoadedPlan{ID: "q", Key: "legacy", Entitlements: map[string]Entitlement{"feature_a": {Limit: 1, Interval: cycle.Daily, Archived: true}}},
+		Pins:    map[string]Pin{"feature_a": {Interval: cycle.Daily, Archived: true}},
 		Version: 4})
 	r, err = s.Resolve(otherID, "feature_a")
 	if err != nil {
@@ -235,6 +241,7 @@ func TestResolveOrderArchivedOverSuspendedOverInPlan(t *testing.T) {
 
 	s.fill(&LoadedTenant{ID: tenantID, ExternalID: "x", State: "suspended", Timezone: "UTC",
 		Plan:    &LoadedPlan{ID: "p", Key: "starter", Entitlements: map[string]Entitlement{"feature_a": {Limit: 1, Interval: cycle.Daily}}},
+		Pins:    map[string]Pin{"feature_a": {Interval: cycle.Daily}},
 		Version: 4})
 	r, err = s.Resolve(tenantID, "feature_a")
 	if err != nil {
@@ -494,5 +501,82 @@ func TestAChangeAnnouncedBeforeTheSubscriptionIsNotMissed(t *testing.T) {
 			t.Fatal("a change made before the subscription was live was still cached a second later")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestResolutionPutsMembershipBeforeTheOverride runs Effective over every
+// combination of an archived feature, a suspended tenant, a pinned feature, a
+// retirement (none, still open, lapsed), an override and the plan still
+// listing the feature (IP-10 DoD 4, DR-015, INV-TE1). Membership is the pin:
+// an override on a feature the tenant does not hold, or no longer holds,
+// resolves nothing, and the override only ever picks the limit.
+func TestResolutionPutsMembershipBeforeTheOverride(t *testing.T) {
+	at := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	open, lapsed := at.Add(time.Hour), at.Add(-time.Hour)
+	for _, archived := range []bool{false, true} {
+		for _, suspended := range []bool{false, true} {
+			for _, pinned := range []bool{false, true} {
+				for _, retired := range []string{"none", "open", "lapsed"} {
+					for _, overridden := range []bool{false, true} {
+						for _, listed := range []bool{false, true} {
+							// A live pin on a feature the plan no longer lists is
+							// never stored: dropping the entitlement retires the pin.
+							if pinned && retired == "none" && !listed {
+								continue
+							}
+							name := fmt.Sprintf("archived=%v suspended=%v pinned=%v retired=%s overridden=%v listed=%v",
+								archived, suspended, pinned, retired, overridden, listed)
+							lt := &LoadedTenant{ID: tenantID, ExternalID: "x", State: "active", Timezone: "UTC",
+								Plan: &LoadedPlan{ID: "p", Key: "k", Entitlements: map[string]Entitlement{}},
+								Pins: map[string]Pin{}, Overrides: map[string]LoadedOverride{}}
+							if suspended {
+								lt.State = "suspended"
+							}
+							if listed {
+								lt.Plan.Entitlements["f"] = Entitlement{Limit: 10, Interval: cycle.Weekly, Archived: archived}
+							}
+							if pinned {
+								pin := Pin{Interval: cycle.Daily, Archived: archived}
+								switch retired {
+								case "open":
+									pin.RetiredLimit, pin.RetiredUntil = int64Ptr(7), &open
+								case "lapsed":
+									pin.RetiredLimit, pin.RetiredUntil = int64Ptr(7), &lapsed
+								}
+								lt.Pins["f"] = pin
+							}
+							if overridden {
+								iv := cycle.Hourly
+								lt.Overrides["f"] = LoadedOverride{Limit: int64Ptr(500), Interval: &iv}
+							}
+
+							held := pinned && retired != "lapsed"
+							want := Resolution{Timezone: "UTC"}
+							switch {
+							case held && archived:
+								want.Archived = true
+							case suspended:
+								want.Suspended = true
+							case held:
+								want.InPlan, want.Interval = true, cycle.Daily
+								switch {
+								case overridden:
+									want.Limit = 500
+								case listed:
+									want.Limit = 10
+								default:
+									want.Limit = 7
+								}
+							}
+							got := Effective(NewTenant(lt), "f", at)
+							if got.Archived != want.Archived || got.Suspended != want.Suspended || got.InPlan != want.InPlan ||
+								got.Limit != want.Limit || got.Interval != want.Interval {
+								t.Errorf("%s: got %+v, want %+v", name, got, want)
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 }

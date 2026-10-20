@@ -52,6 +52,14 @@ Where a transition has a product-level consequence it is cross-referenced to a r
 version. A client that receives no response retries with the same expected version and either
 sees the applied change or is told the version has advanced.
 
+> **Amended 2026-10-20 (`IP-10`).** T-5 is from `active` **or `suspended`**, and a suspended
+> tenant stays suspended: T-6 already allows both, and a downgrade during a dispute is a real
+> case. Its effect also re-pins the tenant's cadences and feature set to the new plan, and the
+> balances are rewritten after the commit by the re-anchor drain, so a request in between is
+> served the old state and never a fresh allowance. The target is an active plan; an archived
+> or unknown one is `400 validation_failed` naming `plan_key`, and the tenant's current
+> `plan_key` is no change at all.
+
 ---
 
 ## 2. Plan
@@ -89,6 +97,14 @@ sees the applied change or is told the version has advanced.
 > reversal. P-6 and F-6 said a delete is not audited, while DR-041 audits every administrative
 > mutation; a delete that succeeds is audited with its reason, and only the `409` refusal writes
 > nothing, because nothing changed.
+
+> **Amended 2026-10-20 (`IP-10`).** P-3b said "audited, as a refusal", while INV-P4, P-6 and T-08
+> hold that a refusal writes nothing. The `409` writes no audit row; what it does write is the
+> token, in the fast store, which is the one named exception to T-08. P-3c's token is also bound
+> to the request's `reason`, and is honoured only while the plan's count has not grown past the
+> count it was issued against; anything else is counted afresh, which above the threshold is
+> P-3b again. P-3 and its variants re-anchor suspended tenants too, and an archived plan cannot
+> be applied (`400 validation_failed`).
 
 ---
 
@@ -136,6 +152,16 @@ The row joining a plan to a feature. Its lifecycle is a strict subset of its par
   configuration change.
 - INV-E2 At most one entitlement per plan per feature. Enforced by a unique constraint; a
   duplicate is `400 validation_failed` naming the feature.
+
+> **Amended 2026-10-20 (`IP-10`).** Each tenant keeps the cadence and the feature set it was
+> anchored on, recorded when it is anchored (T-1, T-5, P-3) and changed only at its next
+> re-anchor. So E-3 reaches an existing tenant at its next re-anchor, a plan change or an
+> apply-now, never at a natural boundary, because a live interval would renumber the open cycle.
+> E-1 reaches an existing tenant the same way, because nothing can give it a balance at a natural
+> boundary (DR-045). E-4 keeps the feature, at the limit it had, until the end of the window the
+> removal landed in, after which the feature is absent (`403 feature_not_in_plan`); a removed
+> `never` feature has no window end and stays until the next re-anchor. Adding the feature back
+> before then keeps it. E-2 is unchanged: the limit is read from the plan as it is now.
 
 ---
 
@@ -219,7 +245,7 @@ advance(now):
 | C-2 | current | access at or after `window_end` | current(n+1) | `n+1 > cycle_index` | reset to limit, clear bonus, new window |
 | C-3 | current | access with `n < cycle_index` | unchanged | — | **rejected**, not applied. A stale writer cannot re-grant a past allowance |
 | C-4 | current | admin set / grant | current | ceiling respected | balance or bonus changes, no window change |
-| C-5 | current | admin force-rollover (UC-12) | current(n+1) | interval ≠ `never` | same transition as C-2, distinct event source |
+| C-5 | current | admin force-rollover (UC-12) | current(n+1) | interval ≠ `never` | same transition as C-2, distinct event source. Amended 2026-10-20, see the note below |
 | C-6 | current | interval is `never` | current | — | no boundary exists; C-2 can never fire; no TTL |
 | C-7 | current | plan change (UC-06) | current(0) | — | re-anchor to now; new limit; previous balance discarded (DR-013) |
 
@@ -235,6 +261,15 @@ advance(now):
   new cycle (DR-020).
 - INV-C6 A `never` cycle has no window end, so `cycle_end` is `null` in every response. Clients
   must handle the null; it is the documented shape, not an omission.
+
+> **Amended 2026-10-20 (`IP-10`).** C-5's `n+1` cannot be expressed without a per-feature anchor,
+> which DR-002 forbids, and mid-cycle the C-2 transition does nothing. Force-rollover refills the
+> cycle the anchor puts the current instant in: the balance becomes the effective limit and the
+> bonus zero, whatever cycle was stored, which also repairs a stored index that is ahead. A second
+> call refills again. C-7 restarts the index at 0 under the new anchor, and C-5's repair can lower
+> it, so INV-C1 holds **under one anchor**: no data-plane path writes a smaller index, and the
+> re-anchor and the force-rollover are the two audited control-plane exceptions. C-4's grant
+> raises the bonus with the balance (DR-020), and C-4's set is bounded by `limit + bonus`.
 
 ---
 

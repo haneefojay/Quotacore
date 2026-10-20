@@ -89,7 +89,7 @@ caller get charged for the failure?
 | `tenant_deleted` | 409 | Operation on a soft-deleted tenant | no | no | Soft deletion is terminal. Create a new tenant, or restore from a backup |
 | `plan_key_exists` | 409 | Duplicate plan key | no | no | Pick another key |
 | `refund_exceeds_grant` | 409 | Refund would break `balance <= limit + bonus` | no | no | Use an admin `grant` if the intent is a permanent increase (DR-019) |
-| `grant_exceeds_ceiling` | 409 | Grant would break the ceiling | no | no | Raise the limit with an override first |
+| `grant_exceeds_ceiling` | 409 | A `set` above `limit + bonus`, or a grant that would take the balance or the bonus past `2^53 − 1` | no | no | For a `set`, grant first; for a lasting increase, raise the limit with an override |
 | `reset_not_supported` | 409 | Rollover attempted on a `never` entitlement | no | no | Grant explicitly. There is no cycle to roll (DR-008) |
 | `feature_unit_immutable` | 409 | Unit change on an assigned feature | no | no | Create a new feature. Reinterpreting historical amounts is not allowed (INV-F2) |
 | `resource_version_conflict` | 409 | Optimistic concurrency on a control-plane resource | no | after re-read | Re-read the resource and retry with the current version |
@@ -116,6 +116,15 @@ caller get charged for the failure?
 > and an API key carries no `version` for it to conflict on. `rate_limited` now names the admin
 > API's per-client-address limit (`QUOTACORE_RATELIMIT_ADMIN_RPM`), which runs before
 > authentication so a guessed admin key costs the guesser and not the service.
+
+> **Amended 2026-10-20 (`IP-10`).** `grant_exceeds_ceiling` was "a grant would break the ceiling",
+> which DR-020 makes impossible: a grant raises the bonus with the balance, so it holds
+> `balance <= limit + bonus` by construction. The code is a `set` above `limit + bonus` and a grant
+> past `2^53 − 1` (DR-019, DR-022). The two tenant balance cells gain `tenant_deleted`, because
+> T-7 refuses every change to a deleted tenant, and the override-clear cell gains
+> `feature_not_found` for a feature key that names no feature. The impact cell drops
+> `service_unavailable`: the route reads only Postgres, so the data store cannot fail it, and its
+> `validation_failed` is a query parameter, which the route does not take.
 
 **The 500 guarantee.** A `500` on `consume` or `refund` always means the balance is unchanged.
 The mutation is a single atomic script execution, so there is no state in which a deduction was
@@ -146,10 +155,10 @@ The complete mapping, so no error can be documented in one place and forgotten i
 | `GET /v1/balance` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `feature_not_found`, `tenant_not_found`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
 | `GET /v1/admin/features`, `POST /v1/admin/features`, `GET /v1/admin/features/{feature_key}`, `PATCH /v1/admin/features/{feature_key}`, `DELETE /v1/admin/features/{feature_key}`, `POST /v1/admin/features/{feature_key}/archive` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `feature_not_found`, `feature_key_exists`, `feature_in_use`, `feature_unit_immutable`, `resource_version_conflict`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error`, `not_implemented` |
 | `GET /v1/admin/plans`, `POST /v1/admin/plans`, `GET /v1/admin/plans/{id}`, `PATCH /v1/admin/plans/{id}`, `DELETE /v1/admin/plans/{id}`, `POST /v1/admin/plans/{id}/apply`, `POST /v1/admin/plans/{id}/archive` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `plan_not_found`, `plan_key_exists`, `plan_in_use`, `resource_version_conflict`, `confirmation_required`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
-| `GET /v1/admin/plans/{id}/impact` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `plan_not_found`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
+| `GET /v1/admin/plans/{id}/impact` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `plan_not_found`, `rate_limited`, `control_plane_unavailable`, `internal_error` |
 | `GET /v1/admin/tenants`, `POST /v1/admin/tenants`, `GET /v1/admin/tenants/{id}`, `PATCH /v1/admin/tenants/{id}`, `POST /v1/admin/tenants/{id}/suspend`, `POST /v1/admin/tenants/{id}/resume`, `DELETE /v1/admin/tenants/{id}` | `validation_failed`, `invalid_timezone`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `tenant_exists`, `tenant_deleted`, `resource_version_conflict`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
-| `POST /v1/admin/tenants/{id}/grant`, `POST /v1/admin/tenants/{id}/set`, `POST /v1/admin/tenants/{id}/force-rollover`, `POST /v1/admin/tenants/{id}/overrides` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `feature_not_found`, `grant_exceeds_ceiling`, `reset_not_supported`, `resource_version_conflict`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
-| `DELETE /v1/admin/tenants/{id}/overrides/{feature_key}` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
+| `POST /v1/admin/tenants/{id}/grant`, `POST /v1/admin/tenants/{id}/set`, `POST /v1/admin/tenants/{id}/force-rollover`, `POST /v1/admin/tenants/{id}/overrides` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `feature_not_found`, `tenant_deleted`, `grant_exceeds_ceiling`, `reset_not_supported`, `resource_version_conflict`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
+| `DELETE /v1/admin/tenants/{id}/overrides/{feature_key}` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `feature_not_found`, `tenant_deleted`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
 | `GET /v1/admin/tenants/{id}/events` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
 | `GET /v1/admin/audit` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
 | `POST /v1/admin/keys`, `GET /v1/admin/keys`, `DELETE /v1/admin/keys/{id}` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `api_key_not_found`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |

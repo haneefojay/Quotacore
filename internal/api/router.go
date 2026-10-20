@@ -31,8 +31,8 @@ type RouterOptions struct {
 	// (QUOTACORE_RATELIMIT_ENABLED=false).
 	RateLimit *dataplane.RateLimiter
 	// Admin serves the admin operations it names, by operationId; an admin
-	// operation it does not name answers a bare 404 until its phase serves
-	// it. AdminLimit is the per-client-address limit in front of every admin
+	// operation it does not name answers a bare 404, which no assembled build
+	// leaves since IP-10 served the last of them. AdminLimit is the per-client-address limit in front of every admin
 	// route, before authentication (D4); nil disables it. Proxies decide whose
 	// X-Forwarded-For names the client.
 	Admin      map[string]http.HandlerFunc
@@ -65,10 +65,9 @@ type router struct {
 // admin rate limit, authentication and the admin scope gate.
 //
 // Every admin route is registered so the gate holds on every one of them
-// whether or not its handler exists (IP-07 DoD 8). IP-09 serves most of them;
-// an admin key that passes the gate on one of IP-10's gets a bare 404 until
-// IP-10 serves it: the behaviour does not exist yet, and a 501 would be the
-// service raising a code for a surface it does have. A path
+// whether or not its handler exists (IP-07 DoD 8). IP-09 and IP-10 serve all
+// of them; an operation missing from Admin answers a bare 404 rather than a
+// 501, which would be the service raising a code for a surface it does have. A path
 // that is in no contract route is a bare 404 and a wrong method a bare 405
 // with Allow, both without authentication, because neither names anything to
 // protect.

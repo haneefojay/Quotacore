@@ -2,6 +2,9 @@ package snapshot
 
 import (
 	"container/list"
+	"sort"
+	"strconv"
+	"strings"
 )
 
 // tenantCache is the bounded recency cache that is the snapshot proper. It is
@@ -17,10 +20,14 @@ import (
 // enforces, not the proof; the proof of NFR-T7 is the memory test, which
 // measures HeapAlloc directly.
 type tenantCache struct {
-	ll        *list.List
-	byID      map[string]*list.Element
-	byExtern  map[string]string // external_id → tenant id, for cached tenants only
-	plans     map[string]*Plan  // id → interned plan, refcounted
+	ll       *list.List
+	byID     map[string]*list.Element
+	byExtern map[string]string // external_id → tenant id, for cached tenants only
+	plans    map[string]*Plan  // id → interned plan, refcounted
+	// pinSets interns tenants' pins by content. Tenants anchored on the same
+	// plan version share one set, so pinning a cadence per tenant costs one
+	// map per distinct set rather than one per tenant (IP-10, NFR-T7).
+	pinSets   map[string]*pinSet
 	tenantMem int64
 	planMem   int64
 	limit     int
@@ -41,6 +48,7 @@ func newTenantCache(limit int, byteCap int64) *tenantCache {
 		byID:     make(map[string]*list.Element),
 		byExtern: make(map[string]string),
 		plans:    make(map[string]*Plan),
+		pinSets:  make(map[string]*pinSet),
 		limit:    limit,
 		byteCap:  byteCap,
 	}
@@ -64,6 +72,7 @@ func (c *tenantCache) get(id string) *Tenant {
 func (c *tenantCache) add(t *Tenant) {
 	id := t.ID
 	t.Plan = c.intern(t.Plan)
+	t.Pins, t.pinKey = c.internPins(t.Pins)
 	entry := &cacheEntry{id: id, tenant: t, bytes: tenantBytes(t)}
 	if existing, ok := c.byID[id]; ok {
 		old := existing.Value.(*cacheEntry)
@@ -71,6 +80,7 @@ func (c *tenantCache) add(t *Tenant) {
 		// changed, so the old entry's reference is always released; skipping it
 		// when the plan was the same kept that plan alive forever.
 		c.release(old.tenant.Plan)
+		c.releasePins(old.tenant.pinKey)
 		if old.tenant.ExternalID != t.ExternalID && c.byExtern[old.tenant.ExternalID] == id {
 			delete(c.byExtern, old.tenant.ExternalID)
 		}
@@ -114,6 +124,7 @@ func (c *tenantCache) evictOldest() bool {
 	c.forgetExtern(entry)
 	c.tenantMem -= entry.bytes
 	c.release(entry.tenant.Plan)
+	c.releasePins(entry.tenant.pinKey)
 	if c.onEvict != nil {
 		c.onEvict(entry.id)
 	}
@@ -141,6 +152,7 @@ func (c *tenantCache) prune(latest map[string]int64) (evicted int) {
 		c.forgetExtern(entry)
 		c.tenantMem -= entry.bytes
 		c.release(entry.tenant.Plan)
+		c.releasePins(entry.tenant.pinKey)
 		if c.onEvict != nil {
 			c.onEvict(id)
 		}
@@ -182,12 +194,12 @@ func (c *tenantCache) intern(p *Plan) *Plan {
 	if p == nil {
 		return nil
 	}
-	if interned, ok := c.plans[p.ID]; ok {
+	if interned, ok := c.plans[p.internKey()]; ok {
 		interned.refs++
 		return interned
 	}
-	cp := &Plan{ID: p.ID, Key: p.Key, Entitlements: p.Entitlements, refs: 1}
-	c.plans[p.ID] = cp
+	cp := &Plan{ID: p.ID, Key: p.Key, Version: p.Version, Entitlements: p.Entitlements, refs: 1}
+	c.plans[p.internKey()] = cp
 	c.planMem += planBytes(cp)
 	return cp
 }
@@ -200,7 +212,7 @@ func (c *tenantCache) release(p *Plan) {
 	}
 	p.refs--
 	if p.refs <= 0 {
-		delete(c.plans, p.ID)
+		delete(c.plans, p.internKey())
 		c.planMem -= planBytes(p)
 		if c.onPlanGC != nil {
 			c.onPlanGC(p.ID)
@@ -219,6 +231,81 @@ func tenantBytes(t *Tenant) int64 {
 	return n
 }
 
+// pinSet is one interned set of pins and the number of cached tenants on it.
+type pinSet struct {
+	key  string
+	pins map[string]Pin
+	refs int
+}
+
+// pinKey is a set of pins' content, in feature order, so two tenants pinned
+// alike share one set.
+func pinKey(pins map[string]Pin) string {
+	features := make([]string, 0, len(pins))
+	for f := range pins {
+		features = append(features, f)
+	}
+	sort.Strings(features)
+	var b strings.Builder
+	for _, f := range features {
+		p := pins[f]
+		b.WriteString(f)
+		b.WriteByte('=')
+		b.WriteString(strconv.Itoa(int(p.Interval)))
+		if p.Archived {
+			b.WriteString(",a")
+		}
+		if p.RetiredLimit != nil {
+			b.WriteString(",r")
+			b.WriteString(strconv.FormatInt(*p.RetiredLimit, 10))
+		}
+		if p.RetiredUntil != nil {
+			b.WriteString(",u")
+			b.WriteString(strconv.FormatInt(p.RetiredUntil.UnixNano(), 10))
+		}
+		b.WriteByte(';')
+	}
+	return b.String()
+}
+
+// internPins finds or creates the shared set equal to pins, records one
+// reference, and charges a new set's footprint once.
+func (c *tenantCache) internPins(pins map[string]Pin) (map[string]Pin, string) {
+	k := pinKey(pins)
+	if set, ok := c.pinSets[k]; ok {
+		set.refs++
+		// The set's own key, so a tenant does not keep a copy of it.
+		return set.pins, set.key
+	}
+	if pins == nil {
+		pins = map[string]Pin{}
+	}
+	c.pinSets[k] = &pinSet{key: k, pins: pins, refs: 1}
+	c.planMem += pinBytes(pins)
+	return pins, k
+}
+
+// releasePins drops one reference and retires an unused set.
+func (c *tenantCache) releasePins(k string) {
+	set, ok := c.pinSets[k]
+	if !ok {
+		return
+	}
+	set.refs--
+	if set.refs <= 0 {
+		delete(c.pinSets, k)
+		c.planMem -= pinBytes(set.pins)
+	}
+}
+
+func pinBytes(pins map[string]Pin) int64 {
+	n := int64(0)
+	for f := range pins {
+		n += int64(len(f)) + 40
+	}
+	return n
+}
+
 // planBytes is the footprint of one interned plan.
 func planBytes(p *Plan) int64 {
 	n := int64(len(p.ID)+len(p.Key)) + 16
@@ -233,6 +320,12 @@ func planBytes(p *Plan) int64 {
 type Plan struct {
 	ID           string
 	Key          string
+	Version      int64
 	Entitlements map[string]Entitlement
 	refs         int
 }
+
+// internKey is a plan's identity in the cache: its id at one version, so an
+// entitlement edit, which bumps the version, is a new object and never a
+// change under tenants still holding the old one (IP-10).
+func (p *Plan) internKey() string { return p.ID + "@" + strconv.FormatInt(p.Version, 10) }

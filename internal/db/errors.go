@@ -124,6 +124,13 @@ var constraints = map[string]constraintRule{
 	"usage_events_pkey":                 {err: &Error{Code: api.ErrorCodeInternalError, Reason: "primary key"}},
 	"audit_log_pkey":                    {err: &Error{Code: api.ErrorCodeInternalError, Reason: "primary key"}},
 	"usage_events_seq_unique":           {err: &Error{Code: api.ErrorCodeInternalError, Reason: "ledger sequence"}},
+	// A pin and a pending re-anchor are written by the store from rows it
+	// has just read, never from a caller's values, so any refusal is a bug.
+	"tenant_entitlement_pins_pkey":          {err: &Error{Code: api.ErrorCodeInternalError, Reason: "primary key"}},
+	"pending_reanchors_pkey":                {err: &Error{Code: api.ErrorCodeInternalError, Reason: "primary key"}},
+	"tenant_pins_retired_limit_range":       {err: &Error{Code: api.ErrorCodeInternalError, Reason: "retired limit"}},
+	"tenant_pins_retired_until_needs_limit": {err: &Error{Code: api.ErrorCodeInternalError, Reason: "retired pin"}},
+	"pending_reanchors_kind":                {err: &Error{Code: api.ErrorCodeInternalError, Reason: "re-anchor kind"}},
 
 	// Unique keys a caller chooses.
 	"features_key_key":        {err: ErrFeatureKeyExists},
@@ -158,6 +165,9 @@ var constraints = map[string]constraintRule{
 	"tenant_entitlement_overrides_tenant_id_fkey":  {missing: ErrTenantNotFound},
 	"tenant_entitlement_overrides_feature_id_fkey": {missing: ErrFeatureNotFound},
 	"usage_events_tenant_id_fkey":                  {missing: ErrTenantNotFound},
+	"tenant_entitlement_pins_tenant_id_fkey":       {missing: ErrTenantNotFound},
+	"tenant_entitlement_pins_feature_id_fkey":      {missing: ErrFeatureNotFound},
+	"pending_reanchors_tenant_id_fkey":             {missing: ErrTenantNotFound},
 	"usage_events_feature_id_fkey":                 {missing: ErrFeatureNotFound},
 	"audit_log_actor_key_id_fkey":                  {missing: &Error{Code: api.ErrorCodeInternalError, Reason: "audit actor key"}},
 }
