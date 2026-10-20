@@ -12,6 +12,25 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **The control-plane API (`IP-09`).** `internal/admin` serves 24 admin operations: keys (create,
+  list, revoke), features (list, create, get, update, archive, delete), plans (list, create, get,
+  archive, delete), tenants (list, create, get, update, suspend, resume, delete), the audit and
+  usage-event reads, and status. Each mutation is audited in its own transaction by a Postgres store
+  in `internal/db` with the caller's key, the request id, `before`, `after` and the reason, and each
+  versioned write refuses a stale `version` as `409 resource_version_conflict`. A new tenant's
+  opening balances are written before its row commits, and every change reaches the data plane
+  through the configuration invalidation. Lists page with HMAC-signed cursors. A revoke evicts the
+  key from the serving instance's cache at once. `snapshot.Stats` feeds status's cache figures.
+- An acknowledged, well-formed `QUOTACORE_BOOTSTRAP_ADMIN_KEY` is inserted as `bootstrap-admin`
+  only into an empty `api_keys` table, once across concurrent starts, with a `bootstrap` audit row; a
+  malformed one refuses to start. No route can create it, and the name `bootstrap` is reserved.
+- A per-client-address admin rate limit, `QUOTACORE_RATELIMIT_ADMIN_RPM` (60), checked before the
+  credential, with `QUOTACORE_TRUSTED_PROXIES` naming the proxies whose `X-Forwarded-For` it believes.
+- Integration tests for the nine DoD items and the obligations `IP-05`, `IP-07` and `IP-08`
+  deferred: the admin half of the endpoint × error matrix and of T-08, every IP-09 route reachable
+  with an admin key, the PII corpus at the boundary, and a CI step that starts the binary with a
+  bootstrap key and reads status with it.
+
 - **The admin surface's contract and specification amendments (`IP-09`).** Two routes,
   `DELETE /v1/admin/plans/{id}` and `DELETE /v1/admin/features/{feature_key}`, so P-6 and F-6 and
   the `plan_in_use` and `feature_in_use` codes have a route that reaches them. An optional `unit` on
@@ -207,6 +226,9 @@ exists, because a future implementer needs to know which statements are new.
   route, and P-6 and F-6 audit a successful delete. The descriptions of `Feature.id`, the feature
   list's pagination, `ArchiveRequest`, the two identifier paths and the usage event's cycle fields
   are corrected (`IP-09`).
+- **`IP-09` is `COMPLETE`**, closed 2026-10-20 with nine of nine DoD items met, and `IP-10` is now
+  `NOT STARTED`; `IP-14` waits on `IP-12` alone. `IP-05`'s `adminOnly` list is gone: every admin code
+  is provoked over HTTP, and the three only `IP-10`'s routes reach are listed as its.
 - **`IP-09` is `IN PROGRESS`**, opened 2026-10-19 after `IP-07` closed. Its scope and `IP-10`'s
   overlapped on most of the admin surface; both are amended so `IP-09` builds the resource routes and
   `IP-10` everything that moves a balance or a boundary.
@@ -502,6 +524,10 @@ exists, because a future implementer needs to know which statements are new.
   point-in-time records they are.
 
 ### Fixed
+
+- **The contract's `timezone` pattern refused `UTC`** (`IP-02`), its own default, because it
+  required an `Area/Location` name. No route took a time zone until `IP-09`'s tenant create. The
+  pattern admits `UTC`, and the generated types and reference page were regenerated.
 
 - **A silent datastore held a request for five seconds** (`IP-04`). go-redis ignores a context's
   deadline unless `ContextTimeoutEnabled` is set, so `QUOTACORE_DATASCRIPT_TIMEOUT` did not bound a
