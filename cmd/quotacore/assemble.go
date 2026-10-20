@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	contract "github.com/quotacore/quotacore/api"
@@ -16,6 +17,7 @@ import (
 	"github.com/quotacore/quotacore/internal/envelope"
 	"github.com/quotacore/quotacore/internal/ledger"
 	"github.com/quotacore/quotacore/internal/observability"
+	"github.com/quotacore/quotacore/internal/reconcile"
 	"github.com/quotacore/quotacore/internal/script"
 	"github.com/quotacore/quotacore/internal/snapshot"
 	"github.com/quotacore/quotacore/internal/store"
@@ -37,6 +39,17 @@ type enforcement struct {
 	// ctx; main calls it after the HTTP server has finished its requests.
 	Drain func(ctx context.Context)
 	Close func()
+	// Pass is the in-service reconciliation, and Reconcile its two counters
+	// (IP-11 D2).
+	Pass      *reconcile.Pass
+	Reconcile *observability.Reconcile
+	// Fence is the instance's shared hold on the rebuild fence, nil in
+	// read-only mode (IP-11 D6).
+	Fence *db.Fence
+	// Data is the fast store, whose ReadOnly says the instance's mode.
+	Data *store.Store
+	// Service is the data plane, whose Reverse a test's own pass calls.
+	Service *dataplane.Service
 }
 
 // tee hands every event to the ledger and to an observer, which is how the
@@ -58,6 +71,21 @@ type assembleOptions struct {
 	noWriter bool
 	// retentionFirstRun shortens the delay before the first retention tick.
 	retentionFirstRun time.Duration
+	// reconcileFirstRun and settle shorten the reconciliation pass's first
+	// run and its settle period (IP-11 D3).
+	reconcileFirstRun time.Duration
+	settle            time.Duration
+	// fenceEvery is how often the fence is checked; zero means five seconds.
+	fenceEvery time.Duration
+}
+
+// hostname names a ledger session; an unreadable one is still a session.
+func hostname() string {
+	h, err := os.Hostname()
+	if err != nil || h == "" {
+		return "unknown"
+	}
+	return h
 }
 
 // observe, when not nil, is handed every event the ledger is; production
@@ -68,11 +96,56 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
+	// Read-only mode, and the fence that makes it a property of the fleet
+	// (IP-11 D5, D6). An instance started read-only writes no tenant key and
+	// holds no fence, so a rebuild can take it; a normal instance holds the
+	// fence shared for its life, refuses to start while a rebuild holds it,
+	// and serves read-only whenever it has lost it.
+	var fence *db.Fence
+	var fenceConn *sql.DB
+	if cfg.StartupMode == ModeReadOnly {
+		data.SetReadOnly(true)
+		log.Warn("starting in read-only mode: no balance or idempotency record is written until a restart in normal mode")
+	} else {
+		var err error
+		fenceConn, err = db.Open(ctx, cfg.DatabaseURL)
+		if err != nil {
+			return nil, err
+		}
+		fenceConn.SetMaxOpenConns(1)
+		fence = db.NewFence(fenceConn, log)
+		held, err := fence.Acquire(ctx)
+		if err != nil || !held {
+			fenceConn.Close()
+			if err == nil {
+				err = db.ErrFenced
+			}
+			return nil, err
+		}
+		data.SetReadOnly(false)
+	}
+	readOnly := data.ReadOnly
+	settle := cfg.Settle()
+	if opt.settle > 0 {
+		settle = opt.settle
+	}
+	firstPass := opt.reconcileFirstRun
+	if firstPass <= 0 {
+		firstPass = time.Minute
+	}
+	fenceEvery := opt.fenceEvery
+	if fenceEvery <= 0 {
+		fenceEvery = 5 * time.Second
+	}
 	// The ledger writer has its own pool of two connections, so a slow ledger
 	// cannot take the admin pool or the snapshot's bounded miss read
 	// (performance.md section 5, IP-12 D4).
 	ledgerConn, err := db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
+		if fence != nil {
+			fence.Release()
+			fenceConn.Close()
+		}
 		return nil, err
 	}
 	ledgerConn.SetMaxOpenConns(2)
@@ -87,6 +160,11 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		FlushInterval: cfg.EventFlushInterval,
 		Appender:      appender,
 		Logger:        log,
+		// The loss record (IP-11 D8). A request can spend up to its timeout
+		// between its accepted instant and its enqueue.
+		Sessions: db.NewLedger(ledgerConn),
+		Host:     hostname(),
+		Lag:      cfg.RequestTimeout + time.Second,
 	})
 	var events dataplane.EventSink = sink
 	if observe != nil {
@@ -108,10 +186,18 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		FirstRun:  opt.retentionFirstRun,
 		Logger:    log,
 		Metrics:   sink.Metrics(),
+		Paused:    readOnly,
 	})
+	if fence != nil {
+		go fence.Keep(ctx, fenceEvery, func(held bool) { data.SetReadOnly(!held) })
+	}
 	closeLedger := func() {
 		cancelWriter()
 		ledgerConn.Close()
+		if fence != nil {
+			fence.Release()
+			fenceConn.Close()
+		}
 	}
 	snap := snapshot.New(snapshot.Options{
 		LimitEntries:        cfg.ConfigCacheEntries,
@@ -205,6 +291,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		// The confirmation threshold and the token's lifetime (DR-046).
 		ConfirmThreshold: cfg.PlanApplyConfirmThreshold,
 		ConfirmationTTL:  cfg.ConfirmationTTL,
+		ReadOnly:         readOnly,
 		Status: admin.StatusInfo{
 			Version: buildVersion,
 			Commit:  buildCommit(),
@@ -220,8 +307,33 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 	// one a request could not finish inline, or an instance that stopped
 	// mid-drain, is finished by whichever instance reaches it first (D2).
 	go control.RunDrain(ctx, cfg.ConfigRefreshInterval)
+	// The reconciliation pass runs in every instance and one runs at a time;
+	// it reverses detected duplicates and verifies what changed (IP-11 D2).
+	// It has a pool of its own, so a pass holding its lock and reading
+	// cannot take the ledger writer's two connections.
+	reconcileConn, err := db.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		cancel()
+		snap.Close()
+		closeLedger()
+		return nil, err
+	}
+	reconcileConn.SetMaxOpenConns(3)
+	counters := observability.NewReconcile()
+	pass := reconcile.NewPass(reconcile.PassOptions{
+		Ledger:   db.NewReconciler(reconcileConn),
+		Balances: balances{data},
+		Refunder: refunder{plane: service, now: time.Now},
+		Metrics:  counters,
+		Logger:   log,
+		Settle:   settle,
+		Paused:   readOnly,
+	})
+	go pass.Run(ctx, firstPass, cfg.ReconcileInterval)
 	handler := api.NewRouter(api.RouterOptions{
-		Ready:          ready,
+		// A service that cannot enforce is not ready, and a read-only one
+		// cannot (IP-11 D5, IP-13 DoD 5).
+		Ready:          func() bool { return !readOnly() && ready() },
 		DataPlane:      service,
 		Auth:           keys,
 		RateLimit:      limiter,
@@ -234,17 +346,23 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		RequestTimeout: cfg.RequestTimeout,
 	})
 	return &enforcement{
-		Handler:  handler,
-		Snapshot: snap,
-		Keys:     keys,
-		Metrics:  metrics,
-		Plane:    plane,
-		Ledger:   sink,
-		Drain:    sink.Shutdown,
+		Handler:   handler,
+		Snapshot:  snap,
+		Keys:      keys,
+		Metrics:   metrics,
+		Plane:     plane,
+		Ledger:    sink,
+		Drain:     sink.Shutdown,
+		Pass:      pass,
+		Reconcile: counters,
+		Fence:     fence,
+		Data:      data,
+		Service:   service,
 		Close: func() {
 			cancel()
 			snap.Close()
 			closeLedger()
+			reconcileConn.Close()
 		},
 	}, nil
 }

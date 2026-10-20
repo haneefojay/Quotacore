@@ -74,7 +74,13 @@ import (
 // which create, archive, suspend and delete configuration and keys. It writes
 // the opening balance of a new tenant from the window the engine computes and
 // decides nothing about a request's balance, so the symbol rules hold for it
-// unchanged, and it reaches Postgres only through internal/db. The name of this test is kept
+// unchanged, and it reaches Postgres only through internal/db.
+//
+// `internal/reconcile` is here because IP-11 owns it: the verifier's
+// arithmetic, the in-service pass and the rebuild's classification. It does
+// no I/O of its own and imports no store, script or SQL package (its own
+// source check), so the one balance it can move is the reversal's refund,
+// which it hands to the data plane's script. The name of this test is kept
 // for its history; what it guards now is that the package set is exactly the
 // set the phases own, and that the calendar and the script stay single.
 func TestNoProductBehaviour(t *testing.T) {
@@ -94,6 +100,7 @@ func TestNoProductBehaviour(t *testing.T) {
 		"internal/dataplane":     true,
 		"internal/envelope":      true,
 		"internal/ledger":        true,
+		"internal/reconcile":     true,
 		"internal/db":            true,
 		"internal/observability": true,
 		"internal/snapshot":      true,

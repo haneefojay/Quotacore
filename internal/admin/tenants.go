@@ -217,6 +217,12 @@ func (s *Service) updateTenant(w http.ResponseWriter, r *http.Request) {
 		problem(w, r, p)
 		return
 	}
+	if c.PlanKey != nil && s.readOnly() {
+		// A plan change re-anchors the tenant's balances (IP-10), which
+		// read-only mode forbids (IP-11 D5).
+		readOnly(w, r)
+		return
+	}
 	t, err := s.store.UpdateTenant(r.Context(), actor(r), id, c)
 	if err != nil {
 		s.fail(w, r, err)

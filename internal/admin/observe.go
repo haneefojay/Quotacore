@@ -155,8 +155,13 @@ func (s *Service) serveStatus(w http.ResponseWriter, r *http.Request) {
 	if l := s.status.Ledger; l != nil {
 		depth, worker, dropped = int64(l.Depth()), contract.StatusWorker(l.State()), l.Dropped()
 	}
+	mode := contract.StatusModeNormal
+	if s.readOnly() {
+		mode = contract.StatusModeReadonly
+	}
 	respond(w, r, http.StatusOK, &contract.Status{
 		Status:  status,
+		Mode:    mode,
 		Version: s.status.Version,
 		Commit:  s.status.Commit,
 		// The zone database is the one embedded by the toolchain that built

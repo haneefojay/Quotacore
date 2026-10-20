@@ -9,6 +9,7 @@ import (
 
 	contract "github.com/quotacore/quotacore/api"
 	"github.com/quotacore/quotacore/internal/envelope"
+	"github.com/quotacore/quotacore/internal/store"
 )
 
 // actor is the audit actor of a request: the key the router authenticated.
@@ -38,6 +39,10 @@ func (s *Service) fail(w http.ResponseWriter, r *http.Request, err error) {
 	var own *refusal
 	if errors.As(err, &own) {
 		envelope.Write(w, r, own.problem)
+		return
+	}
+	if errors.Is(err, store.ErrReadOnly) {
+		readOnly(w, r)
 		return
 	}
 	var down errDataStore
@@ -82,6 +87,13 @@ func (s *Service) fail(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.Write(w, r, envelope.Error(contract.ErrorCodeControlPlaneUnavailable,
 			"the control plane did not answer").Retry(1000))
 	}
+}
+
+// readOnly is the 503 for a write a rebuild's read-only mode refuses (IP-11
+// D5): nothing was committed and nothing was changed.
+func readOnly(w http.ResponseWriter, r *http.Request) {
+	envelope.Write(w, r, envelope.Error(contract.ErrorCodeServiceUnavailable,
+		"the service is in read-only recovery mode, so nothing was changed").Retry(1000))
 }
 
 // message is the human line of each refusal an admin route answers. It names

@@ -4587,6 +4587,17 @@ func (s *Status) Validate() error {
 		})
 	}
 	if err := func() error {
+		if err := s.Mode.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "mode",
+			Error: err,
+		})
+	}
+	if err := func() error {
 		if err := (validate.Int{
 			MinSet:        true,
 			Min:           0,
@@ -4703,6 +4714,17 @@ func (s *Status) Validate() error {
 		return &validate.Error{Fields: failures}
 	}
 	return nil
+}
+
+func (s StatusMode) Validate() error {
+	switch s {
+	case "normal":
+		return nil
+	case "readonly":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
 }
 
 func (s *StatusOKHeaders) Validate() error {

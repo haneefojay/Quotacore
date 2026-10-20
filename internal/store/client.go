@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -24,6 +25,8 @@ type Options struct {
 type Store struct {
 	client  *redis.Client
 	timeout time.Duration
+	// readOnly refuses every tenant write when set (readonly.go).
+	readOnly atomic.Bool
 }
 
 // Open builds a Store from a URL, or returns an error if the URL cannot parse.
@@ -41,10 +44,14 @@ func Open(opts Options) (*Store, error) {
 	// and never answers would hold a request far past DataScriptTimeout. The
 	// deadline the caller sets is the bound (NFR-L4, IP-07 DoD 5).
 	base.ContextTimeoutEnabled = true
-	return &Store{
+	s := &Store{
 		client:  redis.NewClient(base),
 		timeout: opts.DataScriptTimeout,
-	}, nil
+	}
+	// The read-only guard is on the client itself, so a script run through
+	// Client() by the runner meets it as surely as a call made here (IP-11 D5).
+	s.client.AddHook(guard{s})
+	return s, nil
 }
 
 // Client exposes the underlying go-redis client to the packages that need it.
