@@ -50,7 +50,7 @@ func TestTheSixScriptsShareOneTransitionBlock(t *testing.T) {
 // TestTheControlScriptsKeepTheSourceRules: literal commands from the data
 // plane's list and nothing else, no loop, no pcall, and the same bound.
 func TestTheControlScriptsKeepTheSourceRules(t *testing.T) {
-	allowed := map[string]bool{"HMGET": true, "HSET": true, "HINCRBY": true, "EXPIREAT": true, "PERSIST": true}
+	allowed := map[string]bool{"HMGET": true, "HSET": true, "HINCRBY": true, "PERSIST": true}
 	callSite := regexp.MustCompile(`redis\.(call|pcall)\(\s*'([A-Za-z]+)'`)
 	anyCall := regexp.MustCompile(`redis\.(call|pcall)\(`)
 	banned := []string{

@@ -22,11 +22,11 @@ type Opening struct {
 }
 
 // Provision writes a new tenant's balance hashes, each one whole: the six
-// fields and the expiry in one MULTI/EXEC, so a hash is written with all six
-// fields or not at all (data-model.md section 3.2). A failure part way leaves
+// fields in one MULTI/EXEC, so a hash is written with all six fields or not at
+// all (data-model.md section 3.2), and with no expiry, because a balance hash
+// never expires (INV-C3, as amended 2026-10-20). A failure part way leaves
 // the hashes already written, which the caller's rollback makes unreachable:
-// they name a tenant id that was never committed, and they expire at
-// window_end + 24h like any other.
+// they name a tenant id that was never committed.
 func (s *Store) Provision(ctx context.Context, tenantID string, openings []Opening) error {
 	for _, o := range openings {
 		key, err := BalanceKey(tenantID, o.Feature)
@@ -40,9 +40,7 @@ func (s *Store) Provision(ctx context.Context, tenantID string, openings []Openi
 		pipe := s.client.TxPipeline()
 		pipe.HSet(ctx, key, "balance", o.Limit, "limit", o.Limit, "bonus", 0, "cycle_index", o.Index,
 			"window_start", o.Start.UnixMilli(), "window_end", end)
-		if exp, ok := KeyExpiry(o.End); ok {
-			pipe.PExpireAt(ctx, key, exp)
-		}
+		pipe.Persist(ctx, key)
 		if _, err := pipe.Exec(ctx); err != nil {
 			return fmt.Errorf("provision %s: %w", o.Feature, err)
 		}

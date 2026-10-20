@@ -262,7 +262,7 @@ is possible because the scripts are static and take everything they need as `ARG
 | --- | --- |
 | The happy path, per script | The expected balance and return shape |
 | Every return branch | Each documented status is reachable, which stops dead code accumulating in a script |
-| `EXPIREAT` set to `window_end + 24h` | INV-C6, asserted by reading `PTTL` |
+| No expiry on a balance hash, whatever its window | INV-C3, asserted by reading `PTTL` as `-1` after every script, a stale call included. Amended 2026-10-20: this row asserted `window_end + 24h` |
 | `reset_interval = never` | No expiry is set at all, asserted by reading `PTTL` as `-1`, and the balance survives a simulated boundary (DR-008). The mirror of the row above: a `never` entitlement is the case where the key outlives every cycle |
 | No `KEYS`, no `SCAN`, no unbounded loop | A source-level assertion over the script text, plus a fuzz test asserting execution time is flat as metadata and key length grow |
 | A `NOSCRIPT` condition | The client re-registers with `SCRIPT LOAD` and the request succeeds |

@@ -10,7 +10,7 @@
 --
 -- A control-plane script, run by the re-anchor drain after a plan change or an
 -- apply-now has committed in Postgres (IP-10 D2). It writes all six fields and
--- the expiry, so the hash is whole or untouched, and it is the plan-assignment
+-- clears any expiry, so the hash is whole or untouched, and it is the plan-assignment
 -- moment DR-045 names: the one other writer, besides provisioning, that may
 -- materialise a hash.
 --
@@ -28,7 +28,6 @@
 -- none to read. A moved answer carries nothing else.
 
 local BOUND = 9007199254740991
-local DAY = 86400
 local KEY = KEYS[1]
 
 local function num(v)
@@ -71,11 +70,7 @@ end
 local before = tonumber(field(stored[1]) or '')
 redis.call('HSET', KEY, 'balance', num(limit), 'limit', num(limit), 'bonus', '0',
            'cycle_index', num(index), 'window_start', num(start), 'window_end', end_arg)
-if finish == nil then
-  redis.call('PERSIST', KEY)
-else
-  redis.call('EXPIREAT', KEY, math.floor(finish / 1000) + DAY)
-end
+redis.call('PERSIST', KEY)
 local discarded = ''
 if before and before >= 0 and before <= BOUND then
   discarded = num(before)

@@ -23,7 +23,6 @@
 -- written, and the balance before the refill.
 
 local BOUND = 9007199254740991
-local DAY = 86400
 local KEY = KEYS[1]
 
 local function num(v)
@@ -62,5 +61,5 @@ end
 
 redis.call('HSET', KEY, 'balance', num(limit), 'limit', num(limit), 'bonus', '0',
            'cycle_index', num(index), 'window_start', num(start), 'window_end', num(finish))
-redis.call('EXPIREAT', KEY, math.floor(finish / 1000) + DAY)
+redis.call('PERSIST', KEY)
 return { 'applied', 'rolled', num(limit), num(limit), '0', num(index), num(start), num(finish), num(balance) }

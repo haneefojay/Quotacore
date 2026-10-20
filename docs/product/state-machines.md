@@ -254,8 +254,11 @@ advance(now):
   is what makes an out-of-order or duplicated worker harmless (ADR-0003).
 - INV-C2 The request path and the worker use the same transition, so the two racing on a boundary
   converge. There is no second implementation of rollover to drift out of agreement.
-- INV-C3 Key expiry is `window_end + 24h`, which is strictly later than any rollover could
-  legitimately need, so a live tenant's key is never absent (garbage collection only).
+- INV-C3 A balance hash has no expiry, so a live tenant's key is never absent. (Amended
+  2026-10-20: this read "key expiry is `window_end + 24h`, which is strictly later than any rollover
+  could legitimately need". No v0.1 phase runs the worker that would keep an idle tenant's hash
+  alive, so that expiry removed the hash a day after an idle tenant's window closed, and DR-045
+  forbids the request path from writing it again: the tenant was refused `503` until a rebuild.)
 - INV-C4 Within a cycle, `balance = opening_allowance + Σ(delta)` (DR-042).
 - INV-C5 `bonus` is zero at the start of every cycle except when a grant has been applied to the
   new cycle (DR-020).

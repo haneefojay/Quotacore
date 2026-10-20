@@ -617,6 +617,18 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Fixed
 
+- **An idle tenant was locked out a day after its window closed.** Every balance hash was written
+  with `EXPIREAT window_end + 24h`, only provisioning and a re-anchor may create one (DR-045), and no
+  v0.1 phase runs the worker that would have kept an idle tenant's hash alive, so an hourly tenant
+  idle for 25 hours was answered `503 service_unavailable` until a rebuild. A balance hash now has no
+  expiry: the six transition scripts, `rollover.lua`, `reanchor.lua` and provisioning `PERSIST` it, which
+  also clears the expiry an earlier binary left at the hash's next write. INV-C3, INV-X6, data-model
+  §3.1 and §5, cycle-engine §5, request-lifecycle step 3, testing-strategy §4, performance,
+  deployment's command list and `IP-05` item 7 carry dated notes. `TestABalanceHashNeverExpires`
+  and `TestAnIdleTenantIsStillServedAfterADay` reproduce it. A deleted tenant's hashes now stay
+  until removed: deleting them on soft deletion would answer an in-flight request `503`, which T-15
+  does not permit.
+
 - **A consume of zero answered `503`** (`IP-05`). consume.lua passed the negated amount to
   `HINCRBY`, and Lua renders the negation of zero as `-0`, which Redis refuses as not an integer, so
   DR-023's valid zero-amount request failed as a store fault. The increment is formatted as an

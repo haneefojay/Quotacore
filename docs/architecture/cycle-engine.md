@@ -205,7 +205,7 @@ CYCLE_TRANSITION(cycle_index, target_index, window_start, window_end, limit, bon
      window_end   = window_end
      balance      = limit                               # fresh allowance, no carry-over
      bonus        = 0                                    # DR-020
-     EXPIREAT     = window_end + 24h
+     PERSIST                                            # no expiry (INV-C3, amended 2026-10-20)
      emit cycle_rolled_over
      return ROLLED
 ```
@@ -217,7 +217,7 @@ Four properties, each of which corresponds to a failure that a naive implementat
 | Step 2 refuses to move backwards | A duplicated or delayed worker re-granting a stale allowance. The single most dangerous bug in a lazy-rollover design |
 | Step 3 is a single comparison | The hot path does not reset on every request, which is the whole point of lazy rollover |
 | Step 4 computes from the passed target | No accumulation of floating-point or rounding error, and identical results in the request path and the worker |
-| `EXPIREAT` is `window_end + 24h` | A key expiring before a rollover could need it. A `DUE` expiry is a correctness bug; a late expiry is only a dangling key (INV-C6) |
+| `PERSIST`, no expiry | A key expiring before a rollover could need it. Amended 2026-10-20: this was `EXPIREAT window_end + 24h`, and with no worker an idle tenant's key expired before its next request needed it (INV-C3) |
 
 **The worker and the request path call the same function.** There is no second implementation. If
 the two ever diverged, a race would produce either a duplicate allowance or a lost deduction, and
