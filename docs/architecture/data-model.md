@@ -275,6 +275,7 @@ CREATE TABLE usage_events (
   metadata       jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at     timestamptz NOT NULL DEFAULT now(),
   cycle_start    timestamptz,                      -- the window the hash was in
+  reconciles_key text,                             -- the key a reversal pair reconciles
   CONSTRAINT usage_events_delta_nonzero CHECK (delta <> 0),
   CONSTRAINT usage_events_seq_unique UNIQUE (seq)
 );
@@ -329,7 +330,23 @@ CREATE UNIQUE INDEX usage_events_idem_idx
   ON usage_events (tenant_id, idempotency_key)
   WHERE idempotency_key IS NOT NULL AND event_type IN ('consumed', 'refunded');
 CREATE INDEX usage_events_created_brin ON usage_events USING brin (created_at);
+CREATE INDEX usage_events_reconciles_idx
+  ON usage_events (tenant_id, reconciles_key) WHERE reconciles_key IS NOT NULL;
+CREATE INDEX usage_events_cycle_seq_idx
+  ON usage_events (tenant_id, feature_id, cycle_start, cycle_index, seq);
 ```
+
+> **Amended 2026-10-20 (`IP-11`) — `reconciles_key`, and the order the verifier reads.** A
+> duplicate reversal (DR-049) appends two rows: the second deduction itself, which the partial
+> unique index refused under the customer's key, and the `system` refund that reverses it. Neither
+> carries `idempotency_key`, so the index does not fire again; both carry the customer's key in
+> `reconciles_key`, and the events route's key filter reads either column, so a disputed key returns
+> the first deduction, the second and the reversal together. `usage_events_cycle_seq_idx` is the
+> order the verifier reads one tenant-feature's cycles in, which `usage_events_tenant_cycle_idx`
+> cannot give because it does not carry the window. The verifier checks every row against the one
+> before it in that tenant-feature's history: a row's `balance_after` less its `delta` is the
+> previous row's `balance_after`, across cycle boundaries as well as inside one, because every
+> balance move is a row and a move of zero writes none (Q-22).
 
 The BRIN index is the time index the retention job deletes by (section 5), as ADR-0016 names it.
 
@@ -487,8 +504,13 @@ CREATE TABLE usage_event_dead_letters (
   error       text NOT NULL,
   attempts    integer NOT NULL DEFAULT 1,
   created_at  timestamptz NOT NULL DEFAULT now(),
+  resolved_at timestamptz,
+  resolution  text,
   CONSTRAINT usage_event_dead_letters_reason
-    CHECK (reason IN ('duplicate_idempotency_key', 'rejected'))
+    CHECK (reason IN ('duplicate_idempotency_key', 'rejected')),
+  CONSTRAINT usage_event_dead_letters_resolution
+    CHECK ((resolved_at IS NULL) = (resolution IS NULL)
+           AND (resolution IS NULL OR resolution IN ('reversed', 'tenant_deleted', 'referred')))
 );
 
 CREATE INDEX usage_event_dead_letters_created_idx ON usage_event_dead_letters (created_at);
@@ -501,6 +523,97 @@ and the input reconciliation reverses (DR-049); it is never replayed into the le
 `rejected` is any other permanent refusal, such as a feature key that resolves to no feature; the
 retention job re-attempts each one on every tick, deletes it in the transaction that appends it,
 and raises `attempts` when it fails again. This table is not the ledger and is not append-only.
+
+> **Amended 2026-10-20 (`IP-11`) — a duplicate is resolved, and is appended once.** "Never replayed
+> into the ledger" holds for the duplicate **under its key**. Reconciliation's pass reverses it
+> (DR-049): in one transaction it appends the duplicate with its key moved to `reconciles_key`,
+> appends the reversal, writes a `tenant.reverse_duplicate` audit row and sets `resolved_at` and
+> `resolution` to `reversed`. A deleted tenant's duplicate is resolved `tenant_deleted` with no
+> refund; a refund the ceiling refuses (DR-021), and a duplicate `refunded`, which DR-049 does not
+> reverse, are resolved `referred` with a finding for a person. Until it is reversed, a duplicate is
+> part of the ledger the verifier reads, because the store applied it.
+
+### 2.13 Reconciliation findings and checkpoint
+
+```sql
+CREATE TABLE reconcile_findings (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  fingerprint  text NOT NULL,
+  kind         text NOT NULL,
+  tenant_id    uuid,
+  feature_key  text,
+  cycle_index  bigint,
+  cycle_start  timestamptz,
+  expected     bigint,
+  actual       bigint,
+  detail       text NOT NULL,
+  found_by     text NOT NULL,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT reconcile_findings_fingerprint UNIQUE (fingerprint),
+  CONSTRAINT reconcile_findings_kind CHECK (kind IN ('identity', 'chain', 'hash_balance', 'hash_cycle',
+    'hash_missing', 'no_cycle_start', 'reversal_refused', 'duplicate_refund', 'unreconcilable')),
+  CONSTRAINT reconcile_findings_found_by CHECK (found_by IN ('pass', 'verify', 'rebuild'))
+);
+
+CREATE INDEX reconcile_findings_created_idx ON reconcile_findings (created_at DESC);
+
+CREATE TABLE reconcile_checkpoint (
+  id          boolean PRIMARY KEY DEFAULT true,
+  events_seq  bigint NOT NULL DEFAULT 0,
+  gaps_id     bigint NOT NULL DEFAULT 0,
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT reconcile_checkpoint_one_row CHECK (id)
+);
+```
+
+Added 2026-10-20 by `IP-11`. A finding is what reconciliation found, kept so it outlives the log
+line and the pass that found it; `fingerprint` names one disagreement, so a pass that sees it again
+inserts nothing and `quotacore_event_reconcile_mismatch_total` rises once per finding. Nothing
+corrects a balance because a finding exists (DR-042). The checkpoint is how far the in-service pass
+has read, so each pass verifies only the tenant-features whose rows or gaps arrived since.
+
+### 2.14 Usage event gaps
+
+```sql
+CREATE TABLE usage_event_gaps (
+  id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  session_id   uuid,
+  tenant_id    uuid,
+  feature_key  text,
+  reason       text NOT NULL,
+  events       bigint NOT NULL,
+  first_at     timestamptz NOT NULL,
+  last_at      timestamptz NOT NULL,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT usage_event_gaps_reason CHECK (reason IN ('queue_full', 'error', 'shutdown')),
+  CONSTRAINT usage_event_gaps_events CHECK (events > 0)
+);
+```
+
+Added 2026-10-20 by `IP-11`. What a ledger writer dropped, tallied by tenant and feature over the
+instants the dropped mutations happened, so a rebuild knows which cycles it cannot call exact. It
+is a record that something is missing, kept outside the ledger, not a synthetic event, which
+consistency-and-recovery.md section 4.5 forbids. A `NULL` `tenant_id` means every tenant between
+`first_at` and `last_at`: the tally is bounded in memory, and one that overflows writes that.
+
+### 2.15 Ledger sessions
+
+```sql
+CREATE TABLE ledger_sessions (
+  id               uuid PRIMARY KEY,
+  host             text NOT NULL,
+  started_at       timestamptz NOT NULL DEFAULT now(),
+  settled_through  timestamptz NOT NULL DEFAULT now(),
+  last_seen_at     timestamptz NOT NULL DEFAULT now(),
+  closed_at        timestamptz
+);
+```
+
+Added 2026-10-20 by `IP-11`. One row per ledger writer for its life. `settled_through` is an
+instant before which every event the writer accepted has been written, dead-lettered or tallied as
+a gap; `last_seen_at` is refreshed on a heartbeat while the writer lives. A clean drain sets
+`closed_at`. A session left open whose `last_seen_at` has gone stale is a crash, and a rebuild
+reads it as a gap for every tenant from `settled_through` to `last_seen_at` plus a heartbeat.
 
 ---
 

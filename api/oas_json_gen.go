@@ -7793,6 +7793,10 @@ func (s *Status) encodeFields(e *jx.Encoder) {
 		s.Status.Encode(e)
 	}
 	{
+		e.FieldStart("mode")
+		s.Mode.Encode(e)
+	}
+	{
 		e.FieldStart("version")
 		e.Str(s.Version)
 	}
@@ -7838,18 +7842,19 @@ func (s *Status) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfStatus = [11]string{
+var jsonFieldsNameOfStatus = [12]string{
 	0:  "status",
-	1:  "version",
-	2:  "commit",
-	3:  "zone_data_version",
-	4:  "server_time",
-	5:  "uptime_s",
-	6:  "dependencies",
-	7:  "cache",
-	8:  "queue_depth",
-	9:  "worker",
-	10: "ledger_dropped_total",
+	1:  "mode",
+	2:  "version",
+	3:  "commit",
+	4:  "zone_data_version",
+	5:  "server_time",
+	6:  "uptime_s",
+	7:  "dependencies",
+	8:  "cache",
+	9:  "queue_depth",
+	10: "worker",
+	11: "ledger_dropped_total",
 }
 
 // Decode decodes Status from json.
@@ -7871,8 +7876,18 @@ func (s *Status) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"status\"")
 			}
-		case "version":
+		case "mode":
 			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Mode.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"mode\"")
+			}
+		case "version":
+			requiredBitSet[0] |= 1 << 2
 			if err := func() error {
 				v, err := d.Str()
 				s.Version = string(v)
@@ -7884,7 +7899,7 @@ func (s *Status) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"version\"")
 			}
 		case "commit":
-			requiredBitSet[0] |= 1 << 2
+			requiredBitSet[0] |= 1 << 3
 			if err := func() error {
 				v, err := d.Str()
 				s.Commit = string(v)
@@ -7896,7 +7911,7 @@ func (s *Status) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"commit\"")
 			}
 		case "zone_data_version":
-			requiredBitSet[0] |= 1 << 3
+			requiredBitSet[0] |= 1 << 4
 			if err := func() error {
 				v, err := d.Str()
 				s.ZoneDataVersion = string(v)
@@ -7908,7 +7923,7 @@ func (s *Status) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"zone_data_version\"")
 			}
 		case "server_time":
-			requiredBitSet[0] |= 1 << 4
+			requiredBitSet[0] |= 1 << 5
 			if err := func() error {
 				if err := s.ServerTime.Decode(d); err != nil {
 					return err
@@ -7918,7 +7933,7 @@ func (s *Status) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"server_time\"")
 			}
 		case "uptime_s":
-			requiredBitSet[0] |= 1 << 5
+			requiredBitSet[0] |= 1 << 6
 			if err := func() error {
 				v, err := d.Int64()
 				s.UptimeS = int64(v)
@@ -7930,7 +7945,7 @@ func (s *Status) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"uptime_s\"")
 			}
 		case "dependencies":
-			requiredBitSet[0] |= 1 << 6
+			requiredBitSet[0] |= 1 << 7
 			if err := func() error {
 				s.Dependencies = make([]DependencyHealth, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -7948,7 +7963,7 @@ func (s *Status) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"dependencies\"")
 			}
 		case "cache":
-			requiredBitSet[0] |= 1 << 7
+			requiredBitSet[1] |= 1 << 0
 			if err := func() error {
 				if err := s.Cache.Decode(d); err != nil {
 					return err
@@ -7958,7 +7973,7 @@ func (s *Status) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"cache\"")
 			}
 		case "queue_depth":
-			requiredBitSet[1] |= 1 << 0
+			requiredBitSet[1] |= 1 << 1
 			if err := func() error {
 				v, err := d.Int64()
 				s.QueueDepth = int64(v)
@@ -7970,7 +7985,7 @@ func (s *Status) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"queue_depth\"")
 			}
 		case "worker":
-			requiredBitSet[1] |= 1 << 1
+			requiredBitSet[1] |= 1 << 2
 			if err := func() error {
 				if err := s.Worker.Decode(d); err != nil {
 					return err
@@ -7980,7 +7995,7 @@ func (s *Status) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"worker\"")
 			}
 		case "ledger_dropped_total":
-			requiredBitSet[1] |= 1 << 2
+			requiredBitSet[1] |= 1 << 3
 			if err := func() error {
 				v, err := d.Int64()
 				s.LedgerDroppedTotal = int64(v)
@@ -8002,7 +8017,7 @@ func (s *Status) Decode(d *jx.Decoder) error {
 	var failures []validate.FieldError
 	for i, mask := range [2]uint8{
 		0b11111111,
-		0b00000111,
+		0b00001111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -8044,6 +8059,46 @@ func (s *Status) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *Status) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes StatusMode as json.
+func (s StatusMode) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes StatusMode from json.
+func (s *StatusMode) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode StatusMode to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch StatusMode(v) {
+	case StatusModeNormal:
+		*s = StatusModeNormal
+	case StatusModeReadonly:
+		*s = StatusModeReadonly
+	default:
+		*s = StatusMode(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s StatusMode) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *StatusMode) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

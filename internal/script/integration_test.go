@@ -7,7 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -975,15 +975,19 @@ func seedSiblings(t *testing.T, s *store.Store, prefix string, count int) {
 	}
 }
 
-// measureConsume runs the call a few times and takes the median, because a single
-// timing on a shared machine is a coin toss and a coin toss is not a test.
+// measureConsume runs the call a few times and takes the fastest, because a single
+// timing on a shared machine is a coin toss and a coin toss is not a test. The
+// median is not enough either: go test runs the packages at once against one
+// store, and their load lands on whichever samples it overlaps. Noise only adds
+// time, so the fastest call is the work itself, and a walk of 200 hashes would
+// still be in it.
 func measureConsume(t *testing.T, runner *Runner, req Request) time.Duration {
 	t.Helper()
 	// Each sample is a distinct operation, so the samples measure a consume and
 	// not a replay: a repeat of one key would be served from the record and
 	// would be the one call this test is not about.
 	var samples []time.Duration
-	for i := 0; i < 11; i++ {
+	for i := 0; i < 21; i++ {
 		call := req
 		call.IdempotencyKey = idemKey(t)
 		start := time.Now()
@@ -992,8 +996,7 @@ func measureConsume(t *testing.T, runner *Runner, req Request) time.Duration {
 		}
 		samples = append(samples, time.Since(start))
 	}
-	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
-	return samples[len(samples)/2]
+	return slices.Min(samples)
 }
 
 // TestT09AFailedRequestLeavesNothingBehind is T-09 and Definition of Done item 4,

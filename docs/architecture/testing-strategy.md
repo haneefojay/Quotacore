@@ -181,6 +181,14 @@ For every tenant and feature in a generated dataset, assert the four-way agreeme
 nightly suite against a dataset that has had thousands of operations, rollovers, grants, sets and
 plan changes applied to it, because a reconciliation test on a clean dataset proves nothing.
 
+Amended 2026-10-20 (`IP-11`): no nightly suite exists before `IP-16`, so CI runs T-11 on every
+change against a seeded dataset of several hundred operations over hourly, monthly and `never`
+features in three zones, with `verify-all` and the in-service pass both required to find nothing;
+then five faults are injected one per tenant-feature (an event dropped mid-cycle, at the end of a
+closed cycle and at the end of the open one, a `balance_after` altered in place, and a hash
+balance altered in the store), and each must be found under its own kind, counted once across two
+passes, and corrected by nothing. The nightly run at thousands of operations is `IP-16`'s.
+
 ### T-12 — Wide `apply-now` needs a confirmation
 
 A `POST /v1/admin/plans/{id}/apply` against a plan with more assigned tenants than
@@ -213,6 +221,11 @@ And    exactly one refund of 30 is issued against that key
 And    the tenant's net balance equals a single charge of 30
 And    a second reconciliation pass issues no further refund
 ```
+
+Amended 2026-10-20 (`IP-11`): the sixth line's refund cannot run under the client's key, which
+still holds the first deduction's record; it runs under `#reversal/<event_id>`, and the client's
+key is carried on the reversal's row, so filtering the events by that key returns the deduction,
+the duplicate and the reversal (DR-049's note).
 
 Amended 2026-10-20 (`IP-12`): the fifth line read "detects the duplicate event_id". The replayed
 request is a new mutation with its own `event_id`; what repeats is the idempotency key, which is

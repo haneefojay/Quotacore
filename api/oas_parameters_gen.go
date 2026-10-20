@@ -191,7 +191,9 @@ type ListUsageEventsParams struct {
 	// Who caused the event. Any other value is `400 validation_failed`.
 	Source OptEventSource `json:",omitempty,omitzero"`
 	// Filter the ledger to one logical operation, by the key the customer sent. This is how a disputed
-	// charge is resolved: the recorded outcome shows whether it was applied once or twice (UC-16).
+	// charge is resolved: the recorded outcome shows whether it was applied once or twice (UC-16). The
+	// filter also returns a duplicate that reconciliation reversed and the reversal itself, which carry
+	// the key they reconcile (DR-049, amended 2026-10-20).
 	IdempotencyKey OptIdempotencyKey `json:",omitempty,omitzero"`
 	// Start of the time range, RFC 3339 with an explicit offset. Same format as responses.
 	From OptTimestamp `json:",omitempty,omitzero"`

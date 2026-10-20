@@ -815,7 +815,7 @@ func (a *Admin) ListEvents(ctx context.Context, id string, f admin.EventFilter, 
 	}
 	rows, err := a.db.QueryContext(ctx, `
 SELECT u.id, f.key, u.cycle_index, u.delta, u.balance_after, u.source, u.event_type, u.request_id,
-       u.idempotency_key, u.created_at, u.seq, n.interval::text, u.cycle_start
+       coalesce(u.idempotency_key, u.reconciles_key), u.created_at, u.seq, n.interval::text, u.cycle_start
   FROM usage_events u
   JOIN features f ON f.id = u.feature_id
   LEFT JOIN tenant_entitlement_pins n ON n.tenant_id = u.tenant_id AND n.feature_id = u.feature_id
@@ -824,7 +824,7 @@ SELECT u.id, f.key, u.cycle_index, u.delta, u.balance_after, u.source, u.event_t
    AND ($5 = '' OR f.key = $5)
    AND ($6 = '' OR u.event_type::text = $6)
    AND ($7 = '' OR u.source::text = $7)
-   AND ($8 = '' OR u.idempotency_key = $8)
+   AND ($8 = '' OR u.idempotency_key = $8 OR u.reconciles_key = $8)
    AND ($9::timestamptz IS NULL OR u.created_at >= $9)
    AND ($10::timestamptz IS NULL OR u.created_at < $10)
  ORDER BY u.created_at DESC, u.seq DESC LIMIT $4`,

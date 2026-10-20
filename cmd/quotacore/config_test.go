@@ -376,3 +376,75 @@ func TestLoadReadsTheLedgerKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadReadsTheReconciliationKeys: the startup mode is normal unless it
+// is readonly, anything else refuses to start, and the pass's interval is
+// five minutes and never under one (IP-11 D2, D5).
+func TestLoadReadsTheReconciliationKeys(t *testing.T) {
+	c, err := Load(env(baseEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.StartupMode != ModeNormal || c.ReconcileInterval != 5*time.Minute || c.Settle() != time.Minute {
+		t.Errorf("defaults: %q %v settle %v", c.StartupMode, c.ReconcileInterval, c.Settle())
+	}
+	e := baseEnv()
+	e["QUOTACORE_STARTUP_MODE"] = "readonly"
+	e["QUOTACORE_RECONCILE_INTERVAL"] = "90s"
+	e["QUOTACORE_EVENT_FLUSH_INTERVAL"] = "10s"
+	if c, err = Load(env(e)); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.StartupMode != ModeReadOnly || c.ReconcileInterval != 90*time.Second || c.Settle() != 100*time.Second {
+		t.Errorf("overrides: %q %v settle %v", c.StartupMode, c.ReconcileInterval, c.Settle())
+	}
+	for key, value := range map[string]string{
+		"QUOTACORE_STARTUP_MODE":       "maintenance",
+		"QUOTACORE_RECONCILE_INTERVAL": "30s",
+	} {
+		e := baseEnv()
+		e[key] = value
+		if _, err := Load(env(e)); err == nil {
+			t.Errorf("Load accepted %s=%q, want a refusal", key, value)
+		}
+	}
+	e = baseEnv()
+	e["QUOTACORE_RECONCILE_INTERVAL"] = "often"
+	if _, err := Load(env(e)); err == nil {
+		t.Error("Load accepted an unreadable QUOTACORE_RECONCILE_INTERVAL")
+	}
+}
+
+// TestTheRebuildFlagsAreRead: a write needs a reason, the operator's
+// references name a tenant and a feature, and a set names a whole number.
+func TestTheRebuildFlagsAreRead(t *testing.T) {
+	o, err := parseRebuild([]string{"--apply", "--reason", "drill", "--accept", "acme:tokens", "--set", "beta:seats=4",
+		"--ledger-restored-at", "2026-10-20T10:00:00Z", "--report", "out.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.apply || o.reason != "drill" || o.acceptRefs[0] != "acme:tokens" || o.setRefs["beta:seats"] != 4 ||
+		o.restoredAt.IsZero() || o.reportFile != "out.json" {
+		t.Errorf("parsed %+v", o)
+	}
+	if o, err := parseRebuild(nil); err != nil || o.apply {
+		t.Errorf("no flags is a dry run: %+v, %v", o, err)
+	}
+	for _, args := range [][]string{
+		{"--apply"},
+		{"--accept", "acme:tokens"},
+		{"--set", "acme:tokens=4"},
+		{"--reason", "r", "--accept", "acme"},
+		{"--reason", "r", "--set", "acme:tokens=-1"},
+		{"--reason", "r", "--set", "acme:tokens"},
+		{"--ledger-restored-at", "yesterday"},
+		{"extra"},
+	} {
+		if _, err := parseRebuild(args); err == nil {
+			t.Errorf("parseRebuild accepted %v", args)
+		}
+	}
+	if !isCommand([]string{"rebuild"}) || isCommand([]string{"serve"}) || isCommand(nil) {
+		t.Error("isCommand names the wrong set")
+	}
+}

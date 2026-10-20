@@ -1544,7 +1544,10 @@ paths:
         `balance_after` is stored rather than recomputed (DR-042).
 
         For a specific disputed charge, filter by the customer's `Idempotency-Key` to see the
-        recorded outcome, which is how you prove whether a call was applied once or twice.
+        recorded outcome, which is how you prove whether a call was applied once or twice. If a
+        lost data store let the same key be applied twice, the filter returns the first
+        deduction, the second, and the `system` refund that reconciliation issued to reverse the
+        second, all three under the customer's key (DR-049, amended 2026-10-20).
 
         A known limitation, stated here because a silently incomplete history is worse than a
         documented one: events are appended to the ledger **best effort and at-least-once**, and a
@@ -1920,7 +1923,8 @@ components:
       description: |
         Filter the ledger to one logical operation, by the key the customer sent. This is how a
         disputed charge is resolved: the recorded outcome shows whether it was applied once or
-        twice (UC-16).
+        twice (UC-16). The filter also returns a duplicate that reconciliation reversed and the
+        reversal itself, which carry the key they reconcile (DR-049, amended 2026-10-20).
       schema:
         $ref: '#/components/schemas/IdempotencyKey'
     TenantExternalIdRequired:
@@ -5049,7 +5053,9 @@ components:
           description: |
             The customer's key, on `consumed` and `refunded`. Filtering by it is how a disputed
             charge is resolved: the recorded outcome shows whether it was applied once or twice
-            (UC-16).
+            (UC-16). On a duplicate that reconciliation reversed, and on the `system` refund that
+            reversed it, this is the customer's key the pair reconciles (DR-049, amended
+            2026-10-20).
         cycle_start:
           oneOf:
             - $ref: '#/components/schemas/Timestamp'
@@ -5377,7 +5383,7 @@ components:
         reference tables is diagnosable if you know which tables the node used, and is not
         diagnosable otherwise (ADR-0007).
       additionalProperties: false
-      required: [status, version, commit, zone_data_version, server_time, uptime_s, dependencies, cache, queue_depth, worker, ledger_dropped_total]
+      required: [status, mode, version, commit, zone_data_version, server_time, uptime_s, dependencies, cache, queue_depth, worker, ledger_dropped_total]
       properties:
         status:
           type: string
@@ -5385,6 +5391,15 @@ components:
             A single word for a dashboard. Read `dependencies` for the detail: one word cannot say
             which dependency is down, and a status that cannot is the status that gets ignored.
           enum: [ok, degraded]
+        mode:
+          type: string
+          description: |
+            `readonly` while this instance was started with `QUOTACORE_STARTUP_MODE=readonly` for a
+            rebuild, or has lost its hold on the rebuild fence; it then refuses every write to a
+            tenant's balances and idempotency records with `503 service_unavailable`, and
+            `/readyz` is not ready. `normal` otherwise (consistency-and-recovery.md section 4.1,
+            added 2026-10-20).
+          enum: [normal, readonly]
         version:
           type: string
           description: The build version.

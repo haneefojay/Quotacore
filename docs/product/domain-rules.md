@@ -350,6 +350,14 @@ what [ADR-0017](../decisions/0017-noeviction-and-duplicate-reversal.md) point 3 
 applied mutation mints its own `event_id`, so the replay after a store loss carries a new one; the
 writer keeps the refused event in the dead-letter table, and the reversal is idempotent on that
 second event's `event_id`. The rule is not otherwise changed.
+*Note, 2026-10-20 (`IP-11`):* "against the same idempotency key" cannot be done literally: the
+client's key already holds the first deduction's record, so a refund under it is `reused`. The
+refund runs under a key derived from the duplicate, `#reversal/<event_id>`, which no client can
+send and which makes a retried reversal a replay, and the client's key is carried on the ledger
+row as `reconciles_key`, so filtering the tenant's events by that key returns the deduction, the
+duplicate and the reversal. A reversal the refund's ceiling refuses (DR-021) and a duplicate
+`refund`, which this rule does not speak of, are referred to a person as findings rather than
+reversed. The mechanism is IP-11's D4 in [consistency-and-recovery](../architecture/consistency-and-recovery.md#5-reconciliation).
 
 ## Tenants
 
@@ -494,6 +502,11 @@ recovery runbook.
 (Amended 2026-10-20, `IP-10`: "its plan assignment changes" includes an apply-now, which is the
 same moment for every tenant on the plan, and a force-rollover refills a hash that exists. All
 three are written by the control plane after the change commits, never by a request.)
+(Amended 2026-10-20, `IP-11`: there is no persisted queue. "Queues the tenant-feature for the
+ledger rebuild" is read as "is found by the rebuild's enumeration", because writing a queue on the
+fault path would be a store write while the store is failing. `quotacore rebuild` enumerates every
+tenant-feature from Postgres and writes only a hash the ledger determines exactly, through a
+create-only script; see consistency-and-recovery section 4.1.)
 *Consequence:* a mid-cycle loss of the fast store degrades enforcement for the affected
 tenant-features to fail-closed until the rebuild runs. It never restores a full allowance, because
 a full allowance is indistinguishable from free service, and the data store's eviction policy is

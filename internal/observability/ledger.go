@@ -78,3 +78,34 @@ func (l *Ledger) Register(r prometheus.Registerer) error {
 	}
 	return nil
 }
+
+// Reconcile is the collector set IP-11 owns: the two reconciliation rows of
+// observability.md section 1.5. Neither has a label; the kind, the tenant and
+// the feature of a finding are in its log line and its row, because they are
+// query material and never labels (section 1.7, S2).
+type Reconcile struct {
+	DuplicateReversal prometheus.Counter
+	Mismatch          prometheus.Counter
+}
+
+// NewReconcile builds the collectors.
+func NewReconcile() *Reconcile {
+	return &Reconcile{
+		DuplicateReversal: prometheus.NewCounter(prometheus.CounterOpts{Namespace: Namespace,
+			Name: "duplicate_reversal_total",
+			Help: "Refunds issued by reconciliation for a detected duplicate (DR-049), once per committed reversal."}),
+		Mismatch: prometheus.NewCounter(prometheus.CounterOpts{Namespace: Namespace,
+			Name: "event_reconcile_mismatch_total",
+			Help: "Confirmed disagreements between a balance hash and the ledger, once per finding."}),
+	}
+}
+
+// Register adds the two collectors to r.
+func (c *Reconcile) Register(r prometheus.Registerer) error {
+	for _, m := range []prometheus.Collector{c.DuplicateReversal, c.Mismatch} {
+		if err := r.Register(m); err != nil {
+			return err
+		}
+	}
+	return nil
+}
