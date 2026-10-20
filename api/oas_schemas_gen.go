@@ -6377,6 +6377,11 @@ type Status struct {
 	// A single word for a dashboard. Read `dependencies` for the detail: one word cannot say which
 	// dependency is down, and a status that cannot is the status that gets ignored.
 	Status StatusStatus `json:"status"`
+	// `readonly` while this instance was started with `QUOTACORE_STARTUP_MODE=readonly` for a rebuild, or
+	// has lost its hold on the rebuild fence; it then refuses every write to a tenant's balances and
+	// idempotency records with `503 service_unavailable`, and `/readyz` is not ready. `normal` otherwise
+	// (consistency-and-recovery.md section 4.1, added 2026-10-20).
+	Mode StatusMode `json:"mode"`
 	// The build version.
 	Version string `json:"version"`
 	// The build commit, so a running binary is traceable to a source tree.
@@ -6409,6 +6414,11 @@ type Status struct {
 // GetStatus returns the value of Status.
 func (s *Status) GetStatus() StatusStatus {
 	return s.Status
+}
+
+// GetMode returns the value of Mode.
+func (s *Status) GetMode() StatusMode {
+	return s.Mode
 }
 
 // GetVersion returns the value of Version.
@@ -6466,6 +6476,11 @@ func (s *Status) SetStatus(val StatusStatus) {
 	s.Status = val
 }
 
+// SetMode sets the value of Mode.
+func (s *Status) SetMode(val StatusMode) {
+	s.Mode = val
+}
+
 // SetVersion sets the value of Version.
 func (s *Status) SetVersion(val string) {
 	s.Version = val
@@ -6514,6 +6529,51 @@ func (s *Status) SetWorker(val StatusWorker) {
 // SetLedgerDroppedTotal sets the value of LedgerDroppedTotal.
 func (s *Status) SetLedgerDroppedTotal(val int64) {
 	s.LedgerDroppedTotal = val
+}
+
+// `readonly` while this instance was started with `QUOTACORE_STARTUP_MODE=readonly` for a rebuild, or
+// has lost its hold on the rebuild fence; it then refuses every write to a tenant's balances and
+// idempotency records with `503 service_unavailable`, and `/readyz` is not ready. `normal` otherwise
+// (consistency-and-recovery.md section 4.1, added 2026-10-20).
+type StatusMode string
+
+const (
+	StatusModeNormal   StatusMode = "normal"
+	StatusModeReadonly StatusMode = "readonly"
+)
+
+// AllValues returns all StatusMode values.
+func (StatusMode) AllValues() []StatusMode {
+	return []StatusMode{
+		StatusModeNormal,
+		StatusModeReadonly,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s StatusMode) MarshalText() ([]byte, error) {
+	switch s {
+	case StatusModeNormal:
+		return []byte(s), nil
+	case StatusModeReadonly:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *StatusMode) UnmarshalText(data []byte) error {
+	switch StatusMode(data) {
+	case StatusModeNormal:
+		*s = StatusModeNormal
+		return nil
+	case StatusModeReadonly:
+		*s = StatusModeReadonly
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // StatusOKHeaders wraps Status with response headers.
@@ -7135,7 +7195,9 @@ type UsageEvent struct {
 	// is `NOT NULL` (data-model.md §2.7); `null` is allowed by the schema and is not produced.
 	RequestID NilRequestId `json:"request_id"`
 	// The customer's key, on `consumed` and `refunded`. Filtering by it is how a disputed charge is
-	// resolved: the recorded outcome shows whether it was applied once or twice (UC-16).
+	// resolved: the recorded outcome shows whether it was applied once or twice (UC-16). On a duplicate
+	// that reconciliation reversed, and on the `system` refund that reversed it, this is the customer's
+	// key the pair reconciles (DR-049, amended 2026-10-20).
 	IdempotencyKey NilIdempotencyKey `json:"idempotency_key"`
 	// The start of the event's cycle, recomputed from the tenant's current anchor, zone and interval. Null
 	// for an event older than the current anchor, because a window from before a re-anchor cannot be

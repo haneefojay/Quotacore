@@ -1500,7 +1500,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p><strong>Read a tenant&#39;s usage ledger</strong></p>
 <p>The route that decides whether a team keeps the product, because the first time a<br>customer disputes a deduction is the first time anyone evaluates it (UC-16).</p>
 <p>Each event shows the instant, the signed <code>delta</code>, the <code>balance_after</code>, the cycle window,<br>the <code>source</code> and the <code>request_id</code>. Summing the deltas for a cycle and comparing with the<br>reported balance is the reconciliation an operator performs by hand, and it is why<br><code>balance_after</code> is stored rather than recomputed (DR-042).</p>
-<p>For a specific disputed charge, filter by the customer&#39;s <code>Idempotency-Key</code> to see the<br>recorded outcome, which is how you prove whether a call was applied once or twice.</p>
+<p>For a specific disputed charge, filter by the customer&#39;s <code>Idempotency-Key</code> to see the<br>recorded outcome, which is how you prove whether a call was applied once or twice. If a<br>lost data store let the same key be applied twice, the filter returns the first<br>deduction, the second, and the <code>system</code> refund that reconciliation issued to reverse the<br>second, all three under the customer&#39;s key (DR-049, amended 2026-10-20).</p>
 <p>A known limitation, stated here because a silently incomplete history is worse than a<br>documented one: events are appended to the ledger <strong>best effort and at-least-once</strong>, and a<br>consumer deduplicates on <code>id</code>. Where an event could not be appended, nothing is written in<br>its place; the gap is recorded by <code>ledger_dropped_total</code> in <code>GET /v1/admin/status</code> and by<br><code>quotacore_event_sink_dropped_total</code> (ADR-0016).</p>
 <p class="muted">Operation ID: <code>listUsageEvents</code></p>
 <h4>Authorisation</h4>
@@ -1520,7 +1520,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>source</code></td><td><code>query</code></td><td>no</td><td>EventSource</td><td><p>Who caused the event. Any other value is <code>400 validation_failed</code>.</p>
 </td></tr>
-<tr><td><code>idempotency_key</code></td><td><code>query</code></td><td>no</td><td>IdempotencyKey</td><td><p>Filter the ledger to one logical operation, by the key the customer sent. This is how a<br>disputed charge is resolved: the recorded outcome shows whether it was applied once or<br>twice (UC-16).</p>
+<tr><td><code>idempotency_key</code></td><td><code>query</code></td><td>no</td><td>IdempotencyKey</td><td><p>Filter the ledger to one logical operation, by the key the customer sent. This is how a<br>disputed charge is resolved: the recorded outcome shows whether it was applied once or<br>twice (UC-16). The filter also returns a duplicate that reconciliation reversed and the<br>reversal itself, which carry the key they reconcile (DR-049, amended 2026-10-20).</p>
 </td></tr>
 <tr><td><code>from</code></td><td><code>query</code></td><td>no</td><td>Timestamp</td><td><p>Start of the time range, RFC 3339 with an explicit offset. Same format as responses.</p>
 </td></tr>
@@ -2541,7 +2541,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>event_type</code></td><td><a href="#schema-eventtype"><code>EventType</code></a></td><td>yes</td><td></td></tr>
 <tr><td><code>request_id</code></td><td>—</td><td>yes</td><td><p>The request that caused the event. A <code>system</code> event, such as a rollover by the reset<br>worker, carries the request id the job minted for its run, so every event joins to a log<br>line (NFR-S10). The column is <code>NOT NULL</code> (data-model.md §2.7); <code>null</code> is allowed by the<br>schema and is not produced.</p>
 </td></tr>
-<tr><td><code>idempotency_key</code></td><td>—</td><td>yes</td><td><p>The customer&#39;s key, on <code>consumed</code> and <code>refunded</code>. Filtering by it is how a disputed<br>charge is resolved: the recorded outcome shows whether it was applied once or twice<br>(UC-16).</p>
+<tr><td><code>idempotency_key</code></td><td>—</td><td>yes</td><td><p>The customer&#39;s key, on <code>consumed</code> and <code>refunded</code>. Filtering by it is how a disputed<br>charge is resolved: the recorded outcome shows whether it was applied once or twice<br>(UC-16). On a duplicate that reconciliation reversed, and on the <code>system</code> refund that<br>reversed it, this is the customer&#39;s key the pair reconciles (DR-049, amended<br>2026-10-20).</p>
 </td></tr>
 <tr><td><code>cycle_start</code></td><td>—</td><td>yes</td><td><p>The start of the event&#39;s cycle, recomputed from the tenant&#39;s current anchor, zone and<br>interval. Null for an event older than the current anchor, because a window from before<br>a re-anchor cannot be recomputed from the anchor that replaced it.</p>
 </td></tr>
@@ -2728,6 +2728,8 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <table>
 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
 <tr><td><code>status</code></td><td><code>string</code></td><td>yes</td><td><p>A single word for a dashboard. Read <code>dependencies</code> for the detail: one word cannot say<br>which dependency is down, and a status that cannot is the status that gets ignored.</p>
+</td></tr>
+<tr><td><code>mode</code></td><td><code>string</code></td><td>yes</td><td><p><code>readonly</code> while this instance was started with <code>QUOTACORE_STARTUP_MODE=readonly</code> for a<br>rebuild, or has lost its hold on the rebuild fence; it then refuses every write to a<br>tenant&#39;s balances and idempotency records with <code>503 service_unavailable</code>, and<br><code>/readyz</code> is not ready. <code>normal</code> otherwise (consistency-and-recovery.md section 4.1,<br>added 2026-10-20).</p>
 </td></tr>
 <tr><td><code>version</code></td><td><code>string</code></td><td>yes</td><td><p>The build version.</p>
 </td></tr>

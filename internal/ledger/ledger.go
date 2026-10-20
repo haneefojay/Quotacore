@@ -55,6 +55,35 @@ type Appender interface {
 	Permanent(err error) bool
 }
 
+// Gap is what the sink dropped for one tenant and feature over an interval,
+// written to usage_event_gaps so a rebuild knows which cycles it cannot call
+// exact (IP-11 D8). An empty TenantID is every tenant: what an overflowing
+// tally writes.
+type Gap struct {
+	TenantID    string
+	Feature     string
+	Reason      string
+	Events      int64
+	First, Last time.Time
+}
+
+// Sessions is the writer's loss record (IP-11 D8), implemented by
+// internal/db: one ledger_sessions row for the writer's life, refreshed on a
+// heartbeat, and the gap tallies written with it.
+type Sessions interface {
+	OpenSession(ctx context.Context, id uuid.UUID, host string) error
+	// Heartbeat records the gaps and refreshes the session in one
+	// transaction. settledThrough is zero when it has not advanced.
+	Heartbeat(ctx context.Context, id uuid.UUID, settledThrough time.Time, gaps []Gap) error
+	// CloseSession records the gaps and closes the session after a clean
+	// drain.
+	CloseSession(ctx context.Context, id uuid.UUID, gaps []Gap) error
+}
+
+// maxTallies bounds the gap tally. One more tenant-feature than this is
+// folded into a single tally with no tenant, meaning every tenant.
+const maxTallies = 4096
+
 // The writer's states, the values of Status.worker.
 const (
 	StateStopped  = "stopped"
@@ -73,6 +102,15 @@ type Options struct {
 	// MinBackoff and MaxBackoff bound the retry of a batch after a transient
 	// error. Zero means 100 ms and 30 s.
 	MinBackoff, MaxBackoff time.Duration
+	// Sessions, when set, keeps the loss record (IP-11 D8); Host names the
+	// session. Heartbeat is how often it is refreshed, zero meaning five
+	// seconds, and Lag how long before an instant an accepted event may have
+	// happened, zero meaning five seconds: the request's own time between its
+	// accepted instant and its enqueue.
+	Sessions  Sessions
+	Host      string
+	Heartbeat time.Duration
+	Lag       time.Duration
 }
 
 // Sink is the bounded queue and its writer. It implements
@@ -98,7 +136,17 @@ type Sink struct {
 	stop    chan struct{} // closed to ask the writer to drain and return
 	done    chan struct{} // closed when the writer has returned
 	once    sync.Once
+
+	// The loss record (IP-11 D8): the session, and the drops not yet written
+	// as gaps, by tenant, feature and reason.
+	session   uuid.UUID
+	opened    bool
+	settledAt time.Time
+	tallyMu   sync.Mutex
+	tallies   map[gapKey]*Gap
 }
+
+type gapKey struct{ tenant, feature, reason string }
 
 // New builds a Sink. Run starts its writer.
 func New(opt Options) *Sink {
@@ -111,6 +159,12 @@ func New(opt Options) *Sink {
 	if opt.Logger == nil {
 		opt.Logger = slog.Default()
 	}
+	if opt.Heartbeat <= 0 {
+		opt.Heartbeat = 5 * time.Second
+	}
+	if opt.Lag <= 0 {
+		opt.Lag = 5 * time.Second
+	}
 	s := &Sink{
 		opt:     opt,
 		ch:      make(chan dataplane.Event, opt.QueueSize),
@@ -118,6 +172,7 @@ func New(opt Options) *Sink {
 		started: make(chan struct{}),
 		stop:    make(chan struct{}),
 		done:    make(chan struct{}),
+		tallies: map[gapKey]*Gap{},
 	}
 	s.metrics = observability.NewLedger(func() float64 { return float64(len(s.ch)) })
 	s.state.Store(StateStopped)
@@ -146,14 +201,14 @@ func (s *Sink) Enqueue(ev dataplane.Event) {
 		// here is a bug, and the table would refuse it anyway.
 		s.log.Error("a ledger event with a zero delta was handed to the sink",
 			"request_id", ev.RequestID, "event_type", ev.Type)
-		s.drop(observability.DropError, 1)
+		s.drop(observability.DropError, ev)
 		return
 	}
 	if ev.ID == (uuid.UUID{}) {
 		id, err := uuid.NewV7()
 		if err != nil {
 			s.log.Error("could not mint an event_id", "request_id", ev.RequestID, "error", err)
-			s.drop(observability.DropError, 1)
+			s.drop(observability.DropError, ev)
 			return
 		}
 		ev.ID = id
@@ -161,7 +216,7 @@ func (s *Sink) Enqueue(ev dataplane.Event) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		s.drop(observability.DropShutdown, 1)
+		s.drop(observability.DropShutdown, ev)
 		return
 	}
 	select {
@@ -169,13 +224,116 @@ func (s *Sink) Enqueue(ev dataplane.Event) {
 		s.accepted.Add(1)
 		s.metrics.Enqueued.Inc()
 	default:
-		s.drop(observability.DropQueueFull, 1)
+		s.drop(observability.DropQueueFull, ev)
 	}
 }
 
-func (s *Sink) drop(reason string, n int) {
+// drop counts the events dropped and tallies them by tenant and feature, so
+// the gap is recorded rather than only counted (IP-11 D8).
+func (s *Sink) drop(reason string, evs ...dataplane.Event) {
+	n := len(evs)
 	s.dropped.Add(int64(n))
 	s.metrics.Dropped.WithLabelValues(reason).Add(float64(n))
+	s.tallyMu.Lock()
+	defer s.tallyMu.Unlock()
+	for _, ev := range evs {
+		at := ev.OccurredAt
+		if at.IsZero() {
+			at = time.Now()
+		}
+		k := gapKey{ev.TenantID, ev.FeatureKey, reason}
+		g, ok := s.tallies[k]
+		if !ok && len(s.tallies) >= maxTallies {
+			k = gapKey{"", "", reason}
+			g, ok = s.tallies[k]
+		}
+		if !ok {
+			g = &Gap{TenantID: k.tenant, Feature: k.feature, Reason: reason, First: at, Last: at}
+			s.tallies[k] = g
+		}
+		g.Events++
+		if at.Before(g.First) {
+			g.First = at
+		}
+		if at.After(g.Last) {
+			g.Last = at
+		}
+	}
+}
+
+// takeGaps empties the tally.
+func (s *Sink) takeGaps() []Gap {
+	s.tallyMu.Lock()
+	defer s.tallyMu.Unlock()
+	out := make([]Gap, 0, len(s.tallies))
+	for _, g := range s.tallies {
+		out = append(out, *g)
+	}
+	clear(s.tallies)
+	return out
+}
+
+// restoreGaps puts gaps that could not be written back into the tally.
+func (s *Sink) restoreGaps(gaps []Gap) {
+	s.tallyMu.Lock()
+	defer s.tallyMu.Unlock()
+	for _, g := range gaps {
+		k := gapKey{g.TenantID, g.Feature, g.Reason}
+		if have, ok := s.tallies[k]; ok {
+			have.Events += g.Events
+			if g.First.Before(have.First) {
+				have.First = g.First
+			}
+			if g.Last.After(have.Last) {
+				have.Last = g.Last
+			}
+			continue
+		}
+		gg := g
+		s.tallies[k] = &gg
+	}
+}
+
+// heartbeat refreshes the session and writes the tally. settled_through
+// advances only at an instant when everything accepted has been settled, less
+// the lag a request can spend between its accepted instant and its enqueue,
+// so every event that happened before it is written, dead-lettered or a gap.
+func (s *Sink) heartbeat(ctx context.Context) {
+	if s.opt.Sessions == nil {
+		return
+	}
+	now := time.Now()
+	if !s.opened {
+		id, err := uuid.NewV7()
+		if err != nil {
+			return
+		}
+		if err := s.opt.Sessions.OpenSession(ctx, id, s.opt.Host); err != nil {
+			s.log.Warn("could not open the ledger session; the next heartbeat tries again", "error", err)
+			return
+		}
+		s.session, s.opened = id, true
+	}
+	if s.accepted.Load() == s.settled.Load() {
+		s.settledAt = now.Add(-s.opt.Lag)
+	}
+	gaps := s.takeGaps()
+	if err := s.opt.Sessions.Heartbeat(ctx, s.session, s.settledAt, gaps); err != nil {
+		s.restoreGaps(gaps)
+		s.log.Warn("could not refresh the ledger session", "error", err)
+	}
+}
+
+// closeSession records the last gaps and closes the session after a clean
+// drain.
+func (s *Sink) closeSession(ctx context.Context) {
+	if s.opt.Sessions == nil || !s.opened {
+		return
+	}
+	gaps := s.takeGaps()
+	if err := s.opt.Sessions.CloseSession(ctx, s.session, gaps); err != nil {
+		s.log.Warn("could not close the ledger session; a rebuild will read it as a crash", "error", err)
+	}
 }
 
 // Run is the writer. It returns once Shutdown has drained the queue or ctx is
@@ -189,13 +347,21 @@ func (s *Sink) Run(ctx context.Context) {
 	batch := make([]dataplane.Event, 0, s.opt.BatchSize)
 	timer := time.NewTimer(s.opt.FlushInterval)
 	defer timer.Stop()
+	beat := time.NewTicker(s.opt.Heartbeat)
+	defer beat.Stop()
+	s.heartbeat(ctx)
 	for {
 		batch = batch[:0]
 		select {
 		case ev := <-s.ch:
 			batch = append(batch, ev)
+		case <-beat.C:
+			s.heartbeat(ctx)
+			continue
 		case <-s.stop:
-			s.drain(ctx)
+			if s.drain(ctx) {
+				s.closeSession(ctx)
+			}
 			return
 		case <-ctx.Done():
 			s.abandon(nil)
@@ -231,9 +397,9 @@ func (s *Sink) Run(ctx context.Context) {
 	}
 }
 
-// drain writes everything queued and returns. It is the shutdown path, bounded
-// by ctx, which Shutdown's own deadline cancels.
-func (s *Sink) drain(ctx context.Context) {
+// drain writes everything queued and reports whether it finished. It is the
+// shutdown path, bounded by ctx, which Shutdown's own deadline cancels.
+func (s *Sink) drain(ctx context.Context) bool {
 	for {
 		batch := make([]dataplane.Event, 0, s.opt.BatchSize)
 	collect:
@@ -246,10 +412,10 @@ func (s *Sink) drain(ctx context.Context) {
 			}
 		}
 		if len(batch) == 0 {
-			return
+			return true
 		}
 		if !s.write(ctx, batch) {
-			return
+			return false
 		}
 	}
 }
@@ -258,15 +424,15 @@ func (s *Sink) drain(ctx context.Context) {
 // drops. Nothing can be enqueued after it runs, because the sink is closed
 // first or the process is ending.
 func (s *Sink) abandon(batch []dataplane.Event) {
-	n := len(batch)
+	lost := append([]dataplane.Event(nil), batch...)
 	for {
 		select {
-		case <-s.ch:
-			n++
+		case ev := <-s.ch:
+			lost = append(lost, ev)
 		default:
-			if n > 0 {
+			if n := len(lost); n > 0 {
 				s.log.Warn("ledger events were still queued when the writer stopped", "dropped", n)
-				s.drop(observability.DropShutdown, n)
+				s.drop(observability.DropShutdown, lost...)
 				s.settled.Add(int64(n))
 			}
 			return
@@ -347,7 +513,7 @@ func (s *Sink) deadLetter(ctx context.Context, ev dataplane.Event, cause error) 
 	if err != nil {
 		s.log.Error("a ledger event could be neither appended nor dead-lettered, and is dropped",
 			"event_id", ev.ID.String(), "error", errors.Join(cause, err).Error())
-		s.drop(observability.DropError, 1)
+		s.drop(observability.DropError, ev)
 		return
 	}
 	if created {

@@ -170,6 +170,14 @@ func (s *Service) unavailable(ex *envelope.Exchange, err error) envelope.Problem
 		return envelope.Error(contract.ErrorCodeServiceUnavailable,
 			"the balance is not available to enforce against").Retry(retryShortly)
 	}
+	if errors.Is(err, store.ErrReadOnly) {
+		// A rebuild is in progress and this instance writes no balance until
+		// it is restarted in normal mode (IP-11 D5). The client's remedy is
+		// the same as for a store that did not answer.
+		ex.Add(slog.String("error", "read-only mode"))
+		return envelope.Error(contract.ErrorCodeServiceUnavailable,
+			"the service is in read-only recovery mode; retry with the same Idempotency-Key").Retry(retryShortly)
+	}
 	ex.Add(slog.String("error", short(err)))
 	return envelope.Error(contract.ErrorCodeServiceUnavailable,
 		"the data store did not answer; retry with the same Idempotency-Key").Retry(retryShortly)

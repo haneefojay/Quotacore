@@ -158,6 +158,7 @@ type stack struct {
 	client  *http.Client
 	runtime string
 	admin   string
+	settle  time.Duration
 }
 
 type stackOptions struct {
@@ -172,6 +173,10 @@ type stackOptions struct {
 	appender func(*db.Ledger) ledger.Appender
 	// noWriter leaves the ledger writer unstarted.
 	noWriter bool
+	// settle is the reconciliation pass's settle period; zero means 200 ms.
+	settle time.Duration
+	// fenceEvery is how often the fence is checked; zero means 100 ms.
+	fenceEvery time.Duration
 }
 
 func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
@@ -236,6 +241,16 @@ func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
 	// Retention's first tick waits an hour in a test, so it never prunes a
 	// test's rows unless the test calls it.
 	aopt.retentionFirstRun = time.Hour
+	// Nor does the reconciliation pass run unless a test runs it.
+	aopt.reconcileFirstRun = time.Hour
+	aopt.settle = o.settle
+	if aopt.settle <= 0 {
+		aopt.settle = 200 * time.Millisecond
+	}
+	aopt.fenceEvery = o.fenceEvery
+	if aopt.fenceEvery <= 0 {
+		aopt.fenceEvery = 100 * time.Millisecond
+	}
 	app, err := assemble(ctx, cfg, log, conn, data, func() bool { return true }, events, aopt)
 	if err != nil {
 		t.Fatal(err)
@@ -248,10 +263,13 @@ func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
 	if err := app.Ledger.Metrics().Register(reg); err != nil {
 		t.Fatal(err)
 	}
+	if err := app.Reconcile.Register(reg); err != nil {
+		t.Fatal(err)
+	}
 	srv := httptest.NewServer(app.Handler)
 	t.Cleanup(srv.Close)
 	s := &stack{t: t, app: app, server: srv, sql: conn, seedDB: seed, rdb: rdb, events: events, logs: logs,
-		reg: reg, dbURL: dbURL, client: srv.Client()}
+		reg: reg, dbURL: dbURL, client: srv.Client(), settle: aopt.settle}
 	s.runtime = s.key(auth.Runtime)
 	s.admin = s.key(auth.Admin)
 	return s

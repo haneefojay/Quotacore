@@ -37,14 +37,14 @@ func NewLedger(db *sql.DB) *Ledger { return &Ledger{db: db} }
 // the order they were queued, which is the order seq records.
 const insertEvents = `
 INSERT INTO usage_events (id, tenant_id, feature_id, cycle_index, delta, balance_after, source, event_type,
-                          request_id, idempotency_key, metadata, created_at, cycle_start)
+                          request_id, idempotency_key, metadata, created_at, cycle_start, reconciles_key)
 SELECT v.id, v.tenant_id, f.id, v.cycle_index, v.delta, v.balance_after, v.source::event_source,
        v.event_type::event_type, v.request_id, NULLIF(v.idempotency_key, ''),
-       COALESCE(NULLIF(v.metadata, ''), '{}')::jsonb, v.created_at, v.cycle_start
+       COALESCE(NULLIF(v.metadata, ''), '{}')::jsonb, v.created_at, v.cycle_start, NULLIF(v.reconciles_key, '')
   FROM unnest($1::uuid[], $2::uuid[], $3::text[], $4::bigint[], $5::bigint[], $6::bigint[], $7::text[],
-              $8::text[], $9::text[], $10::text[], $11::text[], $12::timestamptz[], $13::timestamptz[])
+              $8::text[], $9::text[], $10::text[], $11::text[], $12::timestamptz[], $13::timestamptz[], $14::text[])
        WITH ORDINALITY AS v(id, tenant_id, feature_key, cycle_index, delta, balance_after, source, event_type,
-                            request_id, idempotency_key, metadata, created_at, cycle_start, ord)
+                            request_id, idempotency_key, metadata, created_at, cycle_start, reconciles_key, ord)
   JOIN features f ON f.key = v.feature_key
   JOIN tenants t ON t.id = v.tenant_id
  WHERE v.delta <> 0
@@ -76,12 +76,13 @@ func appendIn(ctx context.Context, tx *sql.Tx, events []dataplane.Event) (ledger
 	var (
 		ids, tenants, keys, sources, types, requests, clients, metas = make([]string, n), make([]string, n),
 			make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n)
+		reconciles                = make([]string, n)
 		indexes, deltas, balances = make([]int64, n), make([]int64, n), make([]int64, n)
 		at, starts                = make([]time.Time, n), make([]pgtype.Timestamptz, n)
 	)
 	for i, e := range events {
 		ids[i], tenants[i], keys[i], sources[i], types[i] = e.ID.String(), e.TenantID, e.FeatureKey, e.Source, e.Type
-		requests[i], clients[i], metas[i] = e.RequestID, e.ClientKey, string(e.Metadata)
+		requests[i], clients[i], metas[i], reconciles[i] = e.RequestID, e.ClientKey, string(e.Metadata), e.ReconcilesKey
 		indexes[i], deltas[i], balances[i], at[i] = e.CycleIndex, e.Delta, e.Balance, e.OccurredAt.UTC()
 		if !e.CycleStart.IsZero() {
 			starts[i] = pgtype.Timestamptz{Time: e.CycleStart.UTC(), Valid: true}
@@ -91,7 +92,7 @@ func appendIn(ctx context.Context, tx *sql.Tx, events []dataplane.Event) (ledger
 		}
 	}
 	rows, err := tx.QueryContext(ctx, insertEvents, ids, tenants, keys, indexes, deltas, balances, sources, types,
-		requests, clients, metas, at, starts)
+		requests, clients, metas, at, starts, reconciles)
 	if err != nil {
 		return out, err
 	}
@@ -414,4 +415,58 @@ func (l *Ledger) DeadLetterCounts(ctx context.Context) (map[string]int, error) {
 		out[reason] = n
 	}
 	return out, rows.Err()
+}
+
+var _ ledger.Sessions = (*Ledger)(nil)
+
+// OpenSession registers a ledger writer (ledger.Sessions, IP-11 D8).
+func (l *Ledger) OpenSession(ctx context.Context, id uuid.UUID, host string) error {
+	_, err := l.db.ExecContext(ctx, `INSERT INTO ledger_sessions (id, host) VALUES ($1::uuid, $2)
+		ON CONFLICT (id) DO NOTHING`, id.String(), host)
+	return err
+}
+
+// Heartbeat writes the gaps and refreshes the session in one transaction
+// (ledger.Sessions).
+func (l *Ledger) Heartbeat(ctx context.Context, id uuid.UUID, settledThrough time.Time, gaps []ledger.Gap) error {
+	return l.session(ctx, id, settledThrough, gaps, false)
+}
+
+// CloseSession writes the last gaps and closes the session (ledger.Sessions).
+func (l *Ledger) CloseSession(ctx context.Context, id uuid.UUID, gaps []ledger.Gap) error {
+	return l.session(ctx, id, time.Now(), gaps, true)
+}
+
+func (l *Ledger) session(ctx context.Context, id uuid.UUID, settledThrough time.Time, gaps []ledger.Gap, closing bool) error {
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, g := range gaps {
+		var tenant any
+		if _, err := uuid.Parse(g.TenantID); err == nil && g.Feature != "" {
+			tenant = g.TenantID
+		}
+		feature := g.Feature
+		if tenant == nil {
+			feature = ""
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO usage_event_gaps (session_id, tenant_id, feature_key, reason, events,
+			first_at, last_at) VALUES ($1::uuid, $2::uuid, NULLIF($3, ''), $4, $5, $6, $7)`,
+			id.String(), tenant, feature, g.Reason, g.Events, g.First.UTC(), g.Last.UTC()); err != nil {
+			return err
+		}
+	}
+	var settled pgtype.Timestamptz
+	if !settledThrough.IsZero() {
+		settled = pgtype.Timestamptz{Time: settledThrough.UTC(), Valid: true}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE ledger_sessions SET last_seen_at = now(),
+		settled_through = GREATEST(settled_through, coalesce($2, settled_through)),
+		closed_at = CASE WHEN $3 THEN now() ELSE closed_at END WHERE id = $1::uuid`,
+		id.String(), settled, closing); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
