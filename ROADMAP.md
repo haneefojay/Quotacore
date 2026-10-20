@@ -75,7 +75,8 @@ else ships.
       the read-only `GET /v1/admin/plans/{id}/impact` preview ([Q-04](docs/product/assumptions-and-open-questions.md#2-open-questions),
       [Q-14](docs/product/assumptions-and-open-questions.md#2-open-questions))
 - [ ] Embeddable CLI for tenant, plan, feature, key and status management
-- [ ] Signed-delta usage ledger, writer, optional replica, archiver
+- [ ] Signed-delta usage ledger, writer and archiver (amended 2026-10-20, `IP-12`: this read "optional
+      replica", which [mvp-scope.md](docs/product/mvp-scope.md) §4c never scoped; the table is the interface)
 - [ ] Metrics, structured logs, the two money counters, a counter for each of the 35 error codes
 - [ ] Docker image, `docker compose up` reference deployment, migration and restore rehearsal
 - [ ] All 15 correctness tests and the 7 further suites, in CI, with the three headline tests — [T-01](docs/architecture/testing-strategy.md#t-01--atomic-decrement-under-contention),

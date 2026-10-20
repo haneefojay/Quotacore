@@ -937,6 +937,12 @@ with the codes and labels the catalogue assigns.
    > window it reports is current; it never deducts, records or emits. The call site is proved here:
    > a check hands the event sink nothing. The `usage_events` rows are `IP-12`'s, in the form `IP-05`
    > amended T-01 and T-08.
+   >
+   > **Amended 2026-10-20 (`IP-12`) — a check that rolls emits the rollover.** DR-042 and U-6 make a
+   > rollover an event, and a check can be the request that rolls; if it emitted nothing, the ledger
+   > would have no record of that boundary. So a check never deducts or records, and across a closed
+   > boundary it hands the sink exactly one `cycle_rolled_over` event, the one the transition it
+   > applied produced. Inside a cycle it still hands over nothing (DR-024).
 3. `GET /v1/balance` returns `cycle_start` and `cycle_end` as RFC 3339 instants with offsets, in the
    tenant's zone, and `cycle_end` is `null` for a `never` entitlement (INV-C6).
 4. `balance < amount` is `429 quota_exceeded`, and the service's own protective limit is
@@ -1432,18 +1438,34 @@ policy, and never able to slow enforcement down.
 4. Duplicate delivery is possible by design and every payload carries an `event_id` for the consumer
    to deduplicate on; a test delivers each event twice and asserts the consumer's result is
    unchanged (INV-W1).
+   > **Amended 2026-10-20 (`IP-12`) — items 3 and 4 cite webhook invariants.** INV-W1 and INV-W2 are
+   > v0.3 webhook delivery's ([state-machines.md](../product/state-machines.md) §10). They are read
+   > for the ledger here — an enqueue that never blocks, and an `event_id` the consumer deduplicates
+   > on, where the first consumer is the ledger table itself — and stay `IP-21`–`IP-23`'s as written.
 5. A dead-lettered event is visible and replayable, never silently dropped (INV-U3).
 6. Retention is applied by a background job on a configured schedule, and the job is what removes
    rows (DR-044, NFR-C6). No API call deletes an event.
 7. The writer holds a runtime-scoped credential and has no direct database access (INV-WK2).
+   > **Amended 2026-10-20 (`IP-12`) — INV-WK2 is the reset worker's.** A ledger writer is the
+   > component that appends to Postgres (ADR-0016), so it cannot have no database access.
+   > [security-model.md](../architecture/security-model.md) §2 states the writer's own rule in the
+   > same sentence as INV-WK2: it appends and cannot mutate balances. The item is closed by that rule,
+   > as a source check: the writer's package imports no data-store, script or SQL package, and its SQL
+   > only inserts into `usage_events`. INV-WK2 is not changed.
 8. Deleting or stalling the writer, or running it twice, changes no enforcement outcome
    (INV-WK1).
+   > **Amended 2026-10-20 (`IP-12`).** INV-WK1 is the reset worker's too, and its property is read
+   > for the writer: stopped, stalled, or running in two instances against one database, it changes
+   > no enforcement outcome and writes no row twice.
 
 **Exit criteria.** The ledger is a best record of what happened, not a dependency of whether it
 happened.
 
 **Deferred.** Export to an external sink beyond the configured file or stream, and webhooks
 (`IP-21`–`IP-23`).
+> **Amended 2026-10-20 (`IP-12`).** v0.1 has no file or stream sink and no replica:
+> [mvp-scope.md](../product/mvp-scope.md) §4c makes the ledger table the interface, and `Q-20` is
+> answered by a documented export query. Every external sink is deferred.
 
 ---
 

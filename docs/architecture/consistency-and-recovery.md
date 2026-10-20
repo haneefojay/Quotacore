@@ -77,7 +77,7 @@ and unacceptable for a balance read.
 | --- | --- | --- | --- | --- |
 | Data store unreachable | `503 service_unavailable`, fail-closed, ≤ 250 ms | unaffected | queues and then drops | Automatic on recovery. No restart, no reconciliation (NFR-A4) |
 | Data store unreachable, worker running | Worker logs and counts, continues | unaffected | as above | Automatic |
-| Postgres unreachable | Unaffected for cached tenants; `503 control_plane_unavailable` for uncached | down | unaffected, appends continue | Automatic. Cache miss rate is the leading indicator |
+| Postgres unreachable | Unaffected for cached tenants; `503 control_plane_unavailable` for uncached | down | the batch in hand is held and retried; the queue fills, then new events drop as `queue_full` (amended 2026-10-20, `IP-12`: this read "unaffected, appends continue", which no writer to an unreachable database can do) | Automatic. Cache miss rate is the leading indicator |
 | Postgres unreachable at startup | Service **refuses to start** | down | n/a | Fix the database. Refusing is correct: a service that cannot validate its configuration should not start and serve wrong answers |
 | Both unreachable | `503 service_unavailable` | down | drops, counted | Automatic |
 | Pub/sub unavailable | Correct; propagation widens to the refresh interval | unaffected | unaffected | Automatic. `quotacore_invalidation_lag_seconds` rises |
@@ -130,6 +130,14 @@ reconcile, because the opening allowance of the cycle is not itself an event. Th
 these rather than guessing. This is why full-loss recovery is described as valid for a
 *full-allowance-recovery* case and not as a general restore (ADR-0016, NFR-D7).
 
+> **Amended 2026-10-20 (`IP-12`).** Every opening that moves a balance is now a row: a
+> `cycle_rolled_over`, `plan_changed` or `force_rolled_over` event whose `balance_after` is the
+> cycle's opening, and a grant or `set` is an ordinary delta inside it
+> ([data-model.md](data-model.md#27-usage-events-the-ledger)). Such a tenant therefore reconciles
+> exactly over the rows that were written. What may still not reconcile is a cycle with a dropped or
+> dead-lettered row (DR-042's stated limit) and a cycle longer than the event retention, whose
+> earliest rows the retention job has deleted.
+
 **Idempotency records are the one thing the rebuild cannot restore, and this is the important
 consequence of total loss.** A balance is reconstructible because the ledger records usage with its
 `balance_after`. An idempotency record is not reconstructible, because the ledger records *usage and
@@ -139,8 +147,11 @@ total loss:
 1. Balances come back, exactly, for the reconcilable tenants.
 2. Every idempotency record is gone, and a client retrying a pre-loss request inside its 24-hour
    window is charged a second time.
-3. The `usage_events` partial unique index catches it, because the replayed request produces the
-   same `event_id`.
+3. The `usage_events` partial unique index catches it, because the replayed request is a second
+   deduction under the same `Idempotency-Key`. Amended 2026-10-20 (`IP-12`): this read "produces the
+   same `event_id`". Each applied mutation mints its own `event_id`, so the replay has a new one; the
+   index is on `(tenant_id, idempotency_key)`, and the refused event is kept in the dead-letter table
+   for the reversal ([data-model.md](data-model.md#212-usage-event-dead-letters)).
 4. Reconciliation therefore issues **exactly one** refund for the second deduction, restoring a
    single net charge (DR-049, NFR-T10, FS-22).
 
@@ -249,9 +260,14 @@ Instead, reconciliation is:
 
 ```
   balance (runtime) == balance_after (last event in the current cycle)
-                    == limit + bonus + Σ(delta) in the current cycle
+                    == opening + Σ(delta of every other row) in the current cycle
                     == the value in the last event
 ```
+
+> **Amended 2026-10-20 (`IP-12`).** The middle line read `limit + bonus + Σ(delta)`, which counts a
+> grant twice: a grant raises `bonus` (DR-020) and is itself a delta. The opening is the
+> `balance_after` of the row that opened the cycle, or the effective limit when no row did
+> ([data-model.md](data-model.md#27-usage-events-the-ledger)).
 
 The four-way agreement is the check. A single comparison against the ledger would miss a case
 where both the ledger and the runtime store are wrong in the same way, which is exactly the case a

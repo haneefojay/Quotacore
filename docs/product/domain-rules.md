@@ -344,6 +344,12 @@ duplicate is therefore an alert condition, not an informational counter.
 *Verified by:* T-14, which drops the fast store mid-window, replays the original request, and
 asserts that reconciliation issues exactly one refund and that the tenant's net balance matches a
 single charge.
+*Note, 2026-10-20 (`IP-12`):* "a duplicate `event_id`" is read as a second deduction under one
+idempotency key, which is what the `(tenant_id, idempotency_key)` partial unique index reports and
+what [ADR-0017](../decisions/0017-noeviction-and-duplicate-reversal.md) point 3 says fires. Every
+applied mutation mints its own `event_id`, so the replay after a store loss carries a new one; the
+writer keeps the refused event in the dead-letter table, and the reversal is idempotent on that
+second event's `event_id`. The rule is not otherwise changed.
 
 ## Tenants
 

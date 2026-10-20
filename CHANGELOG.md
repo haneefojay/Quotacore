@@ -245,6 +245,21 @@ exists, because a future implementer needs to know which statements are new.
 - **`IP-12` is `IN PROGRESS`**, opened 2026-10-20 before any file it owns exists. Nothing gated it:
   `IP-08` closed on 2026-10-19.
 
+- The specification and contract amendments the ledger needs (`IP-12`). `usage_events` gains
+  `cycle_start` and a BRIN index on `created_at`, and a cycle is `(tenant, feature, cycle_start,
+  cycle_index)`, opened by its `cycle_rolled_over`, `plan_changed` or `force_rolled_over` row or, with
+  none, at the effective limit; a new `usage_event_dead_letters` table keeps what the ledger refuses.
+  The writer mints `event_id` and writes `created_at` from the instant the request accepted.
+  request-lifecycle step 9 distinguishes a full queue, a transient write error (held and retried) and
+  a refusal (dead-lettered). A check that rolls a window emits the rollover (IP-07 item 2). DR-049,
+  T-14 and consistency-and-recovery §4.1 read the detected duplicate as a second deduction under one
+  idempotency key, not a repeated `event_id`; §5's `verify-tenant` formula no longer counts a grant
+  twice. `Status.queue_depth` and `worker` describe the ledger queue and writer, and
+  `listUsageEvents` no longer promises `system` gap events that §4.5 forbids. IP-12's DoD 3, 4, 7
+  and 8 are read for the writer by dated notes, since they cite webhook and reset-worker
+  invariants. `Q-09`, `Q-20` and `Q-22` are answered with their defaults. There is no replica in
+  v0.1 (ROADMAP, ARCHITECTURE).
+
 - **`IP-10` is `COMPLETE`**, opened 2026-10-20 after `IP-09` closed, before any file it owns
   existed, and closed the same day with 9 of 9 DoD items met. Item 4 is read by DR-015's body, and
   the ledger rows, the reconciler's view of a re-anchor, a pending-re-anchor gauge and the CLI

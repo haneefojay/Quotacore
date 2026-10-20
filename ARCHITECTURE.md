@@ -78,13 +78,19 @@ are read-only. The sole planned egress of any kind is the signed webhook in v0.3
 | Snapshot cache | Bounded, TTL'd, LRU, generation-versioned | in-process | `internal/snapshot` | data |
 | Cycle engine | Pure anchor-to-boundary calendar arithmetic | Go, no I/O | `internal/cycle` | shared |
 | Rollover worker | Opportunistic pre-advance; optional | Go | `internal/worker` | data |
-| Event buffer | In-memory deque plus channel; drops rather than blocks | Go | `internal/events` | data |
-| Event writer, replica, archiver | Append to the ledger, fan out, prune | Go + `pgx` | `internal/ledger` | control |
+| Event buffer and writer | Bounded channel; drops rather than blocks; batches, retries and dead-letters | Go | `internal/ledger` | data |
+| Ledger SQL and retention | Append to the ledger, keep what it refuses, prune by age | Go + `pgx` | `internal/db` | control |
 | Admin handler | Tenants, plans, features, keys, audit, status | Go | `internal/api/admin` | control |
 | Configuration store | Authoritative configuration, up-only migrations | `pgx`, embedded `goose` | `internal/db` | control |
 | Migrations | Embedded, up-only, applied at start-up | `goose` | `internal/db/migrations` | control |
 | Metrics | Prometheus registry and `/metrics` | Go | `internal/observability` | both |
 | Embedded UI | v0.4 only, behind a build tag | Go `embed` | `internal/ui` | control |
+
+> **Amended 2026-10-20 (`IP-12`).** The two ledger rows read "Event buffer … `internal/events`" and
+> "Event writer, replica, archiver … Go + `pgx` … `internal/ledger`". The buffer and the writer's
+> loop are one package with no SQL, because `internal/store`'s source check refuses a Postgres
+> import anywhere under `internal/` but `internal/db`; the SQL lives there. There is no replica in
+> v0.1: [mvp-scope.md](docs/product/mvp-scope.md) §4c makes the ledger table the interface.
 
 **One binary, one process, three background concerns.** There is no message broker, no job queue
 service, no cache tier and no sidecar. Background work runs in goroutines inside the same process,
