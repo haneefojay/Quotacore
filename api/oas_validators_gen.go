@@ -926,6 +926,8 @@ func (s ErrorCode) Validate() error {
 		return nil
 	case "plan_not_found":
 		return nil
+	case "api_key_not_found":
+		return nil
 	case "payload_too_large":
 		return nil
 	case "idempotency_key_reuse":
@@ -1311,6 +1313,40 @@ func (s *ErrorInternalHeaders) Validate() error {
 	return nil
 }
 
+func (s *ErrorKeyNotFoundHeaders) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.XRequestID.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "XRequestID",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if err := s.Response.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "Response",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
 func (s *ErrorNotFoundResourceHeaders) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer
@@ -1572,40 +1608,6 @@ func (s *ErrorRateLimitedHeaders) Validate() error {
 }
 
 func (s *ErrorRefundConflictHeaders) Validate() error {
-	if s == nil {
-		return validate.ErrNilPointer
-	}
-
-	var failures []validate.FieldError
-	if err := func() error {
-		if err := s.XRequestID.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "XRequestID",
-			Error: err,
-		})
-	}
-	if err := func() error {
-		if err := s.Response.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "Response",
-			Error: err,
-		})
-	}
-	if len(failures) > 0 {
-		return &validate.Error{Fields: failures}
-	}
-	return nil
-}
-
-func (s *ErrorResourceVersionConflictHeaders) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer
 	}
@@ -2102,10 +2104,39 @@ func (s *FeatureCreate) Validate() error {
 			Error: err,
 		})
 	}
+	if err := func() error {
+		if value, ok := s.Kind.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "kind",
+			Error: err,
+		})
+	}
 	if len(failures) > 0 {
 		return &validate.Error{Fields: failures}
 	}
 	return nil
+}
+
+func (s FeatureCreateKind) Validate() error {
+	switch s {
+	case "metered":
+		return nil
+	case "boolean":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
 }
 
 func (s *FeatureCreatedHeaders) Validate() error {
@@ -2373,6 +2404,24 @@ func (s *FeatureUpdate) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "description",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.Unit.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "unit",
 			Error: err,
 		})
 	}
@@ -4677,7 +4726,7 @@ func (s *Tenant) Validate() error {
 			MaxLengthSet:  false,
 			Email:         false,
 			Hostname:      false,
-			Regex:         regexMap["^[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+$"],
+			Regex:         regexMap["^(?:UTC|[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+)$"],
 			MinNumeric:    0,
 			MinNumericSet: false,
 			MaxNumeric:    0,
@@ -4781,7 +4830,7 @@ func (s *TenantCreate) Validate() error {
 					MaxLengthSet:  false,
 					Email:         false,
 					Hostname:      false,
-					Regex:         regexMap["^[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+$"],
+					Regex:         regexMap["^(?:UTC|[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+)$"],
 					MinNumeric:    0,
 					MinNumericSet: false,
 					MaxNumeric:    0,
@@ -5055,7 +5104,7 @@ func (s *TenantUpdate) Validate() error {
 					MaxLengthSet:  false,
 					Email:         false,
 					Hostname:      false,
-					Regex:         regexMap["^[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+$"],
+					Regex:         regexMap["^(?:UTC|[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+)$"],
 					MinNumeric:    0,
 					MinNumericSet: false,
 					MaxNumeric:    0,

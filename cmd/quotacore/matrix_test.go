@@ -229,24 +229,12 @@ func TestEndpointErrorMatrix(t *testing.T) {
 	}
 }
 
-// adminOnly are the catalogue's codes that no data-plane route returns. Each
-// is IP-09's to provoke over HTTP when its route exists; the list has to be
-// emptied there, not forgotten.
-var adminOnly = map[string]string{
-	"invalid_timezone": "IP-09", "plan_not_found": "IP-09", "plan_in_use": "IP-09",
-	"feature_in_use": "IP-09", "feature_key_exists": "IP-09", "tenant_exists": "IP-09",
-	"tenant_deleted": "IP-09", "plan_key_exists": "IP-09", "grant_exceeds_ceiling": "IP-09",
-	"reset_not_supported": "IP-09", "feature_unit_immutable": "IP-09",
-	"resource_version_conflict": "IP-09", "confirmation_required": "IP-09", "not_implemented": "IP-09",
-	"feature_not_found": "IP-09 (admin routes); provoked here on GET /v1/balance",
-}
-
 // TestT08EveryRefusalChangesNothing (IP-05 DoD 3, T-08): for every code of the
 // catalogue a data-plane route can return, the refusal leaves the balance
 // hash, its expiry, the tenant's idempotency records and the events handed to
-// the ledger exactly as they were. The codes only the control plane returns
-// are listed as IP-09's; insufficient_scope is provoked on a control-plane
-// route, where it is reachable.
+// the ledger exactly as they were. The control plane's refusals are provoked
+// by adminProvocations, which checks they change nothing there; the codes only
+// an IP-10 route returns are listed as IP-10's.
 func TestT08EveryRefusalChangesNothing(t *testing.T) {
 	s := newStack(t)
 	all := provocations(t, s)
@@ -281,13 +269,18 @@ func TestT08EveryRefusalChangesNothing(t *testing.T) {
 		t.Error("insufficient_scope changed the state")
 	}
 	covered["insufficient_scope"] = true
+	for _, codes := range adminProvocations(t) {
+		for code := range codes {
+			covered[code] = true
+		}
+	}
 
 	for code := range catalogue(t) {
-		if !covered[code] && adminOnly[code] == "" {
-			t.Errorf("%s is neither provoked here nor listed as a control-plane code", code)
+		if !covered[code] && ip10Only[code] == "" {
+			t.Errorf("%s is neither provoked here nor listed as IP-10's", code)
 		}
-		if covered[code] && adminOnly[code] != "" && code != "feature_not_found" {
-			t.Errorf("%s is provoked here and also listed as IP-09's; take it off the list", code)
+		if covered[code] && ip10Only[code] != "" {
+			t.Errorf("%s is provoked here and also listed as IP-10's; take it off the list", code)
 		}
 	}
 }

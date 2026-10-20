@@ -27,7 +27,7 @@ started, and deliberately at the bottom rather than the top:
 [`IP-01`](docs/roadmaps/v0-1-enforcement-path.md#ip-01--repository-toolchain-and-ci-foundation) built
 the repository, the toolchain and the pipeline, contains no product behaviour, and closed on
 2026-09-27. [`IP-02`](docs/roadmaps/v0-1-enforcement-path.md#ip-02--the-openapi-contract) then wrote
-the contract the code is written against — 39 operations, 67 schemas, 34 error codes, served at
+the contract the code is written against — 41 operations, 67 schemas, 35 error codes, served at
 `/openapi.json` with a generated reference at `/docs` — and closed on 2026-09-28.
 [`IP-03`](docs/roadmaps/v0-1-enforcement-path.md#ip-03--cycle-engine-and-boundary-matrix), the cycle
 engine and its boundary matrix, started and closed on 2026-09-28.

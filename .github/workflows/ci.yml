@@ -124,6 +124,25 @@ jobs:
             echo 'the service started with an unacknowledged bootstrap key, which NFR-S9 forbids' >&2
             exit 1
           fi
+      - name: An acknowledged bootstrap key opens the admin API
+        run: |
+          key="$(printf 'qc_admin_%s.%s' "$(openssl rand -hex 8)" "$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')")"
+          docker run -d --name quotacore-bootstrap --network quotacore_default -p 8081:8080 \
+            -e QUOTACORE_DATABASE_URL='postgresql://quotacore:quotacore_dev_only@postgres:5432/quotacore?sslmode=disable' \
+            -e QUOTACORE_REDIS_URL='redis://valkey:6379/0' \
+            -e QUOTACORE_BOOTSTRAP_ADMIN_KEY="$key" -e QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK=1 \
+            -v "$PWD/bin/quotacore:/app/quotacore:ro" --entrypoint /app/quotacore postgres:16
+          for attempt in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8081/healthz; then break; fi
+            sleep 1
+          done
+          test "$(curl -s -o /tmp/status.json -w '%{http_code}' -H "Authorization: Bearer $key" http://127.0.0.1:8081/v1/admin/status)" = "200"
+          python3 -c "import json;d=json.load(open('/tmp/status.json'));assert d['status'] in ('ok','degraded'),d"
+          if docker logs quotacore-bootstrap 2>&1 | grep -qF "${key#*.}"; then
+            echo 'the bootstrap secret reached a log line' >&2
+            exit 1
+          fi
+          docker rm -f quotacore-bootstrap
       - name: Refuses to start on a shortened idempotency window
         run: |
           if docker run --rm --network quotacore_default \

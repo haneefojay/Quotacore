@@ -94,6 +94,16 @@ func (c *keyCache) apply(asked []string, rows map[string]Key) {
 	}
 }
 
+// forget drops one prefix, so the next request with it misses.
+func (c *keyCache) forget(prefix string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.byKey[prefix]; ok {
+		c.ll.Remove(e)
+		delete(c.byKey, prefix)
+	}
+}
+
 func (c *keyCache) len() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()

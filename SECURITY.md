@@ -52,8 +52,8 @@ Opaque 256-bit secrets, stored as a SHA-256 digest, constant-time comparison on 
 and a bounded credential cache that holds the hash rather than a boolean. No recovery path, ever —
 a recovery path is a path for an attacker with database read access (INV-K3). Two scopes only:
 `runtime` for the four data-plane endpoints, `admin` for everything including configuration. The
-bootstrap key is printed once, and the service **refuses to start** while an unacknowledged default
-exists (NFR-S9, INV-K2).
+bootstrap key is one the operator mints and supplies, never one the service generates or prints, and
+the service **refuses to start** while a supplied key is unacknowledged (NFR-S9, INV-K2).
 
 > **Amended 2026-10-19 ([ADR-0018](docs/decisions/0018-api-key-format-and-verifier.md)).** This section said Argon2id with a per-key salt.
 > A slow hash defends nothing that a 256-bit random secret has not already defeated, and verifying one

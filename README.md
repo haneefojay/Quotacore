@@ -53,7 +53,7 @@ permanent, not a roadmap item.
 ## Status
 
 **Specification complete; implementation started.** 64 documents, 17 accepted
-decisions, 49 domain rules, 34 error codes, 15 named correctness tests. Every blocking question is
+decisions, 49 domain rules, 35 error codes, 15 named correctness tests. Every blocking question is
 answered — the four former blockers plus
 [Q-21](docs/product/assumptions-and-open-questions.md#2-open-questions), the eviction question that
 turned out to be a trade-off between two of the three claims. What remains open is listed in
@@ -65,7 +65,7 @@ the repository, the toolchain and the CI foundation and closed on 2026-09-27: th
 pinned, the two health probes, embedded up-only migrations, a service that starts and reports
 not-ready, a licence gate and an SBOM. It contains no product behaviour, which a test asserts rather
 than claims. [`IP-02`](docs/roadmaps/v0-1-enforcement-path.md#ip-02--the-openapi-contract) then
-wrote the contract and closed on 2026-09-28: 39 operations, 67 schemas and all 34 catalogue codes,
+wrote the contract and closed on 2026-09-28: 39 operations, 67 schemas and all 34 catalogue codes of the time,
 the Go types generated from them, the contract served at `/openapi.json` and a generated reference at
 `/docs`. It also contains no product behaviour — an enforcement call still returns `404`, because
 `IP-07` owns the routes — and a test asserts that too. [`IP-03`](docs/roadmaps/v0-1-enforcement-path.md#ip-03--cycle-engine-and-boundary-matrix),
@@ -114,7 +114,7 @@ The complete index, with what each document settles and who should read it, is
 ├── docker-compose.yml     the fast store and Postgres, and nothing else
 ├── go.mod, go.sum         the module graph, pinned
 ├── api/                   the contract, and everything generated from it
-│   ├── openapi.yaml       THE contract: 39 operations, 67 schemas, 34 codes
+│   ├── openapi.yaml       THE contract: 41 operations, 67 schemas, 35 codes
 │   ├── docs.html          the generated reference, served at /docs
 │   └── oas_*_gen.go       generated types, codecs and validators. Do not edit
 ├── cmd/quotacore/         the service entry point

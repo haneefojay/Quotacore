@@ -77,6 +77,11 @@ func Parse(raw string) (Token, error) {
 	return Token{Label: Scope(m[1]), Prefix: m[2], digest: Digest(secret)}, nil
 }
 
+// Hash is the SHA-256 digest of the token's secret, what api_keys.key_hash
+// stores. The bootstrap uses it to install an operator-supplied key without
+// the secret ever leaving this package in any other form (ADR-0018).
+func (t Token) Hash() []byte { d := t.digest; return d[:] }
+
 // Digest is the stored verifier, api_keys.key_hash: SHA-256 over the 32 secret
 // bytes, not over their text form.
 func Digest(secret []byte) [sha256.Size]byte { return sha256.Sum256(secret) }

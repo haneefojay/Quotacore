@@ -94,6 +94,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <li><code>POST</code> <span class="path">/v1/admin/features</span></li>
 <li><code>GET</code> <span class="path">/v1/admin/features/{feature_key}</span></li>
 <li><code>PATCH</code> <span class="path">/v1/admin/features/{feature_key}</span></li>
+<li><code>DELETE</code> <span class="path">/v1/admin/features/{feature_key}</span></li>
 <li><code>POST</code> <span class="path">/v1/admin/features/{feature_key}/archive</span></li>
 </ul>
 </li>
@@ -103,6 +104,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <li><code>POST</code> <span class="path">/v1/admin/plans</span></li>
 <li><code>GET</code> <span class="path">/v1/admin/plans/{id}</span></li>
 <li><code>PATCH</code> <span class="path">/v1/admin/plans/{id}</span></li>
+<li><code>DELETE</code> <span class="path">/v1/admin/plans/{id}</span></li>
 <li><code>POST</code> <span class="path">/v1/admin/plans/{id}/apply</span></li>
 <li><code>POST</code> <span class="path">/v1/admin/plans/{id}/archive</span></li>
 <li><code>GET</code> <span class="path">/v1/admin/plans/{id}/impact</span></li>
@@ -345,7 +347,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p>The catalogue of metered features. A feature is a key, a unit and a name.</p>
 <h3><span class="method method-get">GET</span> <span class="path">/v1/admin/features</span></h3>
 <p><strong>List the feature catalogue</strong></p>
-<p>The whole catalogue is small by construction, so this returns everything rather than a<br>page. A feature is a key, a unit and a name, and the unit is what an <code>amount</code> counts.</p>
+<p>A page of the catalogue, newest first, with the same opaque cursor as every other list. A<br>feature is a key, a unit and a name, and the unit is what an <code>amount</code> counts.</p>
 <p class="muted">Operation ID: <code>listFeatures</code></p>
 <h4>Authorisation</h4>
 <p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
@@ -368,12 +370,18 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>403</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A valid key with the wrong scope. <code>403</code> and not <code>404</code>, because the caller is already<br>authenticated and hiding the endpoint helps nobody (FS-18).</p>
 </td></tr>
-<tr><td><code>501</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A later-release surface called on an MVP build. Not transient: retrying does not help.<br>Upgrade, or use the MVP equivalent.</p>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
 </td></tr>
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/features</span></h3>
 <p><strong>Create a feature</strong></p>
-<p><code>key</code> and <code>unit</code> are immutable once the feature is referenced, because reinterpreting a<br>historical amount is not allowed. The two have distinct error codes for that reason<br>(INV-F2, INV-F3); <code>feature_unit_immutable</code> is on this cell because a create that races an<br>assignment is the case the DDL cannot catch.</p>
+<p><code>key</code> is immutable always and <code>unit</code> once the feature is referenced, because reinterpreting a<br>historical amount is not allowed (INV-F2, INV-F3). <code>kind: boolean</code> is a v0.2 surface and is<br><code>501 not_implemented</code> on a v0.1 build (F-5).</p>
 <p class="muted">Operation ID: <code>createFeature</code></p>
 <h4>Authorisation</h4>
 <p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
@@ -401,7 +409,15 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
 <tr><td><code>501</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A later-release surface called on an MVP build. Not transient: retrying does not help.<br>Upgrade, or use the MVP equivalent.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
 </td></tr>
 </table>
 <h3><span class="method method-get">GET</span> <span class="path">/v1/admin/features/{feature_key}</span></h3>
@@ -428,13 +444,19 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>No such feature key on the admin API.</p>
 </td></tr>
-<tr><td><code>501</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A later-release surface called on an MVP build. Not transient: retrying does not help.<br>Upgrade, or use the MVP equivalent.</p>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
 </td></tr>
 </table>
 <h3><span class="method method-patch">PATCH</span> <span class="path">/v1/admin/features/{feature_key}</span></h3>
-<p><strong>Rename a feature</strong></p>
+<p><strong>Rename a feature, or correct an unreferenced unit</strong></p>
 <p><code>version</code> is required and is the optimistic-concurrency token. A mismatch is<br><code>409 resource_version_conflict</code> with the current version in <code>details</code>, so a client can<br>re-read and retry deliberately. Last-write-wins on a resource that governs a customer&#39;s<br>money is not acceptable, and an operator with two open browser tabs is exactly the case<br>(FS-12).</p>
-<p><code>unit</code> is absent from this body on purpose. It is immutable, so offering the field and<br>then refusing it would be a worse API than not offering it.</p>
+<p><code>unit</code> may change only while nothing references the feature: no plan entitlement, no<br>override and no usage event. Once anything does, a unit change is<br><code>409 feature_unit_immutable</code>, because it would reinterpret every historical amount<br>(INV-F2).</p>
 <p class="muted">Operation ID: <code>updateFeature</code></p>
 <h4>Authorisation</h4>
 <p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
@@ -468,7 +490,57 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
-<tr><td><code>501</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A later-release surface called on an MVP build. Not transient: retrying does not help.<br>Upgrade, or use the MVP equivalent.</p>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
+</table>
+<h3><span class="method method-delete">DELETE</span> <span class="path">/v1/admin/features/{feature_key}</span></h3>
+<p><strong>Delete an unreferenced feature</strong></p>
+<p>A hard delete, permitted only while no plan entitlement, override or usage event<br>references the feature (F-6). Otherwise <code>409 feature_in_use</code>, and archiving is the remedy,<br>because the history must never dangle (DR-016). The delete is audited with its reason.</p>
+<p class="muted">Operation ID: <code>deleteFeature</code></p>
+<h4>Authorisation</h4>
+<p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
+<h4>Parameters</h4>
+<table>
+<tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>feature_key</code></td><td><code>path</code></td><td>yes</td><td>FeatureKey</td><td><p>The feature key, as in the catalogue.</p>
+</td></tr>
+</table>
+<h4>Request body</h4>
+<p>The body is <strong><a href="#schema-deleterequest"><code>DeleteRequest</code></a></strong> and is required. Undeclared fields are rejected with <code>400 validation_failed</code>.</p>
+<h5>Example: delete</h5>
+<pre><code>{
+  &#34;reason&#34;: &#34;created with the wrong key&#34;
+}</code></pre>
+<h4>Responses</h4>
+<table>
+<tr><th>Status</th><th>Content</th><th>Schema</th><th>Headers</th><th>Description</th></tr>
+<tr><td><code>204</code></td><td>—</td><td>—</td><td><code>X-Request-Id</code></td><td><p>Done, and there is nothing to return. <code>X-Request-Id</code> is still on the response: NFR-S10 says<br>every response carries it, and a <code>204</code> is a response.</p>
+</td></tr>
+<tr><td><code>400</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The request was rejected and nothing changed. Validation errors aggregate, so one response<br>names every offending field.</p>
+</td></tr>
+<tr><td><code>401</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>No usable credential. <code>api_key_invalid</code> covers unknown, revoked, expired and malformed<br>keys, and there is no recovery path for any of them: rotate.</p>
+</td></tr>
+<tr><td><code>403</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A valid key with the wrong scope. <code>403</code> and not <code>404</code>, because the caller is already<br>authenticated and hiding the endpoint helps nobody (FS-18).</p>
+</td></tr>
+<tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>No such feature key on the admin API.</p>
+</td></tr>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A feature conflict, and nothing changed. <code>feature_unit_immutable</code> and<br><code>resource_version_conflict</code> are the two ways a feature mutation is refused; the other two<br>are duplicate-key and still-referenced.</p>
+</td></tr>
+<tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
+</td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
 </td></tr>
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/features/{feature_key}/archive</span></h3>
@@ -508,7 +580,13 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
-<tr><td><code>501</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A later-release surface called on an MVP build. Not transient: retrying does not help.<br>Upgrade, or use the MVP equivalent.</p>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
 </td></tr>
 </table>
 <h2 id="tag-admin-plans">admin-plans</h2>
@@ -538,6 +616,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>403</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A valid key with the wrong scope. <code>403</code> and not <code>404</code>, because the caller is already<br>authenticated and hiding the endpoint helps nobody (FS-18).</p>
 </td></tr>
 <tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A plan conflict, and <strong>nothing changed</strong>. <code>confirmation_required</code> is the same status<br>because it also applied nothing: it is a refusal that hands back a token, not a partial<br>application (DR-046).</p>
+</td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
 </td></tr>
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/plans</span></h3>
@@ -580,6 +666,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-get">GET</span> <span class="path">/v1/admin/plans/{id}</span></h3>
 <p><strong>Read one plan</strong></p>
@@ -589,7 +683,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A plan identifier. Either the UUID or the plan key; both address a plan.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A plan identifier. Either the UUID or the plan key; both address a plan. A UUID-shaped value<br>is looked up as an id first and as a plan key second. An identifier that names no plan is<br><code>404 plan_not_found</code>, never <code>400</code>.</p>
 </td></tr>
 </table>
 <h4>Responses</h4>
@@ -607,6 +701,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A plan conflict, and <strong>nothing changed</strong>. <code>confirmation_required</code> is the same status<br>because it also applied nothing: it is a refusal that hands back a token, not a partial<br>application (DR-046).</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-patch">PATCH</span> <span class="path">/v1/admin/plans/{id}</span></h3>
 <p><strong>Edit a plan&#39;s entitlements</strong></p>
@@ -618,7 +720,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A plan identifier. Either the UUID or the plan key; both address a plan.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A plan identifier. Either the UUID or the plan key; both address a plan. A UUID-shaped value<br>is looked up as an id first and as a plan key second. An identifier that names no plan is<br><code>404 plan_not_found</code>, never <code>400</code>.</p>
 </td></tr>
 </table>
 <h4>Request body</h4>
@@ -656,6 +758,58 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
+</table>
+<h3><span class="method method-delete">DELETE</span> <span class="path">/v1/admin/plans/{id}</span></h3>
+<p><strong>Delete an unassigned plan</strong></p>
+<p>A hard delete, permitted only while no tenant, including a soft-deleted one, is assigned to<br>the plan (P-6, DR-035). Otherwise <code>409 plan_in_use</code>, and archiving is the remedy. The<br>plan&#39;s own entitlements go with it. The delete is audited with its reason.</p>
+<p class="muted">Operation ID: <code>deletePlan</code></p>
+<h4>Authorisation</h4>
+<p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
+<h4>Parameters</h4>
+<table>
+<tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A plan identifier. Either the UUID or the plan key; both address a plan. A UUID-shaped value<br>is looked up as an id first and as a plan key second. An identifier that names no plan is<br><code>404 plan_not_found</code>, never <code>400</code>.</p>
+</td></tr>
+</table>
+<h4>Request body</h4>
+<p>The body is <strong><a href="#schema-deleterequest"><code>DeleteRequest</code></a></strong> and is required. Undeclared fields are rejected with <code>400 validation_failed</code>.</p>
+<h5>Example: delete</h5>
+<pre><code>{
+  &#34;reason&#34;: &#34;draft plan, never assigned&#34;
+}</code></pre>
+<h4>Responses</h4>
+<table>
+<tr><th>Status</th><th>Content</th><th>Schema</th><th>Headers</th><th>Description</th></tr>
+<tr><td><code>204</code></td><td>—</td><td>—</td><td><code>X-Request-Id</code></td><td><p>Done, and there is nothing to return. <code>X-Request-Id</code> is still on the response: NFR-S10 says<br>every response carries it, and a <code>204</code> is a response.</p>
+</td></tr>
+<tr><td><code>400</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The request was rejected and nothing changed. Validation errors aggregate, so one response<br>names every offending field.</p>
+</td></tr>
+<tr><td><code>401</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>No usable credential. <code>api_key_invalid</code> covers unknown, revoked, expired and malformed<br>keys, and there is no recovery path for any of them: rotate.</p>
+</td></tr>
+<tr><td><code>403</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A valid key with the wrong scope. <code>403</code> and not <code>404</code>, because the caller is already<br>authenticated and hiding the endpoint helps nobody (FS-18).</p>
+</td></tr>
+<tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>No such plan.</p>
+</td></tr>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A plan conflict, and <strong>nothing changed</strong>. <code>confirmation_required</code> is the same status<br>because it also applied nothing: it is a refusal that hands back a token, not a partial<br>application (DR-046).</p>
+</td></tr>
+<tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
+</td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/plans/{id}/apply</span></h3>
 <p><strong>Re-anchor and re-limit every assigned tenant, now</strong></p>
@@ -669,7 +823,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A plan identifier. Either the UUID or the plan key; both address a plan.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A plan identifier. Either the UUID or the plan key; both address a plan. A UUID-shaped value<br>is looked up as an id first and as a plan key second. An identifier that names no plan is<br><code>404 plan_not_found</code>, never <code>400</code>.</p>
 </td></tr>
 </table>
 <h4>Request body</h4>
@@ -701,6 +855,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/plans/{id}/archive</span></h3>
 <p><strong>Archive a plan</strong></p>
@@ -711,7 +873,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A plan identifier. Either the UUID or the plan key; both address a plan.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A plan identifier. Either the UUID or the plan key; both address a plan. A UUID-shaped value<br>is looked up as an id first and as a plan key second. An identifier that names no plan is<br><code>404 plan_not_found</code>, never <code>400</code>.</p>
 </td></tr>
 </table>
 <h4>Request body</h4>
@@ -738,6 +900,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-get">GET</span> <span class="path">/v1/admin/plans/{id}/impact</span></h3>
 <p><strong>Preview how many tenants an edit would affect</strong></p>
@@ -748,7 +918,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A plan identifier. Either the UUID or the plan key; both address a plan.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A plan identifier. Either the UUID or the plan key; both address a plan. A UUID-shaped value<br>is looked up as an id first and as a plan key second. An identifier that names no plan is<br><code>404 plan_not_found</code>, never <code>400</code>.</p>
 </td></tr>
 </table>
 <h4>Responses</h4>
@@ -763,6 +933,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>403</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A valid key with the wrong scope. <code>403</code> and not <code>404</code>, because the caller is already<br>authenticated and hiding the endpoint helps nobody (FS-18).</p>
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>No such plan.</p>
+</td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
 </td></tr>
 </table>
 <h2 id="tag-admin-tenants">admin-tenants</h2>
@@ -795,6 +973,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>403</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A valid key with the wrong scope. <code>403</code> and not <code>404</code>, because the caller is already<br>authenticated and hiding the endpoint helps nobody (FS-18).</p>
 </td></tr>
 <tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A tenant conflict, and nothing changed. <code>tenant_exists</code> is deliberately not idempotent, so<br>a provisioning bug surfaces instead of being hidden.</p>
+</td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
 </td></tr>
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/tenants</span></h3>
@@ -829,6 +1015,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-get">GET</span> <span class="path">/v1/admin/tenants/{id}</span></h3>
 <p><strong>Read one tenant</strong></p>
@@ -838,7 +1032,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant. A<br>UUID-shaped value is looked up as an id first and as an <code>external_id</code> second. An identifier<br>that names no tenant is <code>404 tenant_not_found</code>, never <code>400</code>, and is never echoed.</p>
 </td></tr>
 </table>
 <h4>Responses</h4>
@@ -856,6 +1050,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A tenant conflict, and nothing changed. <code>tenant_exists</code> is deliberately not idempotent, so<br>a provisioning bug surfaces instead of being hidden.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-patch">PATCH</span> <span class="path">/v1/admin/tenants/{id}</span></h3>
 <p><strong>Change a tenant&#39;s plan, name or zone</strong></p>
@@ -867,7 +1069,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant. A<br>UUID-shaped value is looked up as an id first and as an <code>external_id</code> second. An identifier<br>that names no tenant is <code>404 tenant_not_found</code>, never <code>400</code>, and is never echoed.</p>
 </td></tr>
 </table>
 <h4>Request body</h4>
@@ -894,6 +1096,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-delete">DELETE</span> <span class="path">/v1/admin/tenants/{id}</span></h3>
 <p><strong>Soft-delete a tenant</strong></p>
@@ -905,7 +1115,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant. A<br>UUID-shaped value is looked up as an id first and as an <code>external_id</code> second. An identifier<br>that names no tenant is <code>404 tenant_not_found</code>, never <code>400</code>, and is never echoed.</p>
 </td></tr>
 </table>
 <h4>Request body</h4>
@@ -931,6 +1141,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/tenants/{id}/suspend</span></h3>
 <p><strong>Suspend a tenant</strong></p>
@@ -941,7 +1159,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant. A<br>UUID-shaped value is looked up as an id first and as an <code>external_id</code> second. An identifier<br>that names no tenant is <code>404 tenant_not_found</code>, never <code>400</code>, and is never echoed.</p>
 </td></tr>
 </table>
 <h4>Request body</h4>
@@ -968,6 +1186,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/tenants/{id}/resume</span></h3>
 <p><strong>Resume a suspended tenant</strong></p>
@@ -977,7 +1203,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant. A<br>UUID-shaped value is looked up as an id first and as an <code>external_id</code> second. An identifier<br>that names no tenant is <code>404 tenant_not_found</code>, never <code>400</code>, and is never echoed.</p>
 </td></tr>
 </table>
 <h4>Request body</h4>
@@ -1004,6 +1230,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/tenants/{id}/grant</span></h3>
 <p><strong>Add bonus quota for the current cycle</strong></p>
@@ -1016,7 +1250,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant. A<br>UUID-shaped value is looked up as an id first and as an <code>external_id</code> second. An identifier<br>that names no tenant is <code>404 tenant_not_found</code>, never <code>400</code>, and is never echoed.</p>
 </td></tr>
 </table>
 <h4>Request body</h4>
@@ -1044,6 +1278,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/tenants/{id}/set</span></h3>
 <p><strong>Set a balance to an exact value</strong></p>
@@ -1054,7 +1296,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant. A<br>UUID-shaped value is looked up as an id first and as an <code>external_id</code> second. An identifier<br>that names no tenant is <code>404 tenant_not_found</code>, never <code>400</code>, and is never echoed.</p>
 </td></tr>
 </table>
 <h4>Request body</h4>
@@ -1082,6 +1324,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/tenants/{id}/force-rollover</span></h3>
 <p><strong>Roll one feature&#39;s cycle over now</strong></p>
@@ -1093,7 +1343,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant. A<br>UUID-shaped value is looked up as an id first and as an <code>external_id</code> second. An identifier<br>that names no tenant is <code>404 tenant_not_found</code>, never <code>400</code>, and is never echoed.</p>
 </td></tr>
 </table>
 <h4>Request body</h4>
@@ -1120,6 +1370,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/tenants/{id}/overrides</span></h3>
 <p><strong>Set or replace a per-feature override</strong></p>
@@ -1134,7 +1392,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant. A<br>UUID-shaped value is looked up as an id first and as an <code>external_id</code> second. An identifier<br>that names no tenant is <code>404 tenant_not_found</code>, never <code>400</code>, and is never echoed.</p>
 </td></tr>
 </table>
 <h4>Request body</h4>
@@ -1168,6 +1426,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-delete">DELETE</span> <span class="path">/v1/admin/tenants/{id}/overrides/{feature_key}</span></h3>
 <p><strong>Clear a per-feature override</strong></p>
@@ -1181,7 +1447,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant. A<br>UUID-shaped value is looked up as an id first and as an <code>external_id</code> second. An identifier<br>that names no tenant is <code>404 tenant_not_found</code>, never <code>400</code>, and is never echoed.</p>
 </td></tr>
 <tr><td><code>feature_key</code></td><td><code>path</code></td><td>yes</td><td>FeatureKey</td><td><p>The feature key, as in the catalogue.</p>
 </td></tr>
@@ -1207,6 +1473,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-get">GET</span> <span class="path">/v1/admin/tenants/{id}/events</span></h3>
 <p><strong>Read a tenant&#39;s usage ledger</strong></p>
@@ -1220,7 +1494,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h4>Parameters</h4>
 <table>
 <tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant.</p>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant. A<br>UUID-shaped value is looked up as an id first and as an <code>external_id</code> second. An identifier<br>that names no tenant is <code>404 tenant_not_found</code>, never <code>400</code>, and is never echoed.</p>
 </td></tr>
 <tr><td><code>cursor</code></td><td><code>query</code></td><td>no</td><td>string</td><td><p>Opaque and signed. A tampered cursor is <code>400 validation_failed</code>, never a silent full<br>scan. Newest first, always, with a stable tiebreaker so a cursor is never ambiguous.</p>
 </td></tr>
@@ -1254,6 +1528,12 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
 </td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h2 id="tag-admin-keys">admin-keys</h2>
 <p>API key issuance and revocation. A key is never readable after issue.</p>
@@ -1283,7 +1563,13 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>403</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A valid key with the wrong scope. <code>403</code> and not <code>404</code>, because the caller is already<br>authenticated and hiding the endpoint helps nobody (FS-18).</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Optimistic concurrency. Re-read the resource and retry with the current <code>version</code>; retrying<br>the same body will fail the same way.</p>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
 </td></tr>
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/keys</span></h3>
@@ -1312,14 +1598,20 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>403</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A valid key with the wrong scope. <code>403</code> and not <code>404</code>, because the caller is already<br>authenticated and hiding the endpoint helps nobody (FS-18).</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Optimistic concurrency. Re-read the resource and retry with the current <code>version</code>; retrying<br>the same body will fail the same way.</p>
-</td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
+</td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
 </td></tr>
 </table>
 <h3><span class="method method-delete">DELETE</span> <span class="path">/v1/admin/keys/{id}</span></h3>
 <p><strong>Revoke an API key</strong></p>
-<p>Revocation is <strong>immediate, with no cache delay</strong>, because the cache stores the hash and the<br>state and revocation bumps the version. A revoked key is rejected on the next request<br>(UC-15, K-2).</p>
+<p>Revocation takes effect on the next request to the instance that served it, and within the<br>propagation bound (NFR-D3) on every other, because each instance&#39;s key cache re-reads its<br>keys on every invalidation and refresh tick (UC-15, K-2). Revoking a key that is already<br>revoked is <code>204</code> and changes nothing. An id that names no key is <code>404 api_key_not_found</code>,<br>so a mistyped id in an incident is never mistaken for a revoked key.</p>
 <p class="muted">Operation ID: <code>revokeKey</code></p>
 <h4>Authorisation</h4>
 <p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
@@ -1340,7 +1632,15 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>403</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A valid key with the wrong scope. <code>403</code> and not <code>404</code>, because the caller is already<br>authenticated and hiding the endpoint helps nobody (FS-18).</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Optimistic concurrency. Re-read the resource and retry with the current <code>version</code>; retrying<br>the same body will fail the same way.</p>
+<tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>No API key has that id. Distinct from a successful revocation, so a mistyped id is never<br>mistaken for a revoked key. List the keys and check the id.</p>
+</td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
 </td></tr>
 </table>
 <h2 id="tag-admin-observe">admin-observe</h2>
@@ -1378,11 +1678,17 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
 </td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
+<p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
+</td></tr>
 </table>
 <h3><span class="method method-get">GET</span> <span class="path">/v1/admin/status</span></h3>
 <p><strong>Dependency health, version and queue state</strong></p>
 <p>The one call an operator makes when something is wrong, so it is <strong>not</strong> allowed to fail<br>with an error envelope: an endpoint that returned <code>unauthorized</code> when a dependency was<br>down could not report that the dependency was down, which is the one thing it exists to<br>do. It reports dependency failure as data, at <code>200</code>.</p>
-<p>It does still require the <code>admin</code> scope (NFR-O5). Reports the build, the <code>tzdata</code> version<br>the binary was built with, the current time and the snapshot size.</p>
+<p>It does still require the <code>admin</code> scope (NFR-O5). A missing or invalid credential is a bare<br><code>401</code>, a key of the wrong scope a bare <code>403</code>, and a caller over the admin rate limit a bare<br><code>429</code> with <code>Retry-After</code>, each with no body, because those are answers about the caller<br>rather than about a dependency. Reports the build, the <code>tzdata</code> version the binary was built<br>with, the current time and the snapshot size.</p>
 <p class="muted">Operation ID: <code>status</code></p>
 <h4>Authorisation</h4>
 <p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
@@ -1568,7 +1874,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p>One of: <code>runtime</code>, <code>admin</code></p>
 <h3 id="schema-keystate">KeyState</h3>
 <p class="muted">Type <code>string</code></p>
-<p>A key&#39;s lifecycle. Revocation is effective on the next request, with no cache delay.</p>
+<p>A key&#39;s lifecycle. Revocation is effective on the next request to the instance that served<br>it, and within the propagation bound (NFR-D3) on every other.</p>
 <p>One of: <code>active</code>, <code>revoked</code>, <code>expired</code></p>
 <h3 id="schema-tenantstate">TenantState</h3>
 <p class="muted">Type <code>string</code></p>
@@ -1602,7 +1908,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p class="muted">Type <code>string</code></p>
 <p>The only field to branch on. Stable, permanent, lower snake case. A code may be retired<br>only in a major version, and only if no client could reasonably depend on it.</p>
 <p>The enum is the catalogue by reference, and a contract test asserts the two match, so the<br>service cannot raise a code that is not in<br>[error-catalog.md](../../docs/product/error-catalog.md).</p>
-<p>One of: <code>validation_failed</code>, <code>invalid_amount</code>, <code>invalid_window</code>, <code>invalid_timezone</code>, <code>missing_idempotency_key</code>, <code>unauthorized</code>, <code>api_key_invalid</code>, <code>insufficient_scope</code>, <code>feature_not_in_plan</code>, <code>feature_archived</code>, <code>tenant_suspended</code>, <code>tenant_not_found</code>, <code>feature_not_found</code>, <code>plan_not_found</code>, <code>payload_too_large</code>, <code>idempotency_key_reuse</code>, <code>plan_in_use</code>, <code>feature_in_use</code>, <code>feature_key_exists</code>, <code>tenant_exists</code>, <code>tenant_deleted</code>, <code>plan_key_exists</code>, <code>refund_exceeds_grant</code>, <code>grant_exceeds_ceiling</code>, <code>reset_not_supported</code>, <code>feature_unit_immutable</code>, <code>resource_version_conflict</code>, <code>confirmation_required</code>, <code>quota_exceeded</code>, <code>rate_limited</code>, <code>service_unavailable</code>, <code>control_plane_unavailable</code>, <code>internal_error</code>, <code>not_implemented</code></p>
+<p>One of: <code>validation_failed</code>, <code>invalid_amount</code>, <code>invalid_window</code>, <code>invalid_timezone</code>, <code>missing_idempotency_key</code>, <code>unauthorized</code>, <code>api_key_invalid</code>, <code>insufficient_scope</code>, <code>feature_not_in_plan</code>, <code>feature_archived</code>, <code>tenant_suspended</code>, <code>tenant_not_found</code>, <code>feature_not_found</code>, <code>plan_not_found</code>, <code>api_key_not_found</code>, <code>payload_too_large</code>, <code>idempotency_key_reuse</code>, <code>plan_in_use</code>, <code>feature_in_use</code>, <code>feature_key_exists</code>, <code>tenant_exists</code>, <code>tenant_deleted</code>, <code>plan_key_exists</code>, <code>refund_exceeds_grant</code>, <code>grant_exceeds_ceiling</code>, <code>reset_not_supported</code>, <code>feature_unit_immutable</code>, <code>resource_version_conflict</code>, <code>confirmation_required</code>, <code>quota_exceeded</code>, <code>rate_limited</code>, <code>service_unavailable</code>, <code>control_plane_unavailable</code>, <code>internal_error</code>, <code>not_implemented</code></p>
 <h3 id="schema-errorresponse">ErrorResponse</h3>
 <p class="muted">Type <code>object</code></p>
 <p>The one error shape, everywhere, and it is non-negotiable. No endpoint returns a bare<br><code>400</code> or a bare <code>500</code> without it.</p>
@@ -1738,7 +2044,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </ul>
 <table>
 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
-<tr><td><code>id</code></td><td><code>string (uuid)</code></td><td>yes</td><td><p>Internal, and what <code>/v1/admin/features/{id}</code> takes. Unlike a tenant&#39;s <code>external_id</code><br>there is no customer-chosen form, because a feature is Quotacore&#39;s own catalogue entry.</p>
+<tr><td><code>id</code></td><td><code>string (uuid)</code></td><td>yes</td><td><p>Internal. The admin routes address a feature by <code>feature_key</code>, never by this id, which<br>exists for the audit log&#39;s <code>subject_id</code>.</p>
 </td></tr>
 <tr><td><code>feature_key</code></td><td>—</td><td>yes</td><td><p>Immutable once created (INV-F3).</p>
 </td></tr>
@@ -1773,10 +2079,12 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>description</code></td><td><code>string</code></td><td>no</td><td><p>Optional free text. Absent and <code>&#39;&#39;</code> are the same thing, which is why it defaults to <code>&#39;&#39;</code>.</p>
 </td></tr>
+<tr><td><code>kind</code></td><td>—</td><td>no</td><td><p>Optional, <code>metered</code> by default. <code>boolean</code> is a v0.2 surface and is <code>501 not_implemented</code><br>on a v0.1 build (F-5).</p>
+</td></tr>
 </table>
 <h3 id="schema-featureupdate">FeatureUpdate</h3>
 <p class="muted">Type <code>object</code></p>
-<p>A rename. <code>unit</code> and <code>feature_key</code> are absent by design: offering an immutable field and<br>then refusing it is a worse API than not offering it.</p>
+<p>A rename, or a unit correction. <code>feature_key</code> is absent by design: it is immutable always, and<br>offering an immutable field and then refusing it is a worse API than not offering it. <code>unit</code><br>is offered because it is mutable until the feature is referenced (INV-F2).</p>
 <ul>
 <li><p><strong>Undeclared fields are rejected.</strong> A field that is not in this schema is a <code>400 validation_failed</code>.</p>
 </li>
@@ -1788,6 +2096,8 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>name</code></td><td><code>string</code></td><td>no</td><td><p>The new display name, replacing the current one.</p>
 </td></tr>
 <tr><td><code>description</code></td><td><code>string</code></td><td>no</td><td><p>Replaces the current free text. <code>&#39;&#39;</code> clears it, so clearing is an explicit act.</p>
+</td></tr>
+<tr><td><code>unit</code></td><td>—</td><td>no</td><td><p>A new unit, accepted only while no plan entitlement, override or usage event references<br>the feature. Otherwise <code>409 feature_unit_immutable</code> (INV-F2).</p>
 </td></tr>
 </table>
 <h3 id="schema-featurelist">FeatureList</h3>
@@ -2046,7 +2356,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </table>
 <h3 id="schema-archiverequest">ArchiveRequest</h3>
 <p class="muted">Type <code>object</code></p>
-<p>Archive a plan or a feature. Archiving is not deletion: the record keeps its history and stops<br>being assignable, and archiving again is what reverses it (INV-P2, UC-13).</p>
+<p>Archive a plan or a feature. Archiving is not deletion: the record keeps its history and stops<br>being assignable (UC-13). v0.1 has no unarchive route, so archiving is one-way here, and<br>archiving a record that is already archived is a <code>200</code> that changes nothing and writes no<br>audit row.</p>
 <ul>
 <li><p><strong>Undeclared fields are rejected.</strong> A field that is not in this schema is a <code>400 validation_failed</code>.</p>
 </li>
@@ -2060,14 +2370,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </table>
 <h3 id="schema-deleterequest">DeleteRequest</h3>
 <p class="muted">Type <code>object</code></p>
-<p>Soft-delete a tenant. Deletion is terminal for the tenant, so the open balance is not re-granted<br>and the ledger is kept, because a deleted tenant still has events (UC-14).</p>
+<p>Delete a tenant, a plan or a feature, with the reason the audit row records. A tenant is<br>soft-deleted: deletion is terminal for the tenant, so the open balance is not re-granted and<br>the ledger is kept, because a deleted tenant still has events (UC-14). A plan or a feature is<br>hard-deleted, and only while nothing references it (P-6, F-6); otherwise the answer is<br><code>409 plan_in_use</code> or <code>409 feature_in_use</code>, and archiving is the remedy.</p>
 <ul>
 <li><p><strong>Undeclared fields are rejected.</strong> A field that is not in this schema is a <code>400 validation_failed</code>.</p>
 </li>
 </ul>
 <table>
 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
-<tr><td><code>reason</code></td><td><code>string</code></td><td>yes</td><td><p>Required and audited. Soft deletion is terminal, so the reason is the only record of<br>why it happened.</p>
+<tr><td><code>reason</code></td><td><code>string</code></td><td>yes</td><td><p>Required and audited. Deletion is terminal, so the reason is the only record of why it<br>happened.</p>
 </td></tr>
 </table>
 <h3 id="schema-grantrequest">GrantRequest</h3>
@@ -2219,8 +2529,10 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>idempotency_key</code></td><td>—</td><td>yes</td><td><p>The customer&#39;s key, on <code>consumed</code> and <code>refunded</code>. Filtering by it is how a disputed<br>charge is resolved: the recorded outcome shows whether it was applied once or twice<br>(UC-16).</p>
 </td></tr>
-<tr><td><code>cycle_start</code></td><td>—</td><td>yes</td><td></td></tr>
-<tr><td><code>cycle_end</code></td><td>—</td><td>yes</td><td></td></tr>
+<tr><td><code>cycle_start</code></td><td>—</td><td>yes</td><td><p>The start of the event&#39;s cycle, recomputed from the tenant&#39;s current anchor, zone and<br>interval. Null for an event older than the current anchor, because a window from before<br>a re-anchor cannot be recomputed from the anchor that replaced it.</p>
+</td></tr>
+<tr><td><code>cycle_end</code></td><td>—</td><td>yes</td><td><p>The end of the event&#39;s cycle, on the same terms as <code>cycle_start</code>, and also null for a<br><code>never</code> entitlement (INV-C6).</p>
+</td></tr>
 <tr><td><code>occurred_at</code></td><td><a href="#schema-timestamp"><code>Timestamp</code></a></td><td>yes</td><td></td></tr>
 </table>
 <h3 id="schema-usageeventlist">UsageEventList</h3>
@@ -2261,6 +2573,8 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>after</code></td><td>—</td><td>yes</td><td><p>The resource after the change, or null when it was deleted.</p>
 </td></tr>
+<tr><td><code>reason</code></td><td>—</td><td>yes</td><td><p>The reason the caller gave, for the mutations that require one (archive, delete, suspend,<br>resume), and null for the rest.</p>
+</td></tr>
 <tr><td><code>request_id</code></td><td><a href="#schema-requestid"><code>RequestId</code></a></td><td>yes</td><td></td></tr>
 <tr><td><code>occurred_at</code></td><td><a href="#schema-timestamp"><code>Timestamp</code></a></td><td>yes</td><td></td></tr>
 </table>
@@ -2298,7 +2612,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>expires_at</code></td><td>—</td><td>yes</td><td><p>Optional at issue time, enforced on every request. A key past this is<br><code>401 api_key_invalid</code>.</p>
 </td></tr>
 <tr><td><code>last_used_at</code></td><td>—</td><td>yes</td><td></td></tr>
-<tr><td><code>revoked_at</code></td><td>—</td><td>yes</td><td><p>Revocation is immediate and <strong>effective on the next request with no cache delay</strong>,<br>because the cache stores the hash and the state and revocation bumps the version<br>(UC-15, K-2).</p>
+<tr><td><code>revoked_at</code></td><td>—</td><td>yes</td><td><p>Revocation takes effect on the next request to the instance that served it, and within<br>the propagation bound (NFR-D3) on every other instance (UC-15, K-2).</p>
 </td></tr>
 </table>
 <h3 id="schema-keycreate">KeyCreate</h3>
