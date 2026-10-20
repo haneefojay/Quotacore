@@ -37,6 +37,11 @@ func (s *Service) createKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name, _ := b.str("name", true, nil, 1, nameMax)
+	if name == "bootstrap" {
+		// The audit actor of the bootstrap is reserved, so no request can be
+		// mistaken for it (INV-K2).
+		b.add("name", "is reserved")
+	}
 	scope, _ := b.str("scope", true, nil, 0, 0)
 	if scope != "" && scope != string(auth.Runtime) && scope != string(auth.Admin) {
 		b.add("scope", "must be runtime or admin")
