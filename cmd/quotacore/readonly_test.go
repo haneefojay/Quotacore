@@ -248,7 +248,7 @@ func startNormal(t *testing.T, dbURL string) error {
 		t.Fatal(err)
 	}
 	defer data.Close()
-	app, err := assemble(ctx, cfg, slog.New(slog.DiscardHandler), conn, data, func() bool { return true }, nil,
+	app, err := assemble(ctx, cfg, slog.New(slog.DiscardHandler), conn, data, nil,
 		assembleOptions{retentionFirstRun: time.Hour, reconcileFirstRun: time.Hour})
 	if err == nil {
 		app.Close()

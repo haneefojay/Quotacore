@@ -10,6 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/quotacore/quotacore/internal/cycle"
+	"github.com/quotacore/quotacore/internal/observability"
 	"github.com/quotacore/quotacore/internal/store"
 )
 
@@ -25,6 +26,7 @@ const bound = int64(1<<53 - 1)
 type Runner struct {
 	client  redis.Scripter
 	timeout time.Duration
+	cycles  *observability.Cycles
 }
 
 // Options are the two things a Runner needs. The client is an interface rather
@@ -39,6 +41,10 @@ type Options struct {
 	// with no budget would wait forever on the one thing a request path may not
 	// do.
 	Timeout time.Duration
+	// Cycles counts what each execution's transition saw (IP-13 D2, D3). The
+	// runner is the one place every script outcome passes, so no caller can
+	// count one twice; nil counts nothing.
+	Cycles *observability.Cycles
 }
 
 // New returns a Runner, or an error if it could not enforce anything.
@@ -49,7 +55,7 @@ func New(o Options) (*Runner, error) {
 	if o.Timeout <= 0 {
 		return nil, fmt.Errorf("script: the script timeout must be positive, got %s", o.Timeout)
 	}
-	return &Runner{client: o.Client, timeout: o.Timeout}, nil
+	return &Runner{client: o.Client, timeout: o.Timeout, cycles: o.Cycles}, nil
 }
 
 // Client is the store this runner enforces against, for the one caller that has
@@ -83,6 +89,9 @@ type Request struct {
 	// sign error on the wrong endpoint, not a refund (DR-023).
 	Amount int64
 	Window cycle.Window
+	// Interval is the entitlement's cadence, which only labels the transition
+	// counter; the window already carries everything the script reads.
+	Interval cycle.Interval
 	// Limit is the effective limit for that window, after any reduction the plan
 	// applies (DR-018). It is the figure a rollover re-grants, so passing the
 	// nominal limit here would silently undo a reduction.
@@ -140,6 +149,7 @@ func (r *Runner) run(ctx context.Context, b body, req Request) (Outcome, error) 
 
 	out, err := r.eval(ctx, b, keys, req)
 	if !isNoScript(err) {
+		r.observe(req, out, err)
 		return out, err
 	}
 	// The store's script cache was flushed, or the store restarted, and the
@@ -149,7 +159,30 @@ func (r *Runner) run(ctx context.Context, b body, req Request) (Outcome, error) 
 	if loadErr := Load(ctx, r.client); loadErr != nil {
 		return Outcome{}, fmt.Errorf("the %s script was not in the store and could not be put back: %w", b.op, loadErr)
 	}
-	return r.eval(ctx, b, keys, req)
+	out, err = r.eval(ctx, b, keys, req)
+	r.observe(req, out, err)
+	return out, err
+}
+
+// observe hands one execution's transition to the counters. A failed call
+// decided nothing and an invalid or missing state transitioned nothing.
+func (r *Runner) observe(req Request, out Outcome, err error) {
+	if r.cycles == nil || err != nil || out.Transition == "" {
+		return
+	}
+	r.cycles.Observe(observability.Transition{
+		Interval: req.Interval.String(),
+		Rolled:   out.Rolled(),
+		Stale:    out.Transition == Stale,
+		Replayed: out.Replayed(),
+		Target:   req.Window.Index,
+		Index:    out.Index,
+		Start:    out.Start,
+		At:       req.At,
+		Balance:  out.Balance,
+		Limit:    out.Limit,
+		Bonus:    out.Bonus,
+	})
 }
 
 // eval runs one script. There is exactly one command here and no second call

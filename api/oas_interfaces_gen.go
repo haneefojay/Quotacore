@@ -105,6 +105,10 @@ type PlanImpactRes interface {
 	planImpactRes()
 }
 
+type ReadyzRes interface {
+	readyzRes()
+}
+
 type RefundRes interface {
 	refundRes()
 }

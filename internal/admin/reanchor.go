@@ -168,6 +168,9 @@ func (s *Service) RunDrain(ctx context.Context, every time.Duration) {
 	defer t.Stop()
 	for {
 		s.DrainOnce(ctx)
+		if s.drained != nil {
+			s.drained(ctx)
+		}
 		select {
 		case <-ctx.Done():
 			return

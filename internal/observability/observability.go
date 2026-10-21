@@ -1,15 +1,13 @@
 // Package observability owns the metrics the two planes emit. The metric names
-// and their labels are the catalogue in observability.md section 1.4; this
-// package is the code mirror of that table, and the seven collectors below are
-// the whole of it. IP-13 mounts a /metrics endpoint; this package only defines
-// the collectors and a Register method, so a process that does not mount the
-// route (every process before IP-13) pays nothing extra and the collectors are
-// still testable.
+// and their labels are the catalogue in observability.md section 1; this
+// package is the code mirror of that catalogue, one collector set per phase
+// that owns a share of it, and NewRegistry puts every set in the one registry
+// a process serves at /metrics (IP-13).
 //
-// The data plane must not grow an unbounded label (observability.md section
-// 1.5): every label that exists here has its value set chosen from a closed
-// list, and the one per-tenant series the data plane would invite is excluded
-// by construction.
+// No label may take an unbounded value (observability.md section 1.7): every
+// label that exists here has its value set chosen from a closed list, or from
+// a set bounded by configuration (features, keys), and the one per-tenant
+// series the data plane would invite is excluded by construction.
 package observability
 
 import (
@@ -38,7 +36,8 @@ const (
 	RefreshSkipped = "skipped"
 )
 
-// Metrics is the seven collectors of observability.md section 1.4, as a unit so
+// Metrics is the seven collectors of observability.md section 1.4 that the
+// snapshot and the pool own (IP-04), as a unit so
 // that "these and only these" is asserted once, on any registry.
 type Metrics struct {
 	// CacheEntries is the number of tenants currently in the snapshot, an
@@ -148,4 +147,23 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 		}
 	}
 	return nil
+}
+
+// Set is one phase's collectors, registered as a unit.
+type Set interface {
+	Register(prometheus.Registerer) error
+}
+
+// NewRegistry is the one registry a process serves at /metrics: every set,
+// and nothing the client library would add on its own, because the catalogue
+// is observability.md section 1 and a series it does not name is an
+// obligation nobody chose (IP-13 D1, D2).
+func NewRegistry(sets ...Set) (*prometheus.Registry, error) {
+	reg := prometheus.NewRegistry()
+	for _, s := range sets {
+		if err := s.Register(reg); err != nil {
+			return nil, err
+		}
+	}
+	return reg, nil
 }

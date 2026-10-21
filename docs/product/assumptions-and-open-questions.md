@@ -47,7 +47,7 @@ Status values: `assumed` · `verifying` · `confirmed` · `falsified` · `open` 
 
 | ID | Assumption | Status | How it is verified | If false |
 | --- | --- | --- | --- | --- |
-| A-17 | Operators can run NTP and keep the host clock correct | assumed | Document it as a hard requirement; alert on clock skew | Detection of skew becomes the mitigation, since we cannot correct the host clock |
+| A-17 | Operators can run NTP and keep the host clock correct | assumed | Document it as a hard requirement; alert on clock skew, which `quotacore_clock_skew_seconds` and its rule do from 2026-10-21 (`IP-13`, Q-26) | Detection of skew becomes the mitigation, since we cannot correct the host clock |
 | A-18 | A single region is acceptable | assumed | Ask about data-residency requirements during evaluation | Regional data planes with a control plane per region, a large change |
 | A-19 | Backup and restore of Postgres plus the data store is a customer responsibility, with the procedure documented | assumed | Restore drill performed by someone who did not write the procedure | A managed backup story is needed, which is an operations product |
 | A-20 | Six reset intervals cover the MVP cohort | assumed | Count interval requests during the pilot | Add intervals in a minor release; the cycle engine is already table-driven |
@@ -114,8 +114,10 @@ negative balance cannot be represented by the contract or the scripts, and does 
 [Q-20](#2-open-questions) (a documented export query, no pipeline) and
 [Q-22](#2-open-questions) (a zero-delta transition writes no row, and a cycle with no opening row
 opens at the effective limit). [Q-24](#2-open-questions) was added the same day by `IP-12`, which
-found that an immediate override moved a balance with no event, and does not block it. Eight remain
-open.
+found that an immediate override moved a balance with no event, and does not block it.
+[Q-25](#2-open-questions) and [Q-26](#2-open-questions) were added on 2026-10-21 by `IP-13`, which
+found a sanity ceiling and a skew threshold the specification names and never defines; neither
+blocks it. Ten remain open.
 
 | ID | Question | Proposed default | Deadline | Blocks | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -143,6 +145,8 @@ open.
 | Q-22 | A `set` to the current value and a rollover with nothing consumed both have `delta = 0`, which `usage_events_delta_nonzero` refuses, while DR-042 says each attempts one row. Which gives way? | **The constraint.** A zero-delta transition writes no row, because a row that changes nothing is not a mutation and the constraint is the schema. Reconciliation then reads a cycle's opening allowance from the plan and the anchor rather than from a `cycle_rolled_over` row, and `IP-12` states that in the writer | Before the ledger writer ships (`IP-12`) | `usage_events` writer | answered — the constraint; data-model §2.7 |
 | Q-23 | DR-018 lets an admin `set` a negative balance, but the contract's amounts are non-negative and every script reads a negative stored balance as a damaged hash. Should a negative balance be representable? | **Not in v0.1.** `set` takes `0` to `limit + bonus`; setting `0`, or suspending the tenant, stops an abusive customer until the boundary, which is what DR-018 is for. Widening it changes the contract's `Amount` and the transition block in six scripts | Before the admin API is extended past v0.1 | `POST /v1/admin/tenants/{id}/set` | open |
 | Q-24 | An override applied `immediate` moves the open cycle's balance by the change in limit (`IP-10` D6), and the contract's event types have none for it. What does the ledger write? | **`plan_changed`, `source: admin`.** The move is a change to the tenant's effective entitlement, which is what U-5 records, and its `balance_after` is a correct opening for the reconciler. A distinct `override_applied` type adds a value to the frozen contract's `EventType` and to the `event_type` enumeration | Before the contract's next minor version | `usage_events` writer, `EventType` | open |
+| Q-25 | cycle-engine.md and consistency-and-recovery §3 and §7 describe a "configured sanity ceiling" on `cycle_index` whose breach is a P1 alert; no configuration key or code defines one. Is it needed? | **Not in v0.1.** An index written far ahead makes every later transition `stale` with the stored index ahead, which `quotacore_rollover_stale_total` counts and its P1 alert reports, and the recovery is the same `force-rollover`. A configured ceiling would only name the cause sooner | Before v0.1 release | `rollover_stale_total`, force-rollover | open |
+| Q-26 | What clock skew is "above the threshold" (observability §5, NFR-D8, A-17)? No source gives a figure | **1 s**, between this process and the data store, for 5 minutes, P1; the same figure separates a boundary race from a stale rollover (observability §1.1). Every boundary is millisecond-precise, so any skew is wrong, and a second is what NTP-synchronised hosts never reach; it is an operator default, not a measurement | Before v0.1 release | `quotacore_clock_skew_seconds` | open |
 ---
 
 ## 3. How this register is maintained

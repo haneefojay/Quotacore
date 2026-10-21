@@ -350,6 +350,9 @@ type Options struct {
 	// ReadOnly reports whether the instance is in read-only mode (IP-11
 	// D5); nil is never.
 	ReadOnly func() bool
+	// Drained runs after every drain tick, which is where the gauge of
+	// pending re-anchors is refreshed (IP-13 D10); nil does nothing.
+	Drained func(ctx context.Context)
 }
 
 // StatusInfo is what GET /v1/admin/status reports beyond its probes.
@@ -388,6 +391,7 @@ type Service struct {
 	cnfTTL      time.Duration
 	now         func() time.Time
 	readOnly    func() bool
+	drained     func(ctx context.Context)
 }
 
 func New(opts Options) *Service {
@@ -405,6 +409,7 @@ func New(opts Options) *Service {
 		cnfTTL:      opts.ConfirmationTTL,
 		now:         opts.Now,
 		readOnly:    opts.ReadOnly,
+		drained:     opts.Drained,
 	}
 	if s.readOnly == nil {
 		s.readOnly = func() bool { return false }
