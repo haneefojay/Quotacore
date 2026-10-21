@@ -134,6 +134,14 @@ mid-cycle tenant that is indistinguishable from free service (DR-045).
 >   instance refuses to start beside it, and an instance whose fence connection drops serves
 >   read-only until it holds the fence again. The rebuild waits two fence checks after taking it
 >   before it reads anything.
+>
+>   **Amended 2026-10-21 (`IP-13`).** "Drops" means Postgres answered and the fence is no longer
+>   this instance's. An instance whose check cannot reach Postgres at all keeps its mode and asks
+>   again on the next check, so a control-plane outage does not stop enforcement for cached tenants
+>   (NFR-A2, [mvp-scope.md](../product/mvp-scope.md) §3). That is safe for a rebuild: an instance
+>   that cannot reach Postgres runs only the data-plane scripts, which never create an absent hash
+>   (DR-045), and the first check that reaches Postgres finds a rebuild's exclusive hold and goes
+>   read-only.
 > - **Step 3** applies only when Postgres was lost too, because a restore truncates the very
 >   ledger the rebuild reads; the operator then passes `--ledger-restored-at <instant>`, and every
 >   cycle is unverified, since everything after that instant is gone.
