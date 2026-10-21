@@ -91,7 +91,7 @@ reading the source.
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `QUOTACORE_LISTEN_ADDR` | `:8080` | — |
-| `QUOTACORE_METRICS_ADDR` | `127.0.0.1:9090` | `0.0.0.0` warns |
+| `QUOTACORE_METRICS_ADDR` | `127.0.0.1:9090` | `0.0.0.0` warns. Amended 2026-10-21 (`IP-13`): read from this release, `/metrics` is served only here and the API listener answers it `404`; any address that is not loopback warns at start, and the scrape is unauthenticated, so the loopback bind is the control. This port and `QUOTACORE_LISTEN_ADDR`'s refuse to start below 1024, and a process running as uid 0 warns, because the service needs no privilege (NFR-S6) |
 | `QUOTACORE_DATABASE_URL` | *(required)* | `postgresql://quotacore:…@postgres:5432/quotacore?sslmode=disable` |
 | `QUOTACORE_REDIS_URL` | *(required)* | `redis://valkey:6379/0` |
 | `QUOTACORE_LOG_LEVEL` | `info` | `debug` in development only |

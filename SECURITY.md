@@ -110,6 +110,7 @@ valid key or host access.
 | 6 | No per-tenant key issuance without a runtime key per tenant | Low | Deferred deliberately | Post-MVP |
 | 7 | The v0.4 UI's XSS and redirect surface | Unknown | Not built; requirements recorded for when it is | At the start of v0.4 |
 | 8 | `tenants.display_name` is free text, required, and could hold a person's name | Low | It is an operator label for a tenant list, never a lookup key and never logged (NFR-O6). ADR-0013 puts personal names out of scope, and nothing can enforce that on a free-text label, so the position is documentation: it names the account or workspace, not a person | If a deployment needs it enforced, a configurable pattern on the label, not a schema change |
+| 9 | `/metrics` is unauthenticated, and its series carry `key_prefix` labels | Low | Served on its own listener, `127.0.0.1:9090` by default, with a `warn` at start on any other bind; the API port answers it `404`. A prefix identifies a key and is not a credential (DR-043). Added 2026-10-21 (`IP-13`) | If a deployment must scrape across hosts, a scrape credential or mTLS on that listener |
 
 ## 7. Verification
 
