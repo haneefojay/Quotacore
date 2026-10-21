@@ -26,6 +26,9 @@ func audit(ctx context.Context, tx *sql.Tx, a admin.Actor, action, subjectType, 
 INSERT INTO audit_log (actor_key_id, actor, action, subject_type, subject_id, before, after, reason, request_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		nullable(a.KeyID), a.Name, action, subjectType, nullable(subjectID), b, af, nullable(reason), a.RequestID)
+	if err == nil && a.Audited != nil {
+		a.Audited(action, subjectType)
+	}
 	return Classify(OpWrite, err)
 }
 

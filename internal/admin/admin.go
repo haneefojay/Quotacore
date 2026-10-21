@@ -18,6 +18,7 @@ import (
 	contract "github.com/quotacore/quotacore/api"
 	"github.com/quotacore/quotacore/internal/auth"
 	"github.com/quotacore/quotacore/internal/dataplane"
+	"github.com/quotacore/quotacore/internal/envelope"
 	"github.com/quotacore/quotacore/internal/script"
 	"github.com/quotacore/quotacore/internal/snapshot"
 	"github.com/quotacore/quotacore/internal/store"
@@ -29,6 +30,10 @@ type Actor struct {
 	KeyID     string
 	Name      string
 	RequestID string
+	// Audited is told the action and subject type of each audit row the
+	// request writes, so the request's log line names them (IP-13 D6);
+	// nil is told nothing.
+	Audited func(action, subjectType string)
 }
 
 // Position is where a page ends, newest first: the row's creation instant and
@@ -508,6 +513,6 @@ func (s *Service) publish(r *http.Request, tenants []string) {
 	defer cancel()
 	if _, err := s.data.Publish(ctx, tenants); err != nil {
 		s.log.Warn("could not publish a configuration change; the refresh tick will converge it",
-			"error", err)
+			"request_id", envelope.From(r.Context()).RequestID, "error", err)
 	}
 }

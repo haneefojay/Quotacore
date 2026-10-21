@@ -145,7 +145,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 	var fenceConn, ledgerConn *sql.DB
 	if cfg.StartupMode == ModeReadOnly {
 		data.SetReadOnly(true)
-		log.Warn("starting in read-only mode: no balance or idempotency record is written until a restart in normal mode")
+		log.Warn("starting in read-only mode: no balance or idempotency record is written until a restart in normal mode", "job", "startup")
 	} else {
 		var err error
 		fenceConn, err = db.Open(ctx, cfg.DatabaseURL)
@@ -153,7 +153,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 			return nil, err
 		}
 		fenceConn.SetMaxOpenConns(1)
-		fence = db.NewFence(fenceConn, log)
+		fence = db.NewFence(fenceConn, log.With("job", "fence"))
 		held, err := fence.Acquire(ctx)
 		if err != nil || !held {
 			fenceConn.Close()
@@ -199,7 +199,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		BatchSize:     cfg.EventBatchSize,
 		FlushInterval: cfg.EventFlushInterval,
 		Appender:      appender,
-		Logger:        log,
+		Logger:        log.With("job", "ledger"),
 		// The loss record (IP-11 D8). A request can spend up to its timeout
 		// between its accepted instant and its enqueue.
 		Sessions:  db.NewLedger(ledgerConn),
@@ -225,7 +225,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		AuditDays: cfg.AuditRetentionDays,
 		Interval:  cfg.RetentionInterval,
 		FirstRun:  opt.retentionFirstRun,
-		Logger:    log,
+		Logger:    log.With("job", "retention"),
 		Metrics:   sink.Metrics(),
 		Paused:    readOnly,
 	})
@@ -265,7 +265,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 	})
 	snap.OnChange(keys.Invalidate)
 	go keys.Run(ctx, cfg.ConfigRefreshInterval, func(what string, err error) {
-		log.Warn("could not "+what, "error", err)
+		log.Warn("could not "+what, "job", "refresh", "error", err)
 	})
 	snap.Start(ctx)
 
@@ -285,7 +285,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 	}
 	loadCtx, cancelLoad := context.WithTimeout(ctx, cfg.ControlPlaneTimeout)
 	if err := script.Load(loadCtx, runner.Client()); err != nil {
-		log.Warn("scripts were not in the store at startup; the first request will put them back", "error", err)
+		log.Warn("scripts were not in the store at startup; the first request will put them back", "job", "startup", "error", err)
 	}
 	cancelLoad()
 	// The pool wait is the mechanism by which a control-plane problem could
@@ -376,7 +376,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		Balances: balances{data},
 		Refunder: refunder{plane: service, now: time.Now},
 		Metrics:  counters,
-		Logger:   log,
+		Logger:   log.With("job", "reconcile"),
 		Settle:   settle,
 		Paused:   readOnly,
 	})
