@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -292,7 +293,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 	// (observability.md section 1.4).
 	db.StartPoolObserver(ctx, dbConn, metrics, 10*time.Second)
 	go probe(ctx, probeOptions{data: data, db: dbConn, deps: deps, ready: ready, log: log.With("job", "probe"),
-		timeout: cfg.DataScriptTimeout, pgWait: cfg.ControlPlaneTimeout, every: opt.probeEvery, slow: opt.probeSlow})
+		timeout: cfg.DataScriptTimeout, pgWait: cfg.ControlPlaneTimeout, every: opt.probeEvery, slow: opt.probeSlow, warned: new(atomic.Bool)})
 
 	// Every (code, endpoint) cell the contract allows is warmed at zero, so the
 	// code label set of quotacore_errors_total is the catalogue (IP-07 DoD 7).

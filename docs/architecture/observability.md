@@ -96,7 +96,8 @@ directly, so a graph shows "p99 under 5 ms" without interpretation.
 > **Amended 2026-10-21 (`IP-13`).** The `Labels` column is new, so a test reads every label from
 > one place. Every data-store command is timed and classified by a hook on the store's client; a
 > read-only refusal never reaches the store and is not an error here. `datastore_errors_total` has a
-> fifth class, `other`, for an error none of the four describes, so no store error goes uncounted.
+> fifth class, `other`, for an error none of the four describes, so no store error goes uncounted;
+> `refused` is a connection the store, or anything in front of it, refused or closed.
 > `datastore_up`, `clock_skew_seconds` and the readiness term (section 4) come from one probe, a
 > `TIME` every second within `QUOTACORE_DATASCRIPT_TIMEOUT`; `datastore_memory_used_ratio` from
 > `INFO memory` every ten seconds, and it is `0` when `maxmemory` is unset, which logs a `warn` at

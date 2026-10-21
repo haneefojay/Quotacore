@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -85,7 +86,10 @@ func Class(err error) string {
 		return observability.ClassNoScript
 	case redis.HasErrorPrefix(err, "OOM"):
 		return observability.ClassOOM
-	case errors.Is(err, syscall.ECONNREFUSED), errors.Is(err, syscall.ECONNRESET), errors.Is(err, redis.ErrClosed):
+	case errors.Is(err, syscall.ECONNREFUSED), errors.Is(err, syscall.ECONNRESET), errors.Is(err, syscall.EPIPE),
+		errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, net.ErrClosed), errors.Is(err, redis.ErrClosed):
+		// The store, or something in front of it, refused the connection
+		// or closed it.
 		return observability.ClassRefused
 	}
 	return observability.ClassOther
