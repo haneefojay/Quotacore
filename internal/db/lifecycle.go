@@ -396,6 +396,14 @@ func changePlan(ctx context.Context, tx *sql.Tx, tenantID, planKey string, at ti
 
 // ---- the drain
 
+// PendingReanchors counts the re-anchors committed and not yet applied to the
+// fast store, the value of quotacore_reanchors_pending (IP-13 D10).
+func PendingReanchors(ctx context.Context, conn *sql.DB) (int64, error) {
+	var n int64
+	err := conn.QueryRowContext(ctx, `SELECT count(*) FROM pending_reanchors`).Scan(&n)
+	return n, err
+}
+
 const pendingRow = `SELECT tenant_id, anchor_at, kind, request_id FROM pending_reanchors WHERE tenant_id = $1`
 
 func scanPending(r rowScanner) (admin.Reanchor, error) {

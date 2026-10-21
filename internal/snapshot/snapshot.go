@@ -112,10 +112,13 @@ type Snapshot struct {
 	metrics     *observability.Metrics
 	hits        atomic.Uint64
 	misses      atomic.Uint64
-	stop        chan struct{}
-	stopped     chan struct{}
-	startOnce   sync.Once
-	stopOnce    sync.Once
+	// loaded is set by the first reconcile that read the configuration, which
+	// is readiness's snapshot term (IP-13 D7).
+	loaded    atomic.Bool
+	stop      chan struct{}
+	stopped   chan struct{}
+	startOnce sync.Once
+	stopOnce  sync.Once
 }
 
 // New builds a snapshot. The cache is empty: the first miss loads a tenant
@@ -525,6 +528,14 @@ func (s *Snapshot) reconcileLoop() {
 		<-s.stop
 		return
 	}
+	// The first load is not left to the first tick, which is a refresh
+	// interval away: it is tried at once and every second until it succeeds,
+	// so a new instance is ready as soon as the store answers.
+	for s.reconcile(); !s.loaded.Load(); s.reconcile() {
+		if !sleepOrWait(s.stop, min(time.Second, s.refresh)) {
+			return
+		}
+	}
 	t := time.NewTicker(s.refresh)
 	defer t.Stop()
 	for {
@@ -536,6 +547,10 @@ func (s *Snapshot) reconcileLoop() {
 		}
 	}
 }
+
+// Loaded reports whether the snapshot has read the configuration once, which
+// is what it needs to answer for any tenant, however many there are.
+func (s *Snapshot) Loaded() bool { return s.loaded.Load() }
 
 // reconcile reads the config version and the per-tenant versions and prunes to
 // them. Whatever fails keeps the previous snapshot (DoD item 7): a control
@@ -561,6 +576,7 @@ func (s *Snapshot) reconcile() {
 	}
 	s.mu.Unlock()
 	s.pruneTo(latest)
+	s.loaded.Store(true)
 	s.noteRefresh(true)
 	s.notify()
 }

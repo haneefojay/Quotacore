@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -15,7 +16,9 @@ import (
 // actor is the audit actor of a request: the key the router authenticated.
 func actor(r *http.Request) Actor {
 	ex := envelope.From(r.Context())
-	return Actor{KeyID: ex.KeyID, Name: ex.KeyName, RequestID: ex.RequestID}
+	return Actor{KeyID: ex.KeyID, Name: ex.KeyName, RequestID: ex.RequestID, Audited: func(action, subjectType string) {
+		ex.Add(slog.String("actor", ex.KeyPrefix), slog.String("action", action), slog.String("subject_type", subjectType))
+	}}
 }
 
 func accepted(r *http.Request) time.Time { return envelope.From(r.Context()).Accepted }

@@ -97,6 +97,7 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 			fail(s.unavailable(ex, script.ErrStateMissing))
 			return
 		}
+		s.cycles.Ceiling(st.Balance, st.Limit, st.Bonus)
 		consumed := st.Limit + st.Bonus - st.Balance
 		if consumed < 0 {
 			consumed = 0
