@@ -61,23 +61,34 @@ type process struct {
 
 func (s *stack) start() *process {
 	s.t.Helper()
+	return s.startWith("", io.Discard, "QUOTACORE_METRICS_ADDR=127.0.0.1:0", "QUOTACORE_LOG_LEVEL=error")
+}
+
+func freeAddr(t *testing.T) string {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		s.t.Fatal(err)
+		t.Fatal(err)
 	}
-	addr := ln.Addr().String()
-	ln.Close()
+	defer ln.Close()
+	return ln.Addr().String()
+}
+
+// startWith starts the binary in dir (the test's own when empty), writing to
+// out, with env after the stack's own.
+func (s *stack) startWith(dir string, out io.Writer, env ...string) *process {
+	s.t.Helper()
+	addr := freeAddr(s.t)
 	_, redisURL := integrationURLs(s.t)
 	cmd := exec.Command(binary(s.t))
-	cmd.Env = append(os.Environ(),
+	cmd.Dir = dir
+	cmd.Env = append(append(os.Environ(),
 		"QUOTACORE_DATABASE_URL="+s.dbURL,
 		"QUOTACORE_REDIS_URL="+redisURL,
 		"QUOTACORE_LISTEN_ADDR="+addr,
-		"QUOTACORE_METRICS_ADDR=127.0.0.1:0",
 		"QUOTACORE_CONFIG_REFRESH_INTERVAL=1s",
-		"QUOTACORE_LOG_LEVEL=error",
-	)
-	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	), env...)
+	cmd.Stdout, cmd.Stderr = out, out
 	if err := cmd.Start(); err != nil {
 		s.t.Fatal(err)
 	}
@@ -210,5 +221,71 @@ func TestT10RestartChangesNothing(t *testing.T) {
 	time.Sleep(2500 * time.Millisecond) // past two configuration refreshes
 	if after := snap(); !reflect.DeepEqual(before, after) {
 		t.Errorf("the restart changed stored state:\nbefore %+v\nafter  %+v", before, after)
+	}
+}
+
+// TestTheBinaryRunsOnAReadOnlyFilesystem (IP-13 DoD 8, D13): the built
+// binary, run from a read-only working directory with read-only HOME and
+// TMPDIR, becomes ready, serves a consume and its metrics, drains on
+// SIGTERM, and leaves every one of those directories as it found them. It
+// warns when it runs as root.
+func TestTheBinaryRunsOnAReadOnlyFilesystem(t *testing.T) {
+	s := newStack(t)
+	f, _, tn := s.provisioned(100)
+	work, home, tmp := t.TempDir(), t.TempDir(), t.TempDir()
+	for _, d := range []string{work, home, tmp} {
+		if err := os.Chmod(d, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(d, 0o755) })
+	}
+	metricsAddr := freeAddr(t)
+	var out syncBuffer
+	p := s.startWith(work, &out, "HOME="+home, "TMPDIR="+tmp, "QUOTACORE_METRICS_ADDR="+metricsAddr)
+	waitFor(t, 10*time.Second, "the binary to be ready", func() bool {
+		resp, err := http.Get(p.base + "/readyz")
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	})
+	if status, err := p.consume(s.runtime, f, 1, tn.External, newKey()); err != nil || status != http.StatusOK {
+		t.Errorf("a consume on a read-only filesystem = %d %v", status, err)
+	}
+	resp, err := http.Get("http://" + metricsAddr + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "quotacore_build_info") {
+		t.Errorf("the metrics listener = %d", resp.StatusCode)
+	}
+	if resp, err := http.Get(p.base + "/metrics"); err == nil {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("the API listener answers /metrics %d, want 404", resp.StatusCode)
+		}
+	}
+	if err := p.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.cmd.Wait(); err != nil {
+		t.Errorf("the binary did not exit cleanly on SIGTERM: %v\n%s", err, out.String())
+	}
+	for _, d := range []string{work, home, tmp} {
+		if entries, err := os.ReadDir(d); err != nil || len(entries) != 0 {
+			t.Errorf("%s holds %v after the run (%v); the server wrote a file", d, entries, err)
+		}
+	}
+	root := strings.Contains(out.String(), "running as root")
+	if root != (os.Geteuid() == 0) {
+		t.Errorf("running with euid %d, the root warning was logged: %v", os.Geteuid(), root)
+	}
+	for _, want := range []string{`"job":"startup"`, `"job":"shutdown"`, `"msg":"stopped"`} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the binary's output has no %s:\n%s", want, out.String())
+		}
 	}
 }

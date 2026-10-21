@@ -181,6 +181,9 @@ type stackOptions struct {
 	// probeEvery is the store prober's interval, and of its memory and
 	// Postgres reads; zero means 100 ms.
 	probeEvery time.Duration
+	// retentionFirstRun, when set, is when retention first runs; unset, it
+	// waits an hour, so it never prunes a test's rows uninvited.
+	retentionFirstRun time.Duration
 }
 
 func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
@@ -249,6 +252,9 @@ func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
 	// Retention's first tick waits an hour in a test, so it never prunes a
 	// test's rows unless the test calls it.
 	aopt.retentionFirstRun = time.Hour
+	if o.retentionFirstRun > 0 {
+		aopt.retentionFirstRun = o.retentionFirstRun
+	}
 	// Nor does the reconciliation pass run unless a test runs it.
 	aopt.reconcileFirstRun = time.Hour
 	aopt.settle = o.settle

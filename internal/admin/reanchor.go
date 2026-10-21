@@ -10,6 +10,7 @@ import (
 
 	"github.com/quotacore/quotacore/internal/cycle"
 	"github.com/quotacore/quotacore/internal/dataplane"
+	"github.com/quotacore/quotacore/internal/envelope"
 	"github.com/quotacore/quotacore/internal/script"
 	"github.com/quotacore/quotacore/internal/snapshot"
 	"github.com/quotacore/quotacore/internal/store"
@@ -153,7 +154,7 @@ func (s *Service) drainInline(r *http.Request, tenantIDs []string) {
 	n, err := s.store.DrainReanchors(ctx, tenantIDs, len(tenantIDs), s.rewrite)
 	if err != nil {
 		s.log.Warn("could not finish a re-anchor inline; the background drain will",
-			"drained", n, "pending", len(tenantIDs)-n, "error", err)
+			"request_id", envelope.From(r.Context()).RequestID, "drained", n, "pending", len(tenantIDs)-n, "error", err)
 	}
 }
 
@@ -193,10 +194,10 @@ func (s *Service) DrainOnce(ctx context.Context) int {
 		n, err := s.store.DrainReanchors(ctx, nil, drainChunk, s.rewrite)
 		total += n
 		if n > 0 || err != nil {
-			s.log.Info("drained pending re-anchors", "drained", n, "duration_ms", time.Since(began).Milliseconds())
+			s.log.Info("drained pending re-anchors", "job", "drain", "drained", n, "duration_ms", time.Since(began).Milliseconds())
 		}
 		if err != nil {
-			s.log.Warn("a re-anchor could not be finished; it stays pending", "error", err)
+			s.log.Warn("a re-anchor could not be finished; it stays pending", "job", "drain", "error", err)
 			return total
 		}
 		if n < drainChunk {
