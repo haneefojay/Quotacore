@@ -48,7 +48,7 @@ decision recorded in [the register](../../docs/product/assumptions-and-open-ques
 
 | Item | State |
 | --- | --- |
-| Specification | 64 documents, 49 rules, 17 accepted decisions and one superseded, 15 named correctness tests |
+| Specification | 76 documents, 49 rules, 17 accepted decisions and one superseded, 15 named correctness tests |
 | Questions blocking v0.1 | None. 10 open and 3 deferred, none of them gating; the five that needed an answer before the contract was frozen are answered |
 | Phases | 28, `IP-00`–`IP-27`. `IP-00`–`IP-12` are `COMPLETE`, `IP-13` is `IN PROGRESS`, `IP-14` is `NOT STARTED`, and the other 13 are `BLOCKED` on an earlier phase |
 | Code written | `IP-01`: 19 Go, Compose, Makefile, module and CI files. No product behaviour, asserted by a test rather than claimed. `IP-00` closed the contract and wrote none; `IP-01` was the first phase to own files in the repository. `IP-02` added `api/openapi.yaml` — 39 operations, 67 schemas and the 34 codes the catalogue then held (`IP-09` added two operations and a code) — plus the types and validation generated from it, the served `/openapi.json` and `/docs`, and the generator that keeps the two in step. It adds no product behaviour either: an enforcement call still returns `404`, because `IP-07` owns the routes, and `TestNoProductBehaviour` fails if that ever stops being true. `IP-03` added `internal/cycle`: the engine and the suite that proves it — boundary matrix, DST pair, `never`, monotonicity, property, tzdata, benchmark and shape-scope tests, 8 files — plus the embedded time-zone database. It is a pure library: no route, no store, no clock; a caller feeds an instant and gets a window, and `TestNoProductBehaviour` now also pins the engine's arithmetic vocabulary inside `internal/cycle`. `IP-04` added `internal/store` (the key builders for every key [data-model.md](../architecture/data-model.md) section 3.1 names, the config-version reads, the invalidation publish/subscribe, the expiry rule, and the two source checks that hold the data plane off the control plane and off cursor scans), `internal/snapshot` (the bounded LRU with byte budget and interned plans, the token-bucketed miss path, and the subscriber and reconcile loops that keep the previous snapshot while a refresh fails), and `internal/observability` (seven collectors, exactly the seven observability.md names). The phase owns seven Go files plus seven test files, an integration pair and a datastore round trip
@@ -142,7 +142,8 @@ before any file it owns was written, and was closed the same day, which permits 
 `IP-11`, idempotency detection and reconciliation, was opened `IN PROGRESS` on 2026-10-20, before
 any file it owns was written, and was closed the same day. `IP-16` now waits on `IP-15` only.
 `IP-13`, observability, was opened `IN PROGRESS` on 2026-10-21, before any file it owns was
-written.
+written; by the end of that day 7 of its 8 DoD items were met, and item 7 waits on a person's review
+of the runbooks, so `IP-15` stays `BLOCKED`.
 
 ### Phase-complete checkpoint
 
@@ -182,7 +183,7 @@ answer.
 | `IP-10` | Plan lifecycle and cycle-boundary semantics | ADR-0006, `Q-01`, `Q-02`, `Q-04`, `Q-14` | `COMPLETE` — opened and closed 2026-10-20, 9 of 9 DoD items met, with item 4 read by DR-015's body and the ledger, reconciler, gauge and CLI halves handed to `IP-11` to `IP-14` |
 | `IP-11` | Idempotency detection and reconciliation | ADR-0004, ADR-0016, ADR-0017 | `COMPLETE` — opened and closed 2026-10-20, 6 of 6 DoD items met, with items 3, 5 and 6 divided with `IP-15`'s restore drill |
 | `IP-12` | Usage ledger, writer and archiver | ADR-0016 | `COMPLETE` — opened and closed 2026-10-20, 8 of 8 DoD items met, with items 3, 4, 7 and 8 reading the webhook and worker invariants they cite for the writer |
-| `IP-13` | Observability | — | `IN PROGRESS` — opened 2026-10-21, its dependency `COMPLETE` |
+| `IP-13` | Observability | `Q-25`, `Q-26` | `IN PROGRESS` — opened 2026-10-21, 7 of 8 DoD items met; item 7 waits on the runbook review |
 | `IP-14` | The `quotacore` CLI | — | `NOT STARTED` — its dependencies are `COMPLETE` |
 | `IP-15` | Reference deployment and restore rehearsal | ADR-0009, `Q-21`, ADR-0017 | `BLOCKED` on `IP-13`, `IP-14` |
 | `IP-16` | Full suite, the three claims, v0.1 exit | — | `BLOCKED` on `IP-15` |

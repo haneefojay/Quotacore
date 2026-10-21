@@ -15,6 +15,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Specification check
         run: make check-docs
+      - name: Alert rules parse and their cases pass
+        # IP-13 D9: promtool from a pinned release, checked against its published digest.
+        run: |
+          curl -fsSL -o /tmp/prometheus.tar.gz \
+            https://github.com/prometheus/prometheus/releases/download/v3.5.0/prometheus-3.5.0.linux-amd64.tar.gz
+          echo 'e811827af26d822afb09a4f28314f61b618b12cff5369835a67f674d8b46f39a  /tmp/prometheus.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/prometheus.tar.gz -C /tmp prometheus-3.5.0.linux-amd64/promtool
+          /tmp/prometheus-3.5.0.linux-amd64/promtool check rules ops/alerts/quotacore.rules.yml
+          /tmp/prometheus-3.5.0.linux-amd64/promtool test rules ops/alerts/quotacore.rules.test.yml
 
   build:
     runs-on: ubuntu-latest
@@ -88,14 +97,16 @@ jobs:
             -e QUOTACORE_DATABASE_URL='postgresql://quotacore:quotacore_dev_only@postgres:5432/quotacore?sslmode=disable' \
             -e QUOTACORE_REDIS_URL='redis://valkey:6379/0' \
             -v "$PWD/bin/quotacore:/app/quotacore:ro" --entrypoint /app/quotacore postgres:16
-      - name: Liveness answers, readiness reports not ready
+      - name: Liveness answers, and a fresh install becomes ready
+        # IP-13 finding 2: readiness needs no tenant, so an empty install is ready.
         run: |
           for attempt in $(seq 1 30); do
-            if curl -fsS -o /dev/null http://127.0.0.1:8080/healthz; then break; fi
+            if curl -fsS -o /dev/null http://127.0.0.1:8080/readyz; then break; fi
             sleep 1
           done
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz)" = "200"
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/readyz)" = "503"
+          test "$(curl -s http://127.0.0.1:8080/healthz)" = '{"status":"ok"}'
+          test "$(curl -s http://127.0.0.1:8080/readyz)" = '{"status":"ready"}'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/metrics)" = "404"
       - name: The data plane asks for a credential, in the envelope
         run: |
           test "$(curl -s -o /tmp/unauth.json -w '%{http_code}' 'http://127.0.0.1:8080/v1/balance?tenant_external_id=acme')" = "401"

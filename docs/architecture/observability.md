@@ -197,8 +197,7 @@ One JSON object per line to stdout, collected by the customer's platform. Fields
   "balance": 41250,
   "limit": 1000000,
   "interval": "monthly",
-  "cycle_index": 3,
-  "reconcile_key": "…"
+  "cycle_index": 3
 }
 ```
 
@@ -213,6 +212,18 @@ One JSON object per line to stdout, collected by the customer's platform. Fields
 | `actor`, `action`, `subject_type` | on every admin line | From the audit record |
 | `duration_ms` on state changes | yes | Rollover, apply-now, rebuild |
 | `error` | when applicable | A short string. Never a stack trace in a request log |
+
+> **Amended 2026-10-21 (`IP-13`).** Every line a request causes carries that request's
+> `request_id`; a line no request caused (the ledger writer, retention, the reconciliation pass, the
+> re-anchor drain, the key-cache refresh, the fence, startup and shutdown) carries a `job` field
+> naming its source instead, and no `request_id`, which is how NFR-S10 is read. `ts` is written in
+> UTC with microseconds and `level` in lowercase by the one logger constructor every path uses, and
+> the process writes JSON from its first line, before its configuration is read, so a refusal to
+> start is JSON too. `actor` is the admin key's prefix; `action` and `subject_type` are the audit
+> record's. The example's `reconcile_key` is removed: no row defines it, and the nearest candidate,
+> the client's `Idempotency-Key`, is client-chosen text that stays out of logs.
+> `QUOTACORE_LOG_FORMAT=text` remains for a person at a terminal; these rules are proved for the
+> default, `json`.
 
 ### 2.1 What is never logged
 
@@ -257,6 +268,17 @@ the event an operator will need to explain afterwards.
 | `GET /readyz` | none | The process can serve enforcement: the data store answered within the timeout, the snapshot is populated, migrations are current, and the process is not draining. No detail in the body | Load balancer, compose healthcheck |
 | `GET /v1/admin/status` | `admin` | Dependency health, version, commit, zone-data version, server time, cache size, the ledger queue's depth, the ledger writer's state, and the ledger-drop counter, each for the instance that answers (amended 2026-10-20, `IP-12`) | Operator and support |
 
+> **Amended 2026-10-21 (`IP-13`).** `/healthz` answers `200 {"status":"ok"}` from start until
+> the process exits, draining included, as the contract says: a liveness probe that failed during a
+> graceful drain would have the process killed mid-drain. `/readyz` answers `200
+> {"status":"ready"}` while every term holds and a bare `503` otherwise. Its terms are: the data
+> store answered the prober's last ping (every second) within `QUOTACORE_DATASCRIPT_TIMEOUT`; the
+> snapshot has completed its first load, whatever the tenant count, so a fresh install is ready
+> before its first tenant; migrations are current; the process is not draining; and it is in
+> `normal` mode, so an instance started read-only, or one whose fence is lost or held by a rebuild,
+> is not ready. A Postgres outage is deliberately not a term: cached tenants still enforce, and
+> making every instance unready at once would turn a P2 into an outage (NFR-A2).
+
 **Liveness and readiness are deliberately different, and liveness deliberately ignores
 dependencies.** Conflating them is the classic way an infrastructure outage becomes a crash loop
 that makes the outage worse. The reasoning is worth stating because it looks wrong until it is
@@ -295,6 +317,22 @@ Severity definitions: **P0** money or data is wrong now. **P1** a stated guarant
 | Clock skew | Skew above the threshold | P1 | Boundaries are wrong. Fix NTP |
 | Audit write failure | Any audit insert error | P1 | The audit guarantee in NFR-D4 is broken. Investigate immediately |
 | No traffic | `quotacore_http_requests_total` flat for 15 min | P3 | Probably correct. Check the customer's integration before assuming a fault |
+| Re-anchors pending | `quotacore_reanchors_pending > 0` for 10 min | P2 | A committed re-anchor has not reached the data store, which happens only while the store cannot take the rewrite. Follow *Long outage*. Added 2026-10-21 (`IP-13`) |
+
+> **Amended 2026-10-21 (`IP-13`).** Every row is a Prometheus rule in
+> [`ops/alerts/quotacore.rules.yml`](../../ops/alerts/quotacore.rules.yml), named by the row's words
+> run together (*Ceiling violated* is `CeilingViolated`), labelled with its `severity`, and, for
+> every P0 and P1, annotated with its `runbook` in [`docs/runbooks/`](../runbooks/README.md). A test
+> holds the file to this table and CI runs `promtool check rules` and `promtool test rules` on it, so
+> a rule that cannot fire fails the build. Two rows had no metric of their own. *Clock skew* reads
+> `quotacore_clock_skew_seconds` (section 1.3) against `Q-26`'s threshold of one second, for five
+> minutes. *Audit write failure* reads `quotacore_errors_total{code="internal_error"}` on an admin
+> endpoint, because an audit row commits in its mutation's transaction, so a failed insert is that
+> write answered `500`. *Enforcement failing closed* is the share of `consume` and `refund` calls
+> whose outcome is `rejected`; *Ledger queue depth* uses 80% of the default cap, 10,000, and moves
+> with `QUOTACORE_EVENT_QUEUE_SIZE`. *Stale rollover refusal* is any increase over five minutes, and
+> its runbook says it can lag the clock by a tenant's idle time, because a transition happens on the
+> first request after a boundary.
 
 > **Amended 2026-10-20 (`IP-11`).** *Reconciliation mismatch*: `quotacore reconcile-report` prints
 > what the pass found, with its kind, tenant and feature, and `verify-tenant` reads that tenant's
@@ -320,6 +358,15 @@ an alert without a procedure is a notification that generates anxiety instead of
 | A cycle rolled over incorrectly | A customer reports the wrong reset time |
 | A leaked key | Any suspected credential exposure |
 | An incorrect cycle was shipped | A `rollover_stale` alert with an identified cause |
+
+> **Amended 2026-10-21 (`IP-13`).** The runbooks are in [`docs/runbooks/`](../runbooks/README.md), one
+> file per runbook, and they link to the sections below rather than copy them, because a rule is
+> stated once. Each holds only what an operator does: the trigger, the impact, the checks as
+> commands, the decision, the action, how to verify it, when to escalate, and the sources. Four
+> more cover the P0 and P1 alerts the table above did not: *Double charge*, *Reconciliation
+> mismatch*, *Ceiling violated* and *Audit write failure*; *An incorrect cycle was shipped* and the
+> clock-skew alert share *Stale rollover or clock skew*. The paragraph below describes the copies
+> this note replaces.
 
 Each runbook is the relevant section of [consistency-and-recovery.md](consistency-and-recovery.md)
 or [security-model.md](security-model.md) §9, copied into `docs/runbooks/` with the check commands

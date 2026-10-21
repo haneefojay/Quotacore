@@ -12,6 +12,23 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **Observability (`IP-13`).** `/metrics` on its own listener, `QUOTACORE_METRICS_ADDR`
+  (`127.0.0.1:9090`), serving every family observability.md §1 names: the store's latency, error
+  classes, script cache and memory from a hook on the store client; `datastore_up`,
+  `controlplane_up` and `quotacore_clock_skew_seconds` from a prober; the rollover, stale-rollover
+  and ceiling counters from the scripts' answers; `quotacore_reanchors_pending`; and the HTTP,
+  build and process series. A test parses §1 and fails on a family or label missing in either
+  direction, and another on a series count that grows with tenants.
+- `ops/alerts/quotacore.rules.yml`, one Prometheus rule per §5 row, and its promtool cases, which CI
+  runs from a pinned, checksummed release. A P0 or P1 rule names its runbook.
+- `docs/runbooks/`: an index, eleven runbooks with the same eight headings, and a review record. A
+  test holds each to the commands the binary has and the routes the contract has.
+- Log proofs: a workload of canaries in every customer field and both connection strings, after
+  which no line may carry one, every request line carries its own id and every other line a `job`;
+  and a source check of every key a call site hands a logger.
+- `Q-25` (no configured `cycle_index` ceiling in v0.1) and `Q-26` (clock skew above 1 s, the alert's
+  threshold).
+
 - **Idempotency detection and reconciliation (`IP-11`).** `internal/reconcile` checks a
   tenant-feature's ledger row by row and against its balance hash, with no I/O of its own. An
   in-service pass, every `QUOTACORE_RECONCILE_INTERVAL` under one advisory lock, reverses each
@@ -283,7 +300,19 @@ exists, because a future implementer needs to know which statements are new.
 ### Changed
 
 - **`IP-13` is `IN PROGRESS`**, opened 2026-10-21 before any file it owns exists. Nothing gated it:
-  `IP-07` closed on 2026-10-19.
+  `IP-07` closed on 2026-10-19. By the end of the day 7 of its 8 DoD items were met; item 7 waits on
+  a person's review of the runbooks, so `IP-15` stays `BLOCKED`.
+- The probes answer the contract: `/healthz` is `200 {"status":"ok"}` until exit, and `/readyz`
+  `200 {"status":"ready"}` or a bare `503`, with observability.md §4's terms and no tenant term.
+  The contract's `/readyz` gains its `503`, and `/metrics`'s description and example name its
+  listener and real series (`make generate`, `make docs`).
+- Logs: `ts` in UTC with microseconds and a lowercase `level` from one constructor; JSON from the
+  first line, before the configuration is read; a `job` on every line no request caused; `actor`,
+  `action` and `subject_type` on admin lines. §2's `reconcile_key` example field is removed.
+- The listen and metrics ports refuse to start below 1024, and a process running as uid 0 warns.
+- Dated `IP-13` notes on observability.md §1 to §6, NFR-S10, deployment.md §4.1, SECURITY.md §6
+  (gap 9, the unauthenticated loopback metrics port), A-17, and `IP-13`, `IP-14` and `IP-15`'s
+  items. The specification now holds 76 documents.
 
 ### Changed
 
@@ -655,6 +684,11 @@ exists, because a future implementer needs to know which statements are new.
   point-in-time records they are.
 
 ### Fixed
+
+- **Nothing was served at `/metrics`** (`IP-13` finding 1): the collectors were registered on a
+  registry no listener served.
+- **A fresh install was never ready** (`IP-13` finding 2): readiness required a known tenant, so an
+  install answered `503` until its first tenant was created.
 
 - **A Postgres outage stopped enforcement.** `IP-11`'s fence put an instance in read-only mode
   whenever its fence connection failed, so an outage longer than one fence check refused every
