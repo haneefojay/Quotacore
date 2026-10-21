@@ -651,6 +651,13 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Fixed
 
+- **A Postgres outage stopped enforcement.** `IP-11`'s fence put an instance in read-only mode
+  whenever its fence connection failed, so an outage longer than one fence check refused every
+  tenant write with `503`, against NFR-A2 and mvp-scope §3. An instance now goes read-only only
+  when Postgres answers and a rebuild holds the fence; a check that cannot reach Postgres keeps
+  the mode it had. consistency-and-recovery §4.1 step 2 carries a dated note.
+  `TestAPostgresOutageKeepsTheFenceMode` reproduces it, and found it before the fix.
+
 - **`TestTheLedgerReconcilesEveryCycle` was flaky.** Its seeded checks could meet the bounded-miss
   limiter and be answered `503`; they now retry a `503` for up to five seconds.
 - **Two integration tests failed when every package ran at once.** `go test ./...` runs packages

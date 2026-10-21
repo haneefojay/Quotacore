@@ -70,10 +70,17 @@ func (f *Fence) Acquire(ctx context.Context) (bool, error) {
 // it does not: a lock held by a connection that has gone is a lock no longer
 // held.
 func (f *Fence) Held(ctx context.Context) bool {
+	held, _ := f.check(ctx)
+	return held
+}
+
+// check is Held with the reason: err is set when the connection could not
+// answer at all, as distinct from answering that the lock is gone.
+func (f *Fence) check(ctx context.Context) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.conn == nil {
-		return false
+		return false, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -84,9 +91,9 @@ func (f *Fence) Held(ctx context.Context) bool {
 	if err != nil || !held {
 		f.conn.Close()
 		f.conn, f.pid = nil, 0
-		return false
+		return false, err
 	}
-	return true
+	return true, nil
 }
 
 // PID is the backend holding the fence, or zero; a test terminates it to
@@ -98,11 +105,20 @@ func (f *Fence) PID() int {
 }
 
 // Keep checks the hold every interval until ctx ends, re-acquiring it when it
-// was lost, and reports every change to onChange: false the moment the hold
-// is found gone, true when it is back. The instance serves read-only in
-// between (IP-11 D6).
+// was lost, and reports every change to onChange: false when Postgres answers
+// and the fence is held by a rebuild, true when it is held again. The
+// instance serves read-only in between (IP-11 D6).
+//
+// A Postgres that does not answer changes nothing: the instance keeps the
+// mode it had and tries again on the next tick. Going read-only there would
+// make a control-plane outage stop enforcement for every cached tenant, which
+// the data plane must survive (NFR-A2, mvp-scope.md section 3). It is safe for
+// a rebuild, because an instance that cannot reach Postgres can run only the
+// data-plane scripts, which never create an absent hash (DR-045), and the
+// admin writes that could all need Postgres first; the next tick that reaches
+// Postgres finds the rebuild's exclusive hold and goes read-only (IP-13 Q1).
 func (f *Fence) Keep(ctx context.Context, every time.Duration, onChange func(held bool)) {
-	held := true
+	held, unreachable := true, false
 	tick := time.NewTicker(every)
 	defer tick.Stop()
 	for {
@@ -111,10 +127,21 @@ func (f *Fence) Keep(ctx context.Context, every time.Duration, onChange func(hel
 			return
 		case <-tick.C:
 		}
-		now := f.Held(ctx)
+		now, err := f.check(ctx)
 		if !now {
-			if ok, err := f.Acquire(ctx); err == nil && ok {
-				now = true
+			ok, aerr := f.Acquire(ctx)
+			switch {
+			case aerr == nil:
+				now, unreachable = ok, false
+			case err != nil || unreachable:
+				// Neither the check nor the re-acquire reached Postgres, so
+				// nothing is known about a rebuild and the mode stays, on
+				// this tick and on every later one until Postgres answers.
+				now = held
+				if held && !unreachable {
+					f.log.Warn("could not reach Postgres to check the rebuild fence; writes are still served", "error", aerr)
+				}
+				unreachable = true
 			}
 		}
 		if now != held {

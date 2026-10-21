@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -8,6 +9,8 @@ import (
 	"time"
 
 	dto "github.com/prometheus/client_model/go"
+
+	"github.com/quotacore/quotacore/internal/db"
 )
 
 // logDuration finds the access log line for a request id and returns its
@@ -146,4 +149,57 @@ func TestPostgresOutageSparesCachedTenants(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// TestAPostgresOutageKeepsTheFenceMode (IP-13 Q1): an instance whose fence
+// connection fails because Postgres cannot be reached keeps serving writes
+// for its cached tenants, however long the outage lasts, and goes read-only
+// as soon as Postgres answers and a rebuild holds the fence. Before the fix an
+// outage longer than one fence check put every instance in read-only mode,
+// which made a control-plane outage stop enforcement (NFR-A2).
+func TestAPostgresOutageKeepsTheFenceMode(t *testing.T) {
+	baseDB, _ := integrationURLs(t)
+	var p *proxy
+	s := newStack(t, func(o *stackOptions) {
+		p = newProxy(t, hostOf(t, baseDB))
+		o.dbURL = urlVia(t, o.dbURL, p.addr())
+	})
+	f, _, tn := s.provisioned(1000)
+	mustStatus(t, s.consume(s.runtime, f, 1, tn.External, newKey()), http.StatusOK)
+
+	p.set("refuse")
+	// Ten fence checks at the harness's 100 ms interval.
+	end := time.Now().Add(time.Second)
+	for time.Now().Before(end) {
+		if s.app.Data.ReadOnly() {
+			t.Fatal("the instance went read-only because Postgres could not be reached")
+		}
+		if r := s.consume(s.runtime, f, 1, tn.External, newKey()); r.Status != http.StatusOK {
+			t.Fatalf("a cached tenant during the outage = %d %s", r.Status, r.Body)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// A rebuild takes the fence while the instance cannot see Postgres; the
+	// first check that reaches Postgres puts the instance in read-only mode.
+	release, ok, err := db.ExclusiveFence(context.Background(), s.seedDB)
+	if err != nil || !ok {
+		t.Fatalf("a rebuild could not take the fence while the instance was cut off: %v %v", ok, err)
+	}
+	p.set("pass")
+	took := time.Now()
+	for !s.app.Data.ReadOnly() {
+		if time.Since(took) > 2*time.Second {
+			t.Fatal("the instance kept writing after Postgres answered with a rebuild holding the fence")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	release()
+	for s.app.Data.ReadOnly() {
+		if time.Since(took) > 5*time.Second {
+			t.Fatal("the instance never took its fence back")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mustStatus(t, s.consume(s.runtime, f, 1, tn.External, newKey()), http.StatusOK)
 }
