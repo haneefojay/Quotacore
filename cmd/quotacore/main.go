@@ -5,10 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,12 +26,14 @@ import (
 	"github.com/quotacore/quotacore/internal/store"
 )
 
+// The readiness terms of observability.md section 4 (IP-13 D7). Postgres is
+// not among them: cached tenants enforce through a control-plane outage.
 const (
-	termDataStore   = "data store answered within the timeout"
-	termSnapshot    = "snapshot is populated"
-	termMigrations  = "migrations are current"
-	termDraining    = "not draining"
-	termTenantsSeen = "at least one tenant is known"
+	termDataStore  = "data store answered within the timeout"
+	termSnapshot   = "snapshot has read the configuration"
+	termMigrations = "migrations are current"
+	termDraining   = "not draining"
+	termNormal     = "serving in normal mode"
 )
 
 // snapshotClient adapts *store.Store to snapshot.Client. The store returns its
@@ -50,22 +55,25 @@ func main() {
 		}
 		os.Exit(runCommand(os.Args[1:], os.Stdout, os.Stderr))
 	}
-	if err := run(); err != nil {
-		slog.Error("refusing to start", "error", err)
+	// Until the configuration is read, the log is JSON at info, so a refusal
+	// to start is a line a collector can parse like any other (IP-13 D6).
+	log := newLogger(os.Stdout, "json", "info")
+	if err := run(&log); err != nil {
+		log.Error("refusing to start", "job", "startup", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(logp **slog.Logger) error {
 	cfg, err := Load(OSGetenv)
 	if err != nil {
 		return err
 	}
-	log := newLogger(cfg)
-	slog.SetDefault(log)
-
-	state := newReadinessState(termDataStore, termSnapshot, termMigrations, termTenantsSeen, termDraining)
-	state.Set(termDraining, true)
+	*logp = newLogger(os.Stdout, cfg.LogFormat, cfg.LogLevel)
+	log := (*logp).With("job", "startup")
+	if os.Geteuid() == 0 {
+		log.Warn("running as root; the service needs no privilege, so run it as an unprivileged user (NFR-S6)")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -79,11 +87,6 @@ func run() error {
 	if err := db.Migrate(ctx, dbConn, db.MigrateOptions{Disabled: !cfg.Migrate}); err != nil {
 		return err
 	}
-	current, err := db.MigrationsCurrent(ctx, dbConn)
-	if err != nil {
-		return err
-	}
-	state.Set(termMigrations, current)
 
 	if err := bootstrap(ctx, cfg, log, dbConn); err != nil {
 		return err
@@ -95,49 +98,48 @@ func run() error {
 	}
 	defer data.Close()
 
-	// The datastore is the fail-closed half of availability (NFR-A3): if it does
-	// not answer within the control-plane timeout at startup, the process still
-	// starts, /readyz reports the term unsatisfied, and every enforcement that
-	// reaches the pool fails closed with 503 rather than the service pretending
-	// it can enforce.
-	pingCtx, cancelPing := context.WithTimeout(ctx, cfg.ControlPlaneTimeout)
-	if err := data.Ping(pingCtx); err != nil {
-		log.Warn("data store did not answer at startup; readiness will report it", "error", err)
-	} else {
-		state.Set(termDataStore, true)
-	}
-	cancelPing()
-
-	app, err := assemble(ctx, cfg, log, dbConn, data, state.ReadyFuncLogging(func(msg string, terms []string) {
-		if msg == "ready" {
-			log.Info("readiness changed", "ready", true)
-			return
-		}
-		log.Warn("readiness changed", "ready", false, "unsatisfied", terms)
-	}), nil)
+	// The datastore is the fail-closed half of availability (NFR-A3): if it
+	// does not answer, the process still starts, the prober keeps /readyz
+	// unready, and every enforcement that reaches the pool fails closed with
+	// 503 rather than the service pretending it can enforce.
+	app, err := assemble(ctx, cfg, *logp, dbConn, data, nil)
 	if err != nil {
 		return err
 	}
 	defer app.Close()
-	handler := app.Handler
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           handler,
+		Handler:           app.Handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      cfg.RequestTimeout + 5*time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	errc := make(chan error, 1)
-	go func() {
-		log.Info("listening", "addr", cfg.ListenAddr)
+	// The metrics listener is its own server, on loopback by default, so a
+	// scrape never shares the API's port (IP-13 D8).
+	if !loopback(cfg.MetricsAddr) {
+		log.Warn("the metrics listener is not on a loopback address, and it takes no credential; bind it to 127.0.0.1 unless a network policy restricts it (security-model.md section 7)",
+			"addr", cfg.MetricsAddr)
+	}
+	metricsSrv := &http.Server{
+		Addr:              cfg.MetricsAddr,
+		Handler:           app.MetricsHandler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+	}
+	errc := make(chan error, 2)
+	serve := func(srv *http.Server, what string) {
+		log.Info("listening", "addr", srv.Addr, "listener", what)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 			return
 		}
 		errc <- nil
-	}()
+	}
+	go serve(srv, "api")
+	go serve(metricsSrv, "metrics")
 
 	select {
 	case err := <-errc:
@@ -146,7 +148,8 @@ func run() error {
 		stop()
 	}
 
-	state.Set(termDraining, false)
+	app.Ready.Set(termDraining, false)
+	log = (*logp).With("job", "shutdown")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownGrace)
 	defer cancel()
 	log.Info("draining", "grace", cfg.ShutdownGrace.String())
@@ -156,8 +159,23 @@ func run() error {
 	// Every request has answered, so nothing more is enqueued; the ledger
 	// writes what is queued within what remains of the grace (IP-12 D8).
 	app.Drain(shutdownCtx)
+	_ = metricsSrv.Shutdown(shutdownCtx)
 	log.Info("stopped")
 	return nil
+}
+
+// loopback reports whether a listen address binds only the loopback
+// interface. An empty host binds every interface.
+func loopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil || host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // bootstrap installs the operator-supplied admin key on an empty api_keys
@@ -192,9 +210,13 @@ func bootstrap(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB
 	return nil
 }
 
-func newLogger(cfg Config) *slog.Logger {
+// newLogger is the one logger the process writes with, and the harness
+// builds its own with it, so the tests read what ships (IP-13 D6). JSON lines
+// carry ts, in UTC to the microsecond, and a lowercase level, as
+// observability.md section 2 shows. text is for a person at a terminal.
+func newLogger(w io.Writer, format, levelName string) *slog.Logger {
 	level := slog.LevelInfo
-	switch cfg.LogLevel {
+	switch levelName {
 	case "debug":
 		level = slog.LevelDebug
 	case "warn":
@@ -202,9 +224,22 @@ func newLogger(cfg Config) *slog.Logger {
 	case "error":
 		level = slog.LevelError
 	}
-	opts := &slog.HandlerOptions{Level: level}
-	if cfg.LogFormat == "text" {
-		return slog.New(slog.NewTextHandler(os.Stdout, opts))
+	opts := &slog.HandlerOptions{Level: level, ReplaceAttr: logShape}
+	if format == "text" {
+		return slog.New(slog.NewTextHandler(w, opts))
 	}
-	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	return slog.New(slog.NewJSONHandler(w, opts))
+}
+
+func logShape(groups []string, a slog.Attr) slog.Attr {
+	if len(groups) > 0 {
+		return a
+	}
+	switch a.Key {
+	case slog.TimeKey:
+		return slog.String("ts", a.Value.Time().UTC().Format("2006-01-02T15:04:05.000000Z"))
+	case slog.LevelKey:
+		return slog.String("level", strings.ToLower(a.Value.String()))
+	}
+	return a
 }

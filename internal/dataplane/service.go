@@ -50,6 +50,9 @@ type Options struct {
 	Balances Balances
 	Events   EventSink // nil is NopSink
 	Metrics  *observability.DataPlane
+	// Cycles counts a balance read above its ceiling (DR-019, IP-13 D2); the
+	// scripts' own outcomes are counted by the runner.
+	Cycles *observability.Cycles
 	// MetadataMax is QUOTACORE_METADATA_MAX_BYTES, the cap on the metadata
 	// object's encoded size (NFR-T6).
 	MetadataMax int
@@ -66,6 +69,7 @@ type Service struct {
 	balances    Balances
 	events      EventSink
 	metrics     *observability.DataPlane
+	cycles      *observability.Cycles
 	metadataMax int
 	storeBudget time.Duration
 	zones       sync.Map // zone name → *time.Location
@@ -88,6 +92,7 @@ func New(opts Options) *Service {
 		balances:    opts.Balances,
 		events:      opts.Events,
 		metrics:     opts.Metrics,
+		cycles:      opts.Cycles,
 		metadataMax: opts.MetadataMax,
 		storeBudget: opts.StoreBudget,
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/quotacore/quotacore/internal/admin"
 	"github.com/quotacore/quotacore/internal/auth"
 	"github.com/quotacore/quotacore/internal/envelope"
+	"github.com/quotacore/quotacore/internal/observability"
 )
 
 // requestIDShape is the contract's RequestId: a ULID or a UUID. An inbound
@@ -132,7 +133,26 @@ func (rt *router) finish(r *http.Request, ex *envelope.Exchange, status int) {
 			rt.metrics.Latency.WithLabelValues(ex.Endpoint, outcome).Observe(elapsed.Seconds())
 		}
 	}
+	rt.http.Observe(endpointOf(ex), methodLabel(r.Method), status, elapsed)
 	rt.log.LogAttrs(r.Context(), level, msg, attrs...)
+}
+
+// contractMethods are the methods the contract's routes use. Any other method
+// is labelled other, because the raw method is text the caller chose
+// (observability.md section 1.7, IP-13 D5).
+var contractMethods = func() map[string]bool {
+	m := map[string]bool{}
+	for _, op := range envelope.MustOperations() {
+		m[op.Method] = true
+	}
+	return m
+}()
+
+func methodLabel(method string) string {
+	if contractMethods[method] {
+		return method
+	}
+	return observability.MethodOther
 }
 
 // countError is quotacore_errors_total's only door.

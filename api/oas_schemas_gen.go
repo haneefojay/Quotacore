@@ -6194,6 +6194,23 @@ func (s *PlanUpdate) SetEntitlements(val []PlanEntitlement) {
 	s.Entitlements = val
 }
 
+// Ref: #/components/responses/ReadyzNotReady
+type ReadyzNotReady struct {
+	XRequestID RequestId
+}
+
+// GetXRequestID returns the value of XRequestID.
+func (s *ReadyzNotReady) GetXRequestID() RequestId {
+	return s.XRequestID
+}
+
+// SetXRequestID sets the value of XRequestID.
+func (s *ReadyzNotReady) SetXRequestID(val RequestId) {
+	s.XRequestID = val
+}
+
+func (*ReadyzNotReady) readyzRes() {}
+
 // ReadyzOKHeaders wraps HealthResponse with response headers.
 type ReadyzOKHeaders struct {
 	XRequestID RequestId
@@ -6219,6 +6236,8 @@ func (s *ReadyzOKHeaders) SetXRequestID(val RequestId) {
 func (s *ReadyzOKHeaders) SetResponse(val HealthResponse) {
 	s.Response = val
 }
+
+func (*ReadyzOKHeaders) readyzRes() {}
 
 // A state-changing admin call with a mandatory reason, audited with before and after.
 // Ref: #/components/schemas/ReasonRequest

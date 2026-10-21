@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"time"
@@ -13,7 +14,10 @@ import (
 const IdempotencyWindow = 24 * time.Hour
 
 type Config struct {
-	ListenAddr            string
+	ListenAddr string
+	// MetricsAddr is where /metrics is served, on its own listener (IP-13
+	// D8).
+	MetricsAddr           string
 	DatabaseURL           string
 	RedisURL              string
 	ConfigCacheEntries    int
@@ -80,6 +84,7 @@ type Getenv func(string) string
 func Load(getenv Getenv) (Config, error) {
 	c := Config{
 		ListenAddr:            valueOr(getenv, "QUOTACORE_LISTEN_ADDR", ":8080"),
+		MetricsAddr:           valueOr(getenv, "QUOTACORE_METRICS_ADDR", "127.0.0.1:9090"),
 		DatabaseURL:           getenv("QUOTACORE_DATABASE_URL"),
 		RedisURL:              getenv("QUOTACORE_REDIS_URL"),
 		ConfigCacheEntries:    50000,
@@ -119,6 +124,11 @@ func Load(getenv Getenv) (Config, error) {
 	}
 	if c.RedisURL == "" {
 		return c, fmt.Errorf("QUOTACORE_REDIS_URL is required and is not set")
+	}
+	for name, addr := range map[string]string{"QUOTACORE_LISTEN_ADDR": c.ListenAddr, "QUOTACORE_METRICS_ADDR": c.MetricsAddr} {
+		if err := unprivileged(name, addr); err != nil {
+			return c, err
+		}
 	}
 	if raw := getenv("QUOTACORE_CONFIG_CACHE_ENTRIES"); raw != "" {
 		n, err := strconv.Atoi(raw)
@@ -387,3 +397,21 @@ func parseDuration(raw, key string) (time.Duration, error) {
 }
 
 func OSGetenv(key string) string { return os.Getenv(key) }
+
+// unprivileged refuses a port below 1024, which only a privileged process
+// can bind, so the service never needs a capability to start (NFR-S6, IP-13
+// D13). Port 0, an ephemeral port, is allowed.
+func unprivileged(name, addr string) error {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("%s is %q, which is not a host:port address", name, addr)
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 0 || n > 65535 {
+		return fmt.Errorf("%s is %q, whose port is not a number from 0 to 65535", name, addr)
+	}
+	if n > 0 && n < 1024 {
+		return fmt.Errorf("%s is %q; a port below 1024 needs privileges the service does not run with, so choose 1024 or above", name, addr)
+	}
+	return nil
+}

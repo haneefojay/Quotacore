@@ -231,22 +231,19 @@ func TestLoadRejectsUnreadableValues(t *testing.T) {
 }
 
 func TestReadinessReportsEveryUnsatisfiedTerm(t *testing.T) {
-	s := newReadinessState(termDataStore, termSnapshot, termMigrations, termTenantsSeen, termDraining)
+	s := newReadinessState(termDataStore, termMigrations, termDraining)
+	normal := false
+	s.Watch(termNormal, func() bool { return normal })
 	if s.Ready() {
 		t.Error("a state with no satisfied term reports ready")
 	}
 	s.Set(termDraining, true)
 	s.Set(termMigrations, true)
 	s.Set(termDataStore, true)
-	s.Set(termSnapshot, true)
-	if s.Ready() {
-		t.Error("ready with the tenant term unsatisfied, want not ready because no tenant exists")
+	if got := strings.Join(s.Unsatisfied(), ","); got != termNormal {
+		t.Errorf("Unsatisfied = %q, want %q", got, termNormal)
 	}
-	got := strings.Join(s.Unsatisfied(), ",")
-	if got != termTenantsSeen {
-		t.Errorf("Unsatisfied = %q, want %q", got, termTenantsSeen)
-	}
-	s.Set(termTenantsSeen, true)
+	normal = true
 	if !s.Ready() || len(s.Unsatisfied()) != 0 {
 		t.Errorf("Unsatisfied = %v, want empty", s.Unsatisfied())
 	}

@@ -73,6 +73,7 @@ func (s *Service) metered(w http.ResponseWriter, r *http.Request, op kind) {
 		IdempotencyKey: in.ClientKey,
 		Amount:         in.Amount,
 		Window:         window,
+		Interval:       res.Interval,
 		Limit:          res.Limit,
 		At:             at,
 	}
