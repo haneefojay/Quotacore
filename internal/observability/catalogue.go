@@ -63,6 +63,11 @@ func DocumentedMetrics(doc []byte) (map[string][]string, error) {
 			continue
 		}
 		for _, m := range proseMetric.FindAllStringSubmatch(line, -1) {
+			// Prose that mentions a defined metric without its labels
+			// discusses it and does not redefine it.
+			if _, defined := out[m[1]]; defined && m[2] == "" {
+				continue
+			}
 			var labels []string
 			if m[2] != "" {
 				labels = strings.Split(m[2], ",")

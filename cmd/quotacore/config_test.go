@@ -41,6 +41,29 @@ func TestLoadAppliesDocumentedDefaults(t *testing.T) {
 	}
 }
 
+// TestAPrivilegedPortIsRefused (IP-13 DoD 8, D13): neither listener may
+// take a port below 1024, which would need a capability the service does not
+// run with; the metrics listener defaults to loopback.
+func TestAPrivilegedPortIsRefused(t *testing.T) {
+	for _, key := range []string{"QUOTACORE_LISTEN_ADDR", "QUOTACORE_METRICS_ADDR"} {
+		for addr, ok := range map[string]bool{":80": false, "127.0.0.1:443": false, ":1023": false, ":1024": true, "127.0.0.1:0": true, "nonsense": false} {
+			e := baseEnv()
+			e[key] = addr
+			_, err := Load(env(e))
+			if ok != (err == nil) {
+				t.Errorf("%s=%s: Load error = %v, want accepted=%v", key, addr, err, ok)
+			}
+		}
+	}
+	c, err := Load(env(baseEnv()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MetricsAddr != "127.0.0.1:9090" || !loopback(c.MetricsAddr) || loopback(c.ListenAddr) {
+		t.Errorf("MetricsAddr = %q, ListenAddr = %q", c.MetricsAddr, c.ListenAddr)
+	}
+}
+
 func TestLoadAppliesSnapshotDefaults(t *testing.T) {
 	c, err := Load(env(baseEnv()))
 	if err != nil {
