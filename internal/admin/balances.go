@@ -46,7 +46,7 @@ type held struct {
 
 func (h held) request(amount int64) script.Request {
 	return script.Request{TenantID: h.tenant.ID, FeatureKey: h.feature, Amount: amount,
-		Window: h.window, Limit: h.ent.Limit, At: h.at}
+		Window: h.window, Interval: h.ent.Interval, Limit: h.ent.Limit, At: h.at}
 }
 
 // resolve is the effective entitlement of a freshly loaded tenant (S5). A

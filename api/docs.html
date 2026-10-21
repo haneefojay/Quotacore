@@ -1717,6 +1717,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h3><span class="method method-get">GET</span> <span class="path">/healthz</span></h3>
 <p><strong>Liveness probe</strong></p>
 <p>Answers <code>200</code> while the process is running. It checks no dependency, deliberately: a<br>liveness probe that fails when Postgres is unreachable restarts a process that was not<br>the problem.</p>
+<p>Amended 2026-10-21 (<code>IP-13</code>): it answers <code>200</code> with its body from start to exit,<br>including while the process drains after <code>SIGTERM</code>, because a liveness probe that fails<br>during a graceful drain gets the process killed before its requests have answered.</p>
 <p class="muted">Operation ID: <code>healthz</code></p>
 <h4>Authorisation</h4>
 <p class="muted">None. This route takes no credential.</p>
@@ -1729,6 +1730,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h3><span class="method method-get">GET</span> <span class="path">/readyz</span></h3>
 <p><strong>Readiness probe</strong></p>
 <p>Answers <code>200</code> only when the service can actually serve: the required dependencies are<br>reachable and the bootstrap key has been acknowledged (NFR-S9). This is the probe that<br>gates traffic, and unlike <code>/healthz</code> it does look at dependencies.</p>
+<p>Amended 2026-10-21 (<code>IP-13</code>): the terms are those of observability.md section 4. The<br>data store answered the last probe within <code>QUOTACORE_DATASCRIPT_TIMEOUT</code>; the snapshot<br>has read the configuration once, however many tenants exist; migrations are current;<br>the process is not draining; and it is in normal mode, so read-only or a rebuild holding<br>the fence is not ready. Postgres is not a term: during a control-plane outage cached<br>tenants still enforce (NFR-A2), and an instance that went unready would take them with<br>it. The bootstrap acknowledgement is not a term either, because the process refuses to<br>start without it. Any other state is a <code>503</code> with no body.</p>
 <p class="muted">Operation ID: <code>readyz</code></p>
 <h4>Authorisation</h4>
 <p class="muted">None. This route takes no credential.</p>
@@ -1737,11 +1739,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><th>Status</th><th>Content</th><th>Schema</th><th>Headers</th><th>Description</th></tr>
 <tr><td><code>200</code></td><td>application/json</td><td><a href="#schema-healthresponse"><code>HealthResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The service can serve: required dependencies are reachable and the bootstrap key has been<br>acknowledged (NFR-S9).</p>
 </td></tr>
+<tr><td><code>503</code></td><td>—</td><td>—</td><td><code>X-Request-Id</code></td><td><p>The service cannot serve, so traffic should not reach it. No body and no error envelope:<br>the probe is for an orchestrator, which reads the status. Added 2026-10-21 (<code>IP-13</code>).</p>
+</td></tr>
 </table>
 <h3><span class="method method-get">GET</span> <span class="path">/metrics</span></h3>
 <p><strong>Prometheus metrics</strong></p>
 <p>Prometheus text exposition format, not JSON and not an error envelope.</p>
 <p><code>quotacore_errors_total</code> is labelled by <code>code</code>, and the label set is<br>[error-catalog.md](../../docs/product/error-catalog.md) by reference: a contract test<br>asserts the two match, so a code cannot be raised in the service without being in the<br>catalogue.</p>
+<p>Amended 2026-10-21 (<code>IP-13</code>): this operation is served on the metrics listener at<br><code>QUOTACORE_METRICS_ADDR</code> (<code>127.0.0.1:9090</code> by default, deployment.md section 4.1), not<br>on the API&#39;s address, which answers it <code>404</code>. It takes no credential; the loopback bind<br>is the control (security-model.md section 7). The series are observability.md<br>section 1.</p>
 <p class="muted">Operation ID: <code>metrics</code></p>
 <h4>Authorisation</h4>
 <p class="muted">None. This route takes no credential.</p>

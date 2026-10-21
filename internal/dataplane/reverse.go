@@ -45,6 +45,7 @@ func (s *Service) Reverse(ctx context.Context, externalID, featureKey, key strin
 		IdempotencyKey: key,
 		Amount:         amount,
 		Window:         cycle.CurrentWindow(t.Anchor, e.Interval, loc, at),
+		Interval:       e.Interval,
 		Limit:          e.Limit,
 		At:             at,
 	})

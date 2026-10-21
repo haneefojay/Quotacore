@@ -6,7 +6,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime"
+	"sync/atomic"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	contract "github.com/quotacore/quotacore/api"
 	"github.com/quotacore/quotacore/internal/admin"
@@ -50,6 +55,17 @@ type enforcement struct {
 	Data *store.Store
 	// Service is the data plane, whose Reverse a test's own pass calls.
 	Service *dataplane.Service
+	// Registry is every collector the process serves, and MetricsHandler
+	// serves it on the metrics listener (IP-13 D8, D14). Dependencies,
+	// Cycles and HTTP are the sets IP-13 added, for the tests that read
+	// them.
+	Registry       *prometheus.Registry
+	MetricsHandler http.Handler
+	Dependencies   *observability.Dependencies
+	Cycles         *observability.Cycles
+	HTTP           *observability.HTTP
+	// Ready is /readyz's state (IP-13 D7); main clears its draining term.
+	Ready *readinessState
 }
 
 // tee hands every event to the ledger and to an observer, which is how the
@@ -80,6 +96,9 @@ type assembleOptions struct {
 	settle            time.Duration
 	// fenceEvery is how often the fence is checked; zero means five seconds.
 	fenceEvery time.Duration
+	// probeEvery and probeSlow are the store prober's two intervals; zero
+	// is one second and ten.
+	probeEvery, probeSlow time.Duration
 }
 
 // hostname names a ledger session; an unreadable one is still a session.
@@ -94,21 +113,39 @@ func hostname() string {
 // observe, when not nil, is handed every event the ledger is; production
 // passes nil.
 func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB, data *store.Store,
-	ready api.Readiness, observe dataplane.EventSink, opts ...assembleOptions) (*enforcement, error) {
+	observe dataplane.EventSink, opts ...assembleOptions) (*enforcement, error) {
 	var opt assembleOptions
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
+	started := time.Now()
+	// The store is instrumented before anything uses it, so the scripts'
+	// startup load is counted with every command after it (IP-13 D2).
+	deps := observability.NewDependencies()
+	data.Instrument(deps)
+	cycles := observability.NewCycles()
+	httpMetrics := observability.NewHTTP()
+
+	// Readiness is decided here, from the same sources the process serves
+	// with, so a test of the assembly is a test of what ships (IP-13 D7,
+	// D14). The store term is the prober's; the draining term is main's.
+	ready := newReadinessState(termDataStore, termSnapshot, termMigrations, termDraining, termNormal)
+	ready.Set(termDraining, true)
+	current, err := db.MigrationsCurrent(ctx, dbConn)
+	if err != nil {
+		return nil, err
+	}
+	ready.Set(termMigrations, current)
 	// Read-only mode, and the fence that makes it a property of the fleet
 	// (IP-11 D5, D6). An instance started read-only writes no tenant key and
 	// holds no fence, so a rebuild can take it; a normal instance holds the
 	// fence shared for its life, refuses to start while a rebuild holds it,
 	// and serves read-only whenever it has lost it.
 	var fence *db.Fence
-	var fenceConn *sql.DB
+	var fenceConn, ledgerConn *sql.DB
 	if cfg.StartupMode == ModeReadOnly {
 		data.SetReadOnly(true)
-		log.Warn("starting in read-only mode: no balance or idempotency record is written until a restart in normal mode")
+		log.Warn("starting in read-only mode: no balance or idempotency record is written until a restart in normal mode", "job", "startup")
 	} else {
 		var err error
 		fenceConn, err = db.Open(ctx, cfg.DatabaseURL)
@@ -116,7 +153,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 			return nil, err
 		}
 		fenceConn.SetMaxOpenConns(1)
-		fence = db.NewFence(fenceConn, log)
+		fence = db.NewFence(fenceConn, log.With("job", "fence"))
 		held, err := fence.Acquire(ctx)
 		if err != nil || !held {
 			fenceConn.Close()
@@ -143,7 +180,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 	// The ledger writer has its own pool of two connections, so a slow ledger
 	// cannot take the admin pool or the snapshot's bounded miss read
 	// (performance.md section 5, IP-12 D4).
-	ledgerConn, err := db.Open(ctx, cfg.DatabaseURL)
+	ledgerConn, err = db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		if fence != nil {
 			fence.Release()
@@ -162,7 +199,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		BatchSize:     cfg.EventBatchSize,
 		FlushInterval: cfg.EventFlushInterval,
 		Appender:      appender,
-		Logger:        log,
+		Logger:        log.With("job", "ledger"),
 		// The loss record (IP-11 D8). A request can spend up to its timeout
 		// between its accepted instant and its enqueue.
 		Sessions:  db.NewLedger(ledgerConn),
@@ -188,7 +225,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		AuditDays: cfg.AuditRetentionDays,
 		Interval:  cfg.RetentionInterval,
 		FirstRun:  opt.retentionFirstRun,
-		Logger:    log,
+		Logger:    log.With("job", "retention"),
 		Metrics:   sink.Metrics(),
 		Paused:    readOnly,
 	})
@@ -214,6 +251,8 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 	})
 	metrics := observability.New(observability.Options{HitRatio: snap.HitRatio})
 	snap.WithMetrics(metrics)
+	ready.Watch(termSnapshot, snap.Loaded)
+	ready.Watch(termNormal, func() bool { return !readOnly() })
 
 	// The key cache reconciles on every change the snapshot learns of and on
 	// its own refresh tick, off the request path, so a revocation reaches a
@@ -226,7 +265,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 	})
 	snap.OnChange(keys.Invalidate)
 	go keys.Run(ctx, cfg.ConfigRefreshInterval, func(what string, err error) {
-		log.Warn("could not "+what, "error", err)
+		log.Warn("could not "+what, "job", "refresh", "error", err)
 	})
 	snap.Start(ctx)
 
@@ -237,7 +276,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 	// at startup heals itself on the first request that reaches it. Refusing to
 	// start would turn a transient store outage into an outage of the process,
 	// which is the opposite of what fail-closed means.
-	runner, err := script.New(script.Options{Client: data.Client(), Timeout: cfg.DataScriptTimeout})
+	runner, err := script.New(script.Options{Client: data.Client(), Timeout: cfg.DataScriptTimeout, Cycles: cycles})
 	if err != nil {
 		cancel()
 		snap.Close()
@@ -246,13 +285,15 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 	}
 	loadCtx, cancelLoad := context.WithTimeout(ctx, cfg.ControlPlaneTimeout)
 	if err := script.Load(loadCtx, runner.Client()); err != nil {
-		log.Warn("scripts were not in the store at startup; the first request will put them back", "error", err)
+		log.Warn("scripts were not in the store at startup; the first request will put them back", "job", "startup", "error", err)
 	}
 	cancelLoad()
 	// The pool wait is the mechanism by which a control-plane problem could
 	// reach the data plane, so it is watched from the first second
 	// (observability.md section 1.4).
 	db.StartPoolObserver(ctx, dbConn, metrics, 10*time.Second)
+	go probe(ctx, probeOptions{data: data, db: dbConn, deps: deps, ready: ready, log: log.With("job", "probe"),
+		timeout: cfg.DataScriptTimeout, pgWait: cfg.ControlPlaneTimeout, every: opt.probeEvery, slow: opt.probeSlow, warned: new(atomic.Bool)})
 
 	// Every (code, endpoint) cell the contract allows is warmed at zero, so the
 	// code label set of quotacore_errors_total is the catalogue (IP-07 DoD 7).
@@ -268,6 +309,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		Scripts:     runner,
 		Balances:    data,
 		Metrics:     plane,
+		Cycles:      cycles,
 		Events:      events,
 		MetadataMax: cfg.MetadataMaxBytes,
 		StoreBudget: cfg.DataScriptTimeout,
@@ -296,10 +338,15 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		ConfirmThreshold: cfg.PlanApplyConfirmThreshold,
 		ConfirmationTTL:  cfg.ConfirmationTTL,
 		ReadOnly:         readOnly,
+		Drained: func(ctx context.Context) {
+			if n, err := db.PendingReanchors(ctx, dbConn); err == nil {
+				cycles.ReanchorsPending.Set(float64(n))
+			}
+		},
 		Status: admin.StatusInfo{
 			Version: buildVersion,
 			Commit:  buildCommit(),
-			Started: time.Now(),
+			Started: started,
 			Cache: func() contract.CacheStats {
 				st := snap.Stats()
 				return contract.CacheStats{Entries: st.Entries, Tenants: st.Tenants, Features: st.Features, SizeBytes: st.Bytes}
@@ -329,15 +376,22 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		Balances: balances{data},
 		Refunder: refunder{plane: service, now: time.Now},
 		Metrics:  counters,
-		Logger:   log,
+		Logger:   log.With("job", "reconcile"),
 		Settle:   settle,
 		Paused:   readOnly,
 	})
 	go pass.Run(ctx, firstPass, cfg.ReconcileInterval)
-	handler := api.NewRouter(api.RouterOptions{
+	readyLog := log.With("job", "probe")
+	routerOpts := api.RouterOptions{
 		// A service that cannot enforce is not ready, and a read-only one
 		// cannot (IP-11 D5, IP-13 DoD 5).
-		Ready:          func() bool { return !readOnly() && ready() },
+		Ready: ready.ReadyFuncLogging(func(msg string, terms []string) {
+			if msg == "ready" {
+				readyLog.Info("readiness changed", "ready", true)
+				return
+			}
+			readyLog.Warn("readiness changed", "ready", false, "unsatisfied", terms)
+		}),
 		DataPlane:      service,
 		Auth:           keys,
 		RateLimit:      limiter,
@@ -345,23 +399,43 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		AdminLimit:     adminLimit,
 		Proxies:        cfg.TrustedProxies,
 		Metrics:        plane,
+		HTTP:           httpMetrics,
 		Logger:         log,
 		MaxBodyBytes:   cfg.MaxBodyBytes,
 		RequestTimeout: cfg.RequestTimeout,
-	})
+	}
+	handler := api.NewRouter(routerOpts)
+	process := observability.NewProcess(observability.Build{
+		Version: buildVersion, Commit: buildCommit(), ZoneDataVersion: runtime.Version(),
+	}, started)
+	reg, err := observability.NewRegistry(metrics, plane, sink.Metrics(), counters, deps, cycles, httpMetrics, process)
+	if err != nil {
+		cancel()
+		snap.Close()
+		closeLedger()
+		reconcileConn.Close()
+		return nil, err
+	}
+	served := promhttp.HandlerFor(reg, promhttp.HandlerOpts{ErrorLog: slog.NewLogLogger(log.Handler(), slog.LevelError)})
 	return &enforcement{
-		Handler:   handler,
-		Snapshot:  snap,
-		Keys:      keys,
-		Metrics:   metrics,
-		Plane:     plane,
-		Ledger:    sink,
-		Drain:     sink.Shutdown,
-		Pass:      pass,
-		Reconcile: counters,
-		Fence:     fence,
-		Data:      data,
-		Service:   service,
+		Registry:       reg,
+		MetricsHandler: api.NewMetricsRouter(routerOpts, served),
+		Dependencies:   deps,
+		Cycles:         cycles,
+		HTTP:           httpMetrics,
+		Ready:          ready,
+		Handler:        handler,
+		Snapshot:       snap,
+		Keys:           keys,
+		Metrics:        metrics,
+		Plane:          plane,
+		Ledger:         sink,
+		Drain:          sink.Shutdown,
+		Pass:           pass,
+		Reconcile:      counters,
+		Fence:          fence,
+		Data:           data,
+		Service:        service,
 		Close: func() {
 			cancel()
 			snap.Close()

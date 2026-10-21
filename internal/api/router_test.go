@@ -6,14 +6,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/quotacore/quotacore/internal/envelope"
+	"github.com/quotacore/quotacore/internal/observability"
 )
 
 // TestRouterServesTheContractsRoutes: the router serves the operational
 // routes, the four data-plane routes and every admin route of the contract,
 // and nothing else. An unknown path is a bare 404 and a wrong method a bare
-// 405 with Allow, neither asking for a credential. /metrics stays absent
-// until IP-13.
+// 405 with Allow, neither asking for a credential. /metrics is served on its
+// own listener (IP-13 D8), so this one answers it 404.
 func TestRouterServesTheContractsRoutes(t *testing.T) {
 	h := newHarness(t)
 	cases := []struct {
@@ -88,16 +92,61 @@ func TestRouterWithoutTheDataPlaneAnswersAsBefore(t *testing.T) {
 	}
 }
 
-func TestRouterProbesCarryNoBody(t *testing.T) {
-	liveness, readiness := Health(func() bool { return true })
+// TestTheAPIListenerDoesNotServeMetrics (IP-13 D8): /metrics is on its own
+// listener, so the API router answers it 404 and the metrics router answers
+// nothing else.
+func TestTheAPIListenerDoesNotServeMetrics(t *testing.T) {
+	served := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("series")) })
+	api := NewRouter(RouterOptions{Ready: func() bool { return true }})
 	rec := httptest.NewRecorder()
-	liveness.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-	if rec.Body.Len() != 0 {
-		t.Errorf("liveness body = %q, want empty", rec.Body.String())
+	api.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("GET /metrics on the API router = %d, want 404", rec.Code)
 	}
-	rec = httptest.NewRecorder()
-	readiness.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-	if rec.Body.Len() != 0 {
-		t.Errorf("readiness body = %q, want empty", rec.Body.String())
+	metrics := NewMetricsRouter(RouterOptions{}, served)
+	for path, want := range map[string]int{"/metrics": 200, "/healthz": 404, "/v1/consume": 404} {
+		rec := httptest.NewRecorder()
+		metrics.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != want {
+			t.Errorf("GET %s on the metrics router = %d, want %d", path, rec.Code, want)
+		}
+		if rec.Header().Get("X-Request-Id") == "" {
+			t.Errorf("GET %s on the metrics router carries no X-Request-Id", path)
+		}
+	}
+}
+
+// TestAnUnknownMethodIsNotALabel (IP-13 DoD 3): a method no contract route
+// uses is counted as other, so a caller cannot mint a series by inventing
+// methods.
+func TestAnUnknownMethodIsNotALabel(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	h := observability.NewHTTP()
+	if err := h.Register(reg); err != nil {
+		t.Fatal(err)
+	}
+	r := NewRouter(RouterOptions{Ready: func() bool { return true }, HTTP: h})
+	for _, m := range []string{"FOO", "BREW", "GET"} {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(m, "/healthz", nil))
+	}
+	if got := testutil.ToFloat64(h.Requests.WithLabelValues("unmatched", observability.MethodOther, "405")); got != 2 {
+		t.Errorf("requests with an invented method counted as other = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(h.Requests.WithLabelValues("GET /healthz", "GET", "200")); got != 1 {
+		t.Errorf("GET /healthz counted %v times, want 1", got)
+	}
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range families {
+		for _, m := range f.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "method" && l.GetValue() != "GET" && l.GetValue() != observability.MethodOther {
+					t.Errorf("%s has method=%q", f.GetName(), l.GetValue())
+				}
+			}
+		}
 	}
 }

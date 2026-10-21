@@ -7,53 +7,42 @@ import (
 	"testing"
 )
 
-func TestLivenessIsAlwaysOKAndCarriesNoBody(t *testing.T) {
-	liveness, _ := Health(func() bool { return false })
-
+func probe(t *testing.T, h http.Handler, path string) (int, string, string) {
+	t.Helper()
 	w := httptest.NewRecorder()
-	liveness.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("liveness status = %d, want %d", w.Code, http.StatusOK)
-	}
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 	body, err := io.ReadAll(w.Result().Body)
 	if err != nil {
 		t.Fatalf("reading body: %v", err)
 	}
-	if len(body) != 0 {
-		t.Fatalf("liveness body = %q, want empty", body)
-	}
+	return w.Code, w.Header().Get("Content-Type"), string(body)
 }
 
-func TestReadinessIsServiceUnavailableWhenNotReady(t *testing.T) {
-	cases := map[string]Readiness{
+// TestTheProbesAnswerTheContract (IP-13 DoD 5): HealthzOK and ReadyzOK are
+// JSON bodies and ReadyzNotReady is a bare 503 (api/openapi.yaml).
+func TestTheProbesAnswerTheContract(t *testing.T) {
+	for _, ready := range []bool{true, false} {
+		liveness, _ := Health(func() bool { return ready })
+		code, ctype, body := probe(t, liveness, "/healthz")
+		if code != http.StatusOK || ctype != "application/json" || body != `{"status":"ok"}` {
+			t.Errorf("ready=%v: liveness = %d %q %s, want 200 application/json {\"status\":\"ok\"}", ready, code, ctype, body)
+		}
+	}
+
+	_, readiness := Health(func() bool { return true })
+	code, ctype, body := probe(t, readiness, "/readyz")
+	if code != http.StatusOK || ctype != "application/json" || body != `{"status":"ready"}` {
+		t.Errorf("ready: readiness = %d %q %s, want 200 application/json {\"status\":\"ready\"}", code, ctype, body)
+	}
+
+	for name, ready := range map[string]Readiness{
 		"reports not ready":   func() bool { return false },
 		"no readiness source": nil,
-	}
-	for name, ready := range cases {
-		t.Run(name, func(t *testing.T) {
-			_, readiness := Health(ready)
-
-			w := httptest.NewRecorder()
-			readiness.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-
-			if w.Code != http.StatusServiceUnavailable {
-				t.Fatalf("readiness status = %d, want %d", w.Code, http.StatusServiceUnavailable)
-			}
-			if body, _ := io.ReadAll(w.Result().Body); len(body) != 0 {
-				t.Fatalf("readiness body = %q, want empty", body)
-			}
-		})
-	}
-}
-
-func TestReadinessIsOKWhenReady(t *testing.T) {
-	_, readiness := Health(func() bool { return true })
-
-	w := httptest.NewRecorder()
-	readiness.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("readiness status = %d, want %d", w.Code, http.StatusOK)
+	} {
+		_, readiness := Health(ready)
+		code, _, body := probe(t, readiness, "/readyz")
+		if code != http.StatusServiceUnavailable || body != "" {
+			t.Errorf("%s: readiness = %d %q, want a bare 503", name, code, body)
+		}
 	}
 }

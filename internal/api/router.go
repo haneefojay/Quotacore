@@ -39,7 +39,10 @@ type RouterOptions struct {
 	AdminLimit *dataplane.RateLimiter
 	Proxies    admin.Proxies
 	Metrics    *observability.DataPlane
-	Logger     *slog.Logger
+	// HTTP counts every request on every route (observability.md section
+	// 1.6); nil counts nothing.
+	HTTP   *observability.HTTP
+	Logger *slog.Logger
 	// MaxBodyBytes is QUOTACORE_MAX_BODY_BYTES; RequestTimeout is
 	// QUOTACORE_REQUEST_TIMEOUT, measured from accept.
 	MaxBodyBytes   int64
@@ -53,6 +56,7 @@ type router struct {
 	adminRate *dataplane.RateLimiter
 	proxies   admin.Proxies
 	metrics   *observability.DataPlane
+	http      *observability.HTTP
 	log       *slog.Logger
 	maxBody   int64
 	timeout   time.Duration
@@ -72,30 +76,7 @@ type router struct {
 // with Allow, both without authentication, because neither names anything to
 // protect.
 func NewRouter(opts RouterOptions) http.Handler {
-	rt := &router{
-		auth:      opts.Auth,
-		limiter:   opts.RateLimit,
-		adminRate: opts.AdminLimit,
-		proxies:   opts.Proxies,
-		metrics:   opts.Metrics,
-		log:       opts.Logger,
-		maxBody:   opts.MaxBodyBytes,
-		timeout:   opts.RequestTimeout,
-		now:       opts.Now,
-		dataPlane: map[string]string{},
-	}
-	if rt.log == nil {
-		rt.log = slog.New(slog.DiscardHandler)
-	}
-	if rt.maxBody <= 0 {
-		rt.maxBody = 64 << 10
-	}
-	if rt.timeout <= 0 {
-		rt.timeout = 2 * time.Second
-	}
-	if rt.now == nil {
-		rt.now = time.Now
-	}
+	rt := newRouter(opts)
 	if opts.DataPlane == nil {
 		rt.auth = nil
 	}
@@ -124,7 +105,9 @@ func NewRouter(opts RouterOptions) http.Handler {
 		var h http.Handler
 		switch {
 		case op.RequiredScope == "":
-			// /metrics is IP-13's route, and stays absent until then.
+			// /metrics is served on its own listener (NewMetricsRouter), so
+			// this one answers it 404 and no key prefix reaches the API
+			// port (IP-13 D8).
 			if h = operational[op.ID]; h == nil {
 				continue
 			}
@@ -140,6 +123,53 @@ func NewRouter(opts RouterOptions) http.Handler {
 		r.Method(op.Method, op.Path, h)
 	}
 	return r
+}
+
+// NewMetricsRouter serves GET /metrics and nothing else, for the metrics
+// listener at QUOTACORE_METRICS_ADDR (IP-13 D8). It takes no credential: the
+// loopback bind is the control (security-model.md section 7). Its requests go
+// through the same accept step, so each carries a request id and a log line,
+// and is counted like any other.
+func NewMetricsRouter(opts RouterOptions, metrics http.Handler) http.Handler {
+	rt := newRouter(opts)
+	r := chi.NewRouter()
+	r.Use(rt.accept)
+	r.NotFound(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	for _, op := range envelope.MustOperations() {
+		if op.ID == "metrics" {
+			r.Method(op.Method, op.Path, rt.named(op, metrics))
+		}
+	}
+	return r
+}
+
+func newRouter(opts RouterOptions) *router {
+	rt := &router{
+		auth:      opts.Auth,
+		limiter:   opts.RateLimit,
+		adminRate: opts.AdminLimit,
+		proxies:   opts.Proxies,
+		metrics:   opts.Metrics,
+		http:      opts.HTTP,
+		log:       opts.Logger,
+		maxBody:   opts.MaxBodyBytes,
+		timeout:   opts.RequestTimeout,
+		now:       opts.Now,
+		dataPlane: map[string]string{},
+	}
+	if rt.log == nil {
+		rt.log = slog.New(slog.DiscardHandler)
+	}
+	if rt.maxBody <= 0 {
+		rt.maxBody = 64 << 10
+	}
+	if rt.timeout <= 0 {
+		rt.timeout = 2 * time.Second
+	}
+	if rt.now == nil {
+		rt.now = time.Now
+	}
+	return rt
 }
 
 // named records the endpoint of an operational route, which takes no

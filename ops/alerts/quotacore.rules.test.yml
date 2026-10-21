@@ -1,0 +1,423 @@
+# promtool test rules: each alert fires on its condition, and none fires on a healthy
+# instance (IP-13 D9). CI runs it; see .github/workflows/ci.yml.
+rule_files:
+- quotacore.rules.yml
+evaluation_interval: 1m
+tests:
+- interval: 1m
+  input_series:
+  - series: quotacore_ceiling_violation_total
+    values: 0 1x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: CeilingViolated
+    exp_alerts:
+    - exp_labels:
+        severity: P0
+      exp_annotations:
+        summary: A balance was read above limit plus bonus (DR-019).
+        runbook: docs/runbooks/ceiling-violated.md#check
+- interval: 1m
+  input_series:
+  - series: quotacore_event_duplicate_detected_total
+    values: 0 1x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: DoubleChargeDetected
+    exp_alerts:
+    - exp_labels:
+        severity: P0
+      exp_annotations:
+        summary: The ledger refused a second deduction under one idempotency key (DR-030).
+        runbook: docs/runbooks/double-charge.md#check
+- interval: 1m
+  input_series:
+  - series: quotacore_duplicate_reversal_total
+    values: 0 1x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: DuplicateReversalIssued
+    exp_alerts:
+    - exp_labels:
+        severity: P1
+      exp_annotations:
+        summary: Reconciliation reversed a duplicate deduction (DR-049).
+        runbook: docs/runbooks/double-charge.md#check
+- interval: 1m
+  input_series:
+  - series: quotacore_datastore_memory_used_ratio
+    values: 0.9x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: DataStoreMemoryApproachingMaxmemory
+    exp_alerts:
+    - exp_labels:
+        severity: P2
+      exp_annotations:
+        summary: The data store is above 80% of maxmemory; at 100% every tenant is a 503 (DR-048).
+- interval: 1m
+  input_series:
+  - series: quotacore_balance_key_missing_total
+    values: 0 1x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: BalanceHashMissing
+    exp_alerts:
+    - exp_labels:
+        severity: P0
+      exp_annotations:
+        summary: A provisioned balance hash is absent from the data store (DR-045).
+        runbook: docs/runbooks/data-store-lost.md#check
+- interval: 1m
+  input_series:
+  - series: quotacore_consume_total{outcome="rejected"}
+    values: 0+10x10
+  - series: quotacore_consume_total{outcome="allowed"}
+    values: 0+100x10
+  - series: quotacore_refund_total{outcome="allowed"}
+    values: 0+10x10
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: EnforcementFailingClosed
+    exp_alerts:
+    - exp_labels:
+        severity: P0
+      exp_annotations:
+        summary: More than 1% of consumes and refunds are rejected.
+        runbook: docs/runbooks/enforcement-failing-closed.md#check
+- interval: 1m
+  input_series:
+  - series: quotacore_event_reconcile_mismatch_total
+    values: 0 1x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: ReconciliationMismatch
+    exp_alerts:
+    - exp_labels:
+        severity: P1
+      exp_annotations:
+        summary: Reconciliation found a balance its ledger does not explain.
+        runbook: docs/runbooks/reconciliation-mismatch.md#check
+- interval: 1m
+  input_series:
+  - series: quotacore_rollover_stale_total
+    values: 0 0 1x10
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: StaleRolloverRefusal
+    exp_alerts:
+    - exp_labels:
+        severity: P1
+      exp_annotations:
+        summary: A stored cycle index was ahead of the caller's beyond the skew threshold (Q-26).
+        runbook: docs/runbooks/stale-rollover-or-clock-skew.md#check
+- interval: 1m
+  input_series:
+  - series: quotacore_datastore_up
+    values: '0x10'
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: DataStoreUnreachable
+    exp_alerts:
+    - exp_labels:
+        severity: P1
+      exp_annotations:
+        summary: The data store has not answered the probe for a minute; enforcement fails closed.
+        runbook: docs/runbooks/enforcement-failing-closed.md#check
+- interval: 1m
+  input_series:
+  - series: quotacore_latency_seconds_bucket{le="0.005"}
+    values: 0+1x20
+  - series: quotacore_latency_seconds_bucket{le="0.01"}
+    values: 0+100x20
+  - series: quotacore_latency_seconds_bucket{le="+Inf"}
+    values: 0+100x20
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: P99LatencyBreach
+    exp_alerts:
+    - exp_labels:
+        severity: P2
+      exp_annotations:
+        summary: Data-plane p99 is above 5 ms (NFR-L1).
+- interval: 1m
+  input_series:
+  - series: quotacore_controlplane_up
+    values: '0x10'
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: ControlPlaneDown
+    exp_alerts:
+    - exp_labels:
+        severity: P2
+      exp_annotations:
+        summary: Postgres has not answered for a minute; cached tenants are unaffected.
+- interval: 1m
+  input_series:
+  - series: quotacore_dbpool_wait_seconds_bucket{le="0.05"}
+    values: 0+1x20
+  - series: quotacore_dbpool_wait_seconds_bucket{le="0.1"}
+    values: 0+100x20
+  - series: quotacore_dbpool_wait_seconds_bucket{le="+Inf"}
+    values: 0+100x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: DBPoolWait
+    exp_alerts:
+    - exp_labels:
+        severity: P2
+      exp_annotations:
+        summary: The control-plane pool's p99 wait is above 50 ms.
+- interval: 1m
+  input_series:
+  - series: quotacore_event_sink_dropped_total{reason="queue_full"}
+    values: 0+5x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: LedgerDrops
+    exp_alerts:
+    - exp_labels:
+        severity: P2
+      exp_annotations:
+        summary: Ledger events are being dropped; history has gaps (FS-10).
+- interval: 1m
+  input_series:
+  - series: quotacore_event_queue_depth
+    values: 9000x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: LedgerQueueDepth
+    exp_alerts:
+    - exp_labels:
+        severity: P2
+      exp_annotations:
+        summary: The ledger queue has been above 80% of its cap for five minutes.
+- interval: 1m
+  input_series:
+  - series: quotacore_event_dead_letters{reason="duplicate_idempotency_key"}
+    values: 1x10
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: LedgerDeadLetterDuplicate
+    exp_alerts:
+    - exp_labels:
+        severity: P0
+        reason: duplicate_idempotency_key
+      exp_annotations:
+        summary: A second deduction under one idempotency key is in the dead-letter table (DR-049).
+        runbook: docs/runbooks/double-charge.md#check
+- interval: 1m
+  input_series:
+  - series: quotacore_event_dead_letters{reason="rejected"}
+    values: 1x100
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: LedgerDeadLetterRejected
+    exp_alerts:
+    - exp_labels:
+        severity: P2
+        reason: rejected
+      exp_annotations:
+        summary: An event the ledger refuses has failed its hourly replay for an hour.
+- interval: 1m
+  input_series:
+  - series: quotacore_invalidation_lag_seconds_bucket{le="1"}
+    values: 0+1x20
+  - series: quotacore_invalidation_lag_seconds_bucket{le="2"}
+    values: 0+100x20
+  - series: quotacore_invalidation_lag_seconds_bucket{le="+Inf"}
+    values: 0+100x20
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: ConfigInvalidationLag
+    exp_alerts:
+    - exp_labels:
+        severity: P2
+      exp_annotations:
+        summary: Configuration changes take more than a second to reach the snapshot (NFR-D3).
+- interval: 1m
+  input_series:
+  - series: quotacore_config_cache_evictions_total
+    values: 0+1x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: CacheEviction
+    exp_alerts:
+    - exp_labels:
+        severity: P2
+      exp_annotations:
+        summary: The snapshot is evicting tenants; its bound is undersized (NFR-T7).
+- interval: 1m
+  input_series:
+  - series: quotacore_clock_skew_seconds
+    values: -2x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: ClockSkew
+    exp_alerts:
+    - exp_labels:
+        severity: P1
+      exp_annotations:
+        summary: This instance's clock is more than a second from the data store's (Q-26).
+        runbook: docs/runbooks/stale-rollover-or-clock-skew.md#check
+- interval: 1m
+  input_series:
+  - series: quotacore_errors_total{code="internal_error",endpoint="POST /v1/admin/tenants"}
+    values: 0 1x10
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: AuditWriteFailure
+    exp_alerts:
+    - exp_labels:
+        severity: P1
+      exp_annotations:
+        summary: An admin write failed with internal_error, which is how a failed audit insert surfaces (NFR-D4).
+        runbook: docs/runbooks/audit-write-failure.md#check
+- interval: 1m
+  input_series:
+  - series: quotacore_http_requests_total{endpoint="POST /v1/consume",method="POST",status="200"}
+    values: 5x40
+  alert_rule_test:
+  - eval_time: 32m
+    alertname: NoTraffic
+    exp_alerts:
+    - exp_labels:
+        severity: P3
+      exp_annotations:
+        summary: No API request for fifteen minutes.
+- interval: 1m
+  input_series:
+  - series: quotacore_reanchors_pending
+    values: 1x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: ReAnchorsPending
+    exp_alerts:
+    - exp_labels:
+        severity: P2
+      exp_annotations:
+        summary: A committed re-anchor has not reached the data store for ten minutes.
+        runbook: docs/runbooks/long-outage.md#check
+- interval: 1m
+  input_series:
+  - series: quotacore_ceiling_violation_total
+    values: '0x40'
+  - series: quotacore_event_duplicate_detected_total
+    values: '0x40'
+  - series: quotacore_duplicate_reversal_total
+    values: '0x40'
+  - series: quotacore_datastore_memory_used_ratio
+    values: 0.3x40
+  - series: quotacore_balance_key_missing_total
+    values: '0x40'
+  - series: quotacore_consume_total{outcome="rejected"}
+    values: '0x40'
+  - series: quotacore_consume_total{outcome="allowed"}
+    values: 0+100x40
+  - series: quotacore_refund_total{outcome="allowed"}
+    values: 0+10x40
+  - series: quotacore_event_reconcile_mismatch_total
+    values: '0x40'
+  - series: quotacore_rollover_stale_total
+    values: '0x40'
+  - series: quotacore_datastore_up
+    values: 1x40
+  - series: quotacore_controlplane_up
+    values: 1x40
+  - series: quotacore_latency_seconds_bucket{le="0.005"}
+    values: 0+100x40
+  - series: quotacore_latency_seconds_bucket{le="+Inf"}
+    values: 0+100x40
+  - series: quotacore_dbpool_wait_seconds_bucket{le="0.05"}
+    values: 0+100x40
+  - series: quotacore_dbpool_wait_seconds_bucket{le="+Inf"}
+    values: 0+100x40
+  - series: quotacore_event_sink_dropped_total{reason="queue_full"}
+    values: '0x40'
+  - series: quotacore_event_queue_depth
+    values: 10x40
+  - series: quotacore_event_dead_letters{reason="duplicate_idempotency_key"}
+    values: '0x40'
+  - series: quotacore_event_dead_letters{reason="rejected"}
+    values: '0x40'
+  - series: quotacore_invalidation_lag_seconds_bucket{le="1"}
+    values: 0+100x40
+  - series: quotacore_invalidation_lag_seconds_bucket{le="+Inf"}
+    values: 0+100x40
+  - series: quotacore_config_cache_evictions_total
+    values: '0x40'
+  - series: quotacore_clock_skew_seconds
+    values: 0.002x40
+  - series: quotacore_errors_total{code="internal_error",endpoint="POST /v1/admin/tenants"}
+    values: '0x40'
+  - series: quotacore_http_requests_total{endpoint="POST /v1/consume",method="POST",status="200"}
+    values: 0+50x40
+  - series: quotacore_reanchors_pending
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 35m
+    alertname: CeilingViolated
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: DoubleChargeDetected
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: DuplicateReversalIssued
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: DataStoreMemoryApproachingMaxmemory
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: BalanceHashMissing
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: EnforcementFailingClosed
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: ReconciliationMismatch
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: StaleRolloverRefusal
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: DataStoreUnreachable
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: P99LatencyBreach
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: ControlPlaneDown
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: DBPoolWait
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: LedgerDrops
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: LedgerQueueDepth
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: LedgerDeadLetterDuplicate
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: LedgerDeadLetterRejected
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: ConfigInvalidationLag
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: CacheEviction
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: ClockSkew
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: AuditWriteFailure
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: NoTraffic
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: ReAnchorsPending
+    exp_alerts: []

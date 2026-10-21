@@ -82,7 +82,9 @@ func (r *Runner) adjust(ctx context.Context, b body, req Request, first int64) (
 	}
 	argv := args(Check, req)[:argCount-1]
 	argv[0] = strconv.FormatInt(first, 10)
-	return r.control(ctx, b, key, argv)
+	out, err := r.control(ctx, b, key, argv)
+	r.observe(req, out.Outcome, err)
+	return out, err
 }
 
 // Rewrite is a re-anchor or a force-rollover of one feature: the window the

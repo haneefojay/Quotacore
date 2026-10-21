@@ -8,12 +8,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -148,8 +148,9 @@ type stack struct {
 	t       *testing.T
 	app     *enforcement
 	server  *httptest.Server
-	sql     *sql.DB // the service's own handle
-	seedDB  *sql.DB // a separate handle the test seeds with
+	metrics *httptest.Server // the metrics listener
+	sql     *sql.DB          // the service's own handle
+	seedDB  *sql.DB          // a separate handle the test seeds with
 	rdb     *redis.Client
 	events  *capturedEvents
 	logs    *syncBuffer
@@ -177,6 +178,12 @@ type stackOptions struct {
 	settle time.Duration
 	// fenceEvery is how often the fence is checked; zero means 100 ms.
 	fenceEvery time.Duration
+	// probeEvery is the store prober's interval, and of its memory and
+	// Postgres reads; zero means 100 ms.
+	probeEvery time.Duration
+	// retentionFirstRun, when set, is when retention first runs; unset, it
+	// waits an hour, so it never prunes a test's rows uninvited.
+	retentionFirstRun time.Duration
 }
 
 func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
@@ -194,6 +201,10 @@ func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
 		// Every request of a test comes from one address, so the admin
 		// limit is lifted unless a test is about it.
 		"QUOTACORE_RATELIMIT_ADMIN_RPM": "6000000",
+		"QUOTACORE_LOG_LEVEL":           "debug",
+		// The metrics listener is httptest's, so the configured address is
+		// only validated.
+		"QUOTACORE_METRICS_ADDR": "127.0.0.1:0",
 	}
 	for k, v := range o.env {
 		env[k] = v
@@ -230,7 +241,7 @@ func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
 	if logs == nil {
 		logs = &syncBuffer{}
 	}
-	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	log := newLogger(logs, cfg.LogFormat, cfg.LogLevel)
 	events := &capturedEvents{}
 	var aopt assembleOptions
 	if o.adminStore != nil {
@@ -241,6 +252,9 @@ func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
 	// Retention's first tick waits an hour in a test, so it never prunes a
 	// test's rows unless the test calls it.
 	aopt.retentionFirstRun = time.Hour
+	if o.retentionFirstRun > 0 {
+		aopt.retentionFirstRun = o.retentionFirstRun
+	}
 	// Nor does the reconciliation pass run unless a test runs it.
 	aopt.reconcileFirstRun = time.Hour
 	aopt.settle = o.settle
@@ -252,25 +266,31 @@ func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
 	if aopt.fenceEvery <= 0 {
 		aopt.fenceEvery = 100 * time.Millisecond
 	}
-	app, err := assemble(ctx, cfg, log, conn, data, func() bool { return true }, events, aopt)
+	aopt.probeEvery = o.probeEvery
+	if aopt.probeEvery <= 0 {
+		aopt.probeEvery = 100 * time.Millisecond
+	}
+	aopt.probeSlow = aopt.probeEvery
+	// The shipped assembly: its registry, readiness and logger are the ones
+	// run serves with (IP-13 D14).
+	app, err := assemble(ctx, cfg, log, conn, data, events, aopt)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(app.Close)
-	reg := prometheus.NewRegistry()
-	if err := app.Plane.Register(reg); err != nil {
-		t.Fatal(err)
-	}
-	if err := app.Ledger.Metrics().Register(reg); err != nil {
-		t.Fatal(err)
-	}
-	if err := app.Reconcile.Register(reg); err != nil {
-		t.Fatal(err)
-	}
 	srv := httptest.NewServer(app.Handler)
 	t.Cleanup(srv.Close)
-	s := &stack{t: t, app: app, server: srv, sql: conn, seedDB: seed, rdb: rdb, events: events, logs: logs,
-		reg: reg, dbURL: dbURL, client: srv.Client(), settle: aopt.settle}
+	metricsSrv := httptest.NewServer(app.MetricsHandler)
+	t.Cleanup(metricsSrv.Close)
+	s := &stack{t: t, app: app, server: srv, metrics: metricsSrv, sql: conn, seedDB: seed, rdb: rdb, events: events, logs: logs,
+		reg: app.Registry, dbURL: dbURL, client: srv.Client(), settle: aopt.settle}
+	// The first probe and the snapshot's first load run at once; a test
+	// starts after them, so readiness is decided before its first request.
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if !slices.Contains(app.Ready.Unsatisfied(), termDataStore) && app.Snapshot.Loaded() {
+			break
+		}
+	}
 	s.runtime = s.key(auth.Runtime)
 	s.admin = s.key(auth.Admin)
 	return s

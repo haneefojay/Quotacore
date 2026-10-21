@@ -26,7 +26,7 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-12` | Usage ledger, writer and archiver | `IP-08` | `COMPLETE`, opened and closed 2026-10-20 |
-| `IP-13` | Observability | `IP-07` | `NOT STARTED` |
+| `IP-13` | Observability | `IP-07` | `IN PROGRESS`, opened 2026-10-21 |
 | `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `NOT STARTED` |
 | `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `BLOCKED` |
 | `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `BLOCKED` on `IP-15` |
@@ -1567,7 +1567,11 @@ happened.
 
 ## IP-13 — Observability
 
-**Status** `NOT STARTED`; `IP-07` closed on 2026-10-19 and nothing else gates this phase.
+**Status** `IN PROGRESS`, opened 2026-10-21. `IP-07` closed on 2026-10-19 and nothing else gates
+this phase. Items 1 to 6 and 8 are met, each closed by a test in the evidence table below; item 7
+waits on its review by a person who did not write the runbooks, recorded in
+[the runbooks' review table](../runbooks/README.md#review), and the phase closes when that row is
+filled in.
 
 **Objective.** Every metric, log and probe the specification names, with cardinality that stays
 bounded and alerts that name a runbook.
@@ -1588,6 +1592,10 @@ bounded and alerts that name a runbook.
   as alerts
 - [SECURITY.md](../../SECURITY.md) §2.1, what is never logged
 
+  > **Amended 2026-10-21 (`IP-13`).** SECURITY.md has no §2.1; the table of what is never logged is
+  > [observability.md](../architecture/observability.md#21-what-is-never-logged) §2.1, with
+  > SECURITY.md §4.3 and §4.4.
+
 **Dependencies.** Blocked by `IP-07`. Blocks `IP-15`.
 
 **Definition of Done.**
@@ -1599,15 +1607,53 @@ bounded and alerts that name a runbook.
    `external_id` is not a label (NFR-O2).
 4. Every log line is JSON, carries the request's `X-Request-Id`, and contains no personally
    identifiable information and no secret (NFR-O3, NFR-O6, DR-043).
+   > **Amended 2026-10-21 (`IP-13`).** A line no request caused carries a `job` instead of a request
+   > id, as NFR-S10's note reads it; the item is proved for the default `QUOTACORE_LOG_FORMAT=json`,
+   > and `text` stays for a person at a terminal.
 5. `/healthz` and `/readyz` answer differently and correctly: liveness survives a data-store outage,
    readiness does not, because a service that cannot enforce is not ready.
 6. Alerts exist for the three conditions the specification calls P0 or P1: `rollover_stale_total`,
    `balance_key_missing_total` and `ceiling_violation_total`, each naming the runbook that answers
    it.
+   > **Amended 2026-10-21 (`IP-13`).** These three are a subset: observability.md §5 alerts on eleven
+   > P0 and P1 conditions and says each names a runbook, so every §5 row with a signal is a rule in
+   > `ops/alerts/quotacore.rules.yml`.
 7. Every runbook is followable by a person who did not write it. Reviewed by someone else, which is
    the only test that exists for a runbook.
 8. The process runs unprivileged, on a non-root port, with a read-only filesystem outside its data
    volumes (NFR-S6).
+   > **Amended 2026-10-21 (`IP-13`) — the process half.** No image exists before `IP-15`. This phase
+   > proves the binary needs nothing an image would have to grant: it refuses a port below 1024,
+   > writes no file, warns as uid 0, and runs from a read-only directory. `IP-15` item 10 keeps the
+   > image half.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The rows
+marked `(integration)` need real valkey and Postgres 16 and run in CI's `service` job; CI's `docs`
+job runs `promtool check rules` and `promtool test rules` against the rules file.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestEveryDocumentedMetricIsRegistered`, `TestEveryDocumentedMetricIsServed` (integration), `TestTheCatalogueParserReadsLabelsAndValues`, `TestTheBuildAndProcessSeries` | A §1 family or label missing from the registry or the scrape, or one served that §1 does not name, in either direction |
+| 2 | `TestTheServedCodeLabelsAreTheCatalogue` (integration) | A `code` value served that the catalogue lacks, or a catalogue code with no series |
+| 3 | `TestCardinalityIsIndependentOfTenantCount` (integration), `TestNoLabelValueIsCustomerData` (integration) | The series count changing between 50 and 2,000 tenants, or a canary `external_id`, name or metadata value in any label |
+| 4 | `TestEveryLogLineIsJSONWithItsRequestId` (integration), `TestNoLogLineCarriesCustomerDataOrASecret` (integration), `TestEveryLogCallUsesAnAllowedKey`, `TestTheBinaryLogsJSONBeforeItsConfiguration` (integration) | A line that is not one JSON object, a request line without its id or with another's, a background line without its `job`, a canary or secret anywhere in the output, or a call site using a key off the allow-list |
+| 5 | `TestTheProbesAnswerTheContract`, `TestAFreshInstallIsReady` (integration), `TestReadinessFollowsTheDataStore` (integration), `TestReadinessIgnoresAPostgresOutage` (integration), `TestReadinessRefusesReadOnlyAndTheFence` (integration), `TestReadinessDuringADrain` (integration), `TestLivenessIgnoresEveryDependency` (integration) | Liveness failing on any dependency or while draining, readiness surviving a store outage, a read-only mode or a held fence, or failing on a Postgres outage or an empty install |
+| 6 | `TestEveryAlertIsTheDocumentsAndNamesARunbook`, `TestEveryAlertReadsAServedMetric` (integration), `TestEveryRunbookIsFollowable`, promtool | A rule without a §5 row or the reverse, a severity that differs, an expression naming a metric §1 lacks or the stack does not serve, a P0 or P1 without a runbook anchor that exists, or an alert that never fires on its condition |
+| 7 | `TestEveryRunbookIsFollowable`, and a person's review | A runbook missing a heading, naming a command the binary lacks or a route the contract lacks; the review is the only test that the steps work |
+| 8 | `TestAPrivilegedPortIsRefused`, `TestTheServerWritesNoFile`, `TestTheBinaryRunsOnAReadOnlyFilesystem` (integration) | A port below 1024 accepted, a server code path that writes a file, or the built binary failing to become ready from a read-only directory |
+| — | `TestRolledOverCountsEveryTransitionOnce`, `TestAStaleTransitionIsCountedAndABoundaryRaceIsNot`, `TestACeilingViolationIsCounted`, `TestTheStoreMetricsFollowAnOutage`, `TestControlPlaneUpFollowsPostgres`, `TestTheScriptCacheCountsAReload`, `TestEveryRequestIsCountedOnce`, `TestReanchorsPendingFollowsTheTable`, `TestStatusAgreesWithTheMetrics` (all integration), `TestTheStoreErrorClasses`, `TestTheAPIListenerDoesNotServeMetrics`, `TestAnUnknownMethodIsNotALabel` | A metric that is registered and served but does not move with what it measures |
+
+Three things are recorded here because the phase surfaced them.
+
+1. **Nothing was served at `/metrics`.** The collectors were registered on a registry no listener
+   served. `/metrics` is now served on its own listener, `QUOTACORE_METRICS_ADDR`, and the API
+   listener answers it `404` ([deployment.md](../architecture/deployment.md#41-core) §4.1).
+2. **A fresh install was never ready.** Readiness required a known tenant, so an empty install
+   answered `503` until its first tenant. The terms are now
+   [observability.md](../architecture/observability.md#4-health-and-status) §4's.
+3. **A Postgres outage made the fleet read-only.** The fence treated a lost connection as a lost
+   fence; fixed in its own change on 2026-10-21, the fence fix
+   ([consistency-and-recovery.md](../architecture/consistency-and-recovery.md#3-dependency-failure-matrix) §3).
 
 **Exit criteria.** An operator who has never seen the service can tell whether it is enforcing,
 and what to do about it.
@@ -1663,6 +1709,11 @@ or a copy-pasted `curl`.
    > [consistency-and-recovery.md](../architecture/consistency-and-recovery.md) §4.1 send an
    > operator to. They belong in item 1's mapping table as local operations, and this phase folds
    > the minimal dispatch `IP-11` added (no argument still serves) into its own.
+
+   > **Amended 2026-10-21 (`IP-13`) — the runbooks call `curl`.** Each
+   > [runbook](../runbooks/README.md) names an admin route by `curl`, because no CLI command exists
+   > yet. This phase replaces each with its command, and `TestEveryRunbookIsFollowable` then holds
+   > the runbooks to the commands the binary has.
 
 **Exit criteria.** The whole administrative surface is reachable from one executable, and CI proves
 it.
@@ -1729,6 +1780,11 @@ procedure that has actually been performed.
 9. An upgrade path from the previous release is documented and exercised, and rollback is a restore
    (NFR-OPS7).
 10. The image runs unprivileged, on a non-root port, with a read-only root filesystem (NFR-S6).
+    > **Amended 2026-10-21 (`IP-13`) — the image half.** `IP-13` item 8 proved the process half: the
+    > binary refuses a port below 1024, writes no file and runs from a read-only directory. This item
+    > keeps `USER`, the read-only root filesystem, dropped capabilities and `no-new-privileges`. The
+    > Compose healthcheck is `/readyz`, and the metrics listener, `127.0.0.1:9090` by default, is
+    > published only if a scraper outside the container needs it.
 11. The build produces an SBOM covering the base image and the Go module graph, and the licence scan
     that gates it covers the whole shipped runtime rather than the module graph alone. This item was
     moved here from `IP-01` on 2026-09-27, and the reason is recorded rather than quietly dropped:

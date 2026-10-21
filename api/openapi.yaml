@@ -1764,6 +1764,10 @@ paths:
         Answers `200` while the process is running. It checks no dependency, deliberately: a
         liveness probe that fails when Postgres is unreachable restarts a process that was not
         the problem.
+
+        Amended 2026-10-21 (`IP-13`): it answers `200` with its body from start to exit,
+        including while the process drains after `SIGTERM`, because a liveness probe that fails
+        during a graceful drain gets the process killed before its requests have answered.
       security: []
       responses:
         '200':
@@ -1778,10 +1782,21 @@ paths:
         Answers `200` only when the service can actually serve: the required dependencies are
         reachable and the bootstrap key has been acknowledged (NFR-S9). This is the probe that
         gates traffic, and unlike `/healthz` it does look at dependencies.
+
+        Amended 2026-10-21 (`IP-13`): the terms are those of observability.md section 4. The
+        data store answered the last probe within `QUOTACORE_DATASCRIPT_TIMEOUT`; the snapshot
+        has read the configuration once, however many tenants exist; migrations are current;
+        the process is not draining; and it is in normal mode, so read-only or a rebuild holding
+        the fence is not ready. Postgres is not a term: during a control-plane outage cached
+        tenants still enforce (NFR-A2), and an instance that went unready would take them with
+        it. The bootstrap acknowledgement is not a term either, because the process refuses to
+        start without it. Any other state is a `503` with no body.
       security: []
       responses:
         '200':
           $ref: '#/components/responses/ReadyzOK'
+        '503':
+          $ref: '#/components/responses/ReadyzNotReady'
 
   /metrics:
     get:
@@ -1795,6 +1810,12 @@ paths:
         [error-catalog.md](../../docs/product/error-catalog.md) by reference: a contract test
         asserts the two match, so a code cannot be raised in the service without being in the
         catalogue.
+
+        Amended 2026-10-21 (`IP-13`): this operation is served on the metrics listener at
+        `QUOTACORE_METRICS_ADDR` (`127.0.0.1:9090` by default, deployment.md section 4.1), not
+        on the API's address, which answers it `404`. It takes no credential; the loopback bind
+        is the control (security-model.md section 7). The series are observability.md
+        section 1.
       security: []
       responses:
         '200':
@@ -3123,6 +3144,15 @@ components:
               value:
                 status: ready
 
+    ReadyzNotReady:
+      x-status: 503
+      description: |
+        The service cannot serve, so traffic should not reach it. No body and no error envelope:
+        the probe is for an orchestrator, which reads the status. Added 2026-10-21 (`IP-13`).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+
     MetricsOK:
       x-status: 200
       description: |
@@ -3136,14 +3166,14 @@ components:
             type: string
           examples:
             sample:
-              summary: A few series, elided
+              summary: A few series, elided (amended 2026-10-21, `IP-13`, to series that exist)
               value: |
-                # HELP quotacore_requests_total Total HTTP requests.
-                # TYPE quotacore_requests_total counter
-                quotacore_requests_total{route="consume",status="200"} 18402
-                # HELP quotacore_errors_total Errors by catalogue code.
+                # HELP quotacore_http_requests_total Every HTTP request, by contract operation, method and status.
+                # TYPE quotacore_http_requests_total counter
+                quotacore_http_requests_total{endpoint="POST /v1/consume",method="POST",status="200"} 18402
+                # HELP quotacore_errors_total Error envelopes written, by code and by the contract operation that wrote them.
                 # TYPE quotacore_errors_total counter
-                quotacore_errors_total{code="quota_exceeded"} 91
+                quotacore_errors_total{code="quota_exceeded",endpoint="POST /v1/consume"} 91
 
     OpenAPIOK:
       x-status: 200

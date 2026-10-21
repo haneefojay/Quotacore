@@ -18,6 +18,7 @@ import (
 	contract "github.com/quotacore/quotacore/api"
 	"github.com/quotacore/quotacore/internal/auth"
 	"github.com/quotacore/quotacore/internal/dataplane"
+	"github.com/quotacore/quotacore/internal/envelope"
 	"github.com/quotacore/quotacore/internal/script"
 	"github.com/quotacore/quotacore/internal/snapshot"
 	"github.com/quotacore/quotacore/internal/store"
@@ -29,6 +30,10 @@ type Actor struct {
 	KeyID     string
 	Name      string
 	RequestID string
+	// Audited is told the action and subject type of each audit row the
+	// request writes, so the request's log line names them (IP-13 D6);
+	// nil is told nothing.
+	Audited func(action, subjectType string)
 }
 
 // Position is where a page ends, newest first: the row's creation instant and
@@ -350,6 +355,9 @@ type Options struct {
 	// ReadOnly reports whether the instance is in read-only mode (IP-11
 	// D5); nil is never.
 	ReadOnly func() bool
+	// Drained runs after every drain tick, which is where the gauge of
+	// pending re-anchors is refreshed (IP-13 D10); nil does nothing.
+	Drained func(ctx context.Context)
 }
 
 // StatusInfo is what GET /v1/admin/status reports beyond its probes.
@@ -388,6 +396,7 @@ type Service struct {
 	cnfTTL      time.Duration
 	now         func() time.Time
 	readOnly    func() bool
+	drained     func(ctx context.Context)
 }
 
 func New(opts Options) *Service {
@@ -405,6 +414,7 @@ func New(opts Options) *Service {
 		cnfTTL:      opts.ConfirmationTTL,
 		now:         opts.Now,
 		readOnly:    opts.ReadOnly,
+		drained:     opts.Drained,
 	}
 	if s.readOnly == nil {
 		s.readOnly = func() bool { return false }
@@ -503,6 +513,6 @@ func (s *Service) publish(r *http.Request, tenants []string) {
 	defer cancel()
 	if _, err := s.data.Publish(ctx, tenants); err != nil {
 		s.log.Warn("could not publish a configuration change; the refresh tick will converge it",
-			"error", err)
+			"request_id", envelope.From(r.Context()).RequestID, "error", err)
 	}
 }
