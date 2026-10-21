@@ -282,6 +282,11 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **`IP-13` is `IN PROGRESS`**, opened 2026-10-21 before any file it owns exists. Nothing gated it:
+  `IP-07` closed on 2026-10-19.
+
+### Changed
+
 - **`IP-11` is `COMPLETE`**, opened and closed 2026-10-20 with 6 of 6 DoD items met. `IP-16` now
   waits on `IP-15` only. Items 3, 5 and 6 carry a dated note dividing them with `IP-15`'s restore
   drill, and `IP-14` gains the four local operations by a dated note. Dated `IP-11` notes on DR-045

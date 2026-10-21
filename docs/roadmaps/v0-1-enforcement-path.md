@@ -26,7 +26,7 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-12` | Usage ledger, writer and archiver | `IP-08` | `COMPLETE`, opened and closed 2026-10-20 |
-| `IP-13` | Observability | `IP-07` | `NOT STARTED` |
+| `IP-13` | Observability | `IP-07` | `IN PROGRESS`, opened 2026-10-21 |
 | `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `NOT STARTED` |
 | `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `BLOCKED` |
 | `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `BLOCKED` on `IP-15` |
@@ -1567,7 +1567,8 @@ happened.
 
 ## IP-13 — Observability
 
-**Status** `NOT STARTED`; `IP-07` closed on 2026-10-19 and nothing else gates this phase.
+**Status** `IN PROGRESS`, opened 2026-10-21. `IP-07` closed on 2026-10-19 and nothing else gates
+this phase.
 
 **Objective.** Every metric, log and probe the specification names, with cardinality that stays
 bounded and alerts that name a runbook.
