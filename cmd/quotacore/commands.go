@@ -8,14 +8,18 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/quotacore/quotacore/internal/cli"
 	"github.com/quotacore/quotacore/internal/cycle"
 	"github.com/quotacore/quotacore/internal/db"
 	"github.com/quotacore/quotacore/internal/reconcile"
@@ -27,15 +31,38 @@ import (
 // The binary's local operations (IP-11 D2b): `verify-tenant`, `verify-all`,
 // `reconcile-report` and `rebuild`. Each reads Postgres and the fast store
 // directly, prints JSON, and exits 1 when it has something a person must look
-// at. With no argument the binary serves, as it always has; IP-14 folds this
-// dispatch into its own command table.
+// at. They are rows of internal/cli's command table, which dispatches to
+// them (IP-14 D11).
 
-// Exit codes of a local operation.
+// Exit codes of a local operation, from the binary's one table (IP-14 D5).
+// exitError marks an error that exitFor classifies once it is known.
 const (
-	exitClean   = 0
-	exitFinding = 1
-	exitError   = 2
+	exitClean   = cli.ExitOK
+	exitFinding = cli.ExitFinding
+	exitUsage   = cli.ExitUsage
+	exitError   = cli.ExitInternal
 )
+
+// errUsage marks a mistake in what the operator typed.
+type errUsage struct{ error }
+
+// exitFor is the exit code of a local operation's error: usage, a tenant
+// that does not exist, a dependency that did not answer, or internal.
+func exitFor(err error) int {
+	var u errUsage
+	var ne net.Error
+	var ce *pgconn.ConnectError
+	switch {
+	case errors.As(err, &u):
+		return exitUsage
+	case errors.Is(err, snapshot.ErrTenantUnknown):
+		return cli.ExitNotFound
+	case errors.As(err, &ne), errors.As(err, &ce), errors.Is(err, syscall.ECONNREFUSED),
+		errors.Is(err, context.DeadlineExceeded):
+		return cli.ExitUnavailable
+	}
+	return exitError
+}
 
 // fenceGrace is how long a rebuild waits after taking the fence before it
 // reads or writes anything: two of an instance's five-second fence checks, so
@@ -65,42 +92,30 @@ type commands struct {
 	grace time.Duration
 }
 
-// isCommand reports whether args name a local operation.
-func isCommand(args []string) bool {
-	if len(args) == 0 {
-		return false
-	}
-	switch args[0] {
-	case "verify-tenant", "verify-all", "reconcile-report", "rebuild":
-		return true
-	}
-	return false
-}
-
 // runCommand opens what the operation needs and runs it.
 func runCommand(args []string, stdout, stderr io.Writer) int {
 	cfg, err := Load(OSGetenv)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		return exitError
+		return exitUsage
 	}
 	ctx := context.Background()
 	dbConn, err := db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		return exitError
+		return exitFor(err)
 	}
 	defer dbConn.Close()
 	data, err := store.Open(store.Options{URL: cfg.RedisURL, DataScriptTimeout: cfg.DataScriptTimeout})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		return exitError
+		return exitFor(err)
 	}
 	defer data.Close()
 	runner, err := script.New(script.Options{Client: data.Client(), Timeout: cfg.DataScriptTimeout})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		return exitError
+		return exitFor(err)
 	}
 	c := &commands{db: dbConn, data: data, scripts: runner, rec: db.NewReconciler(dbConn),
 		loader: db.NewLoader(dbConn, data), settle: cfg.Settle(),
@@ -109,6 +124,9 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	code, err := c.run(ctx, args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+		if code == exitError {
+			code = exitFor(err)
+		}
 	}
 	return code
 }
@@ -117,12 +135,12 @@ func (c *commands) run(ctx context.Context, args []string) (int, error) {
 	switch args[0] {
 	case "verify-tenant":
 		if len(args) != 2 {
-			return exitError, errors.New("usage: quotacore verify-tenant <tenant id or external id>")
+			return exitUsage, errUsage{errors.New("usage: quotacore verify-tenant <tenant id or external id>")}
 		}
 		return c.verifyTenant(ctx, args[1])
 	case "verify-all":
 		if len(args) != 1 {
-			return exitError, errors.New("usage: quotacore verify-all")
+			return exitUsage, errUsage{errors.New("usage: quotacore verify-all")}
 		}
 		return c.verifyAll(ctx)
 	case "reconcile-report":
@@ -130,7 +148,7 @@ func (c *commands) run(ctx context.Context, args []string) (int, error) {
 	case "rebuild":
 		opts, err := parseRebuild(args[1:])
 		if err != nil {
-			return exitError, err
+			return exitUsage, errUsage{err}
 		}
 		rep, code, err := c.rebuild(ctx, opts)
 		if err != nil {
@@ -265,7 +283,7 @@ func (c *commands) report(ctx context.Context, args []string) (int, error) {
 	since := fs.String("since", "", "an RFC 3339 instant, or a duration back from now such as 24h")
 	limit := fs.Int("limit", 1000, "the most findings to print")
 	if err := fs.Parse(args); err != nil {
-		return exitError, fmt.Errorf("usage: quotacore reconcile-report [--since <instant or duration>] [--limit n]: %w", err)
+		return exitUsage, errUsage{fmt.Errorf("usage: quotacore reconcile-report [--since <instant or duration>] [--limit n]: %w", err)}
 	}
 	from := time.Time{}
 	if *since != "" {
@@ -274,7 +292,7 @@ func (c *commands) report(ctx context.Context, args []string) (int, error) {
 		} else if t, err := time.Parse(time.RFC3339, *since); err == nil {
 			from = t
 		} else {
-			return exitError, fmt.Errorf("--since %q is neither an RFC 3339 instant nor a duration", *since)
+			return exitUsage, errUsage{fmt.Errorf("--since %q is neither an RFC 3339 instant nor a duration", *since)}
 		}
 	}
 	found, err := c.rec.Findings(ctx, from, *limit)
@@ -403,7 +421,7 @@ func (c *commands) rebuild(ctx context.Context, o rebuildOptions) (rebuildReport
 			return rep, exitError, err
 		}
 		if !ok {
-			return rep, exitError, errors.New("refusing to write: an instance in normal mode, or another rebuild, holds " +
+			return rep, cli.ExitConflict, errors.New("refusing to write: an instance in normal mode, or another rebuild, holds " +
 				"the fence; restart every instance with QUOTACORE_STARTUP_MODE=readonly first " +
 				"(consistency-and-recovery.md section 4.1)")
 		}
@@ -460,7 +478,7 @@ func (c *commands) rebuild(ctx context.Context, o rebuildOptions) (rebuildReport
 			names = append(names, s.TenantID+":"+s.Feature)
 		}
 		sort.Strings(names)
-		return rep, exitError, fmt.Errorf("no tenant holds %s", strings.Join(names, ", "))
+		return rep, cli.ExitNotFound, fmt.Errorf("no tenant holds %s", strings.Join(names, ", "))
 	}
 	code := exitClean
 	for _, e := range rep.Entries {

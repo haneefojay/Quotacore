@@ -12,6 +12,22 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **The `quotacore` CLI (`IP-14`).** `internal/cli`: one command for each of the contract's 32 admin
+  operations, read from the contract by `operationId` so a route cannot drift from its command;
+  `grant`, `set` and `rollover` at the top level; `init`, the quickstart's five calls, which asks
+  only at a terminal and takes `--yes`; and `key mint`, which prints a new admin token for
+  `QUOTACORE_BOOTSTRAP_ADMIN_KEY` and touches nothing. Each request is the generated contract type,
+  validated before it is sent. The admin key comes only from `QUOTACORE_ADMIN_KEY` (falling back to
+  the bootstrap key), never a flag. No write is ever retried, and `plan apply` never re-issues
+  itself with a confirmation token.
+- [docs/architecture/cli.md](docs/architecture/cli.md): the mapping table, the environment, the
+  exit codes by catalogue code, and what a command never does. Tests hold the table to the binary
+  and the contract, and the exit codes to error-catalog.md §2, both ways. deployment.md §4.6 lists
+  `QUOTACORE_URL` and `QUOTACORE_ADMIN_KEY`.
+- CLI tests against a real stack: every command makes exactly its row's call; grant, set and
+  rollover; a dispute investigated and corrected from stdout alone; no secret in any output; exit
+  codes from provoked answers; and the built binary serving and administering itself.
+
 - **Observability (`IP-13`).** `/metrics` on its own listener, `QUOTACORE_METRICS_ADDR`
   (`127.0.0.1:9090`), serving every family observability.md §1 names: the store's latency, error
   classes, script cache and memory from a hook on the store client; `datastore_up`,
@@ -299,8 +315,18 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
-- **`IP-14` is `IN PROGRESS`**, opened 2026-10-27 before any file it owns exists. Its dependencies,
-  `IP-09` and `IP-12`, closed on 2026-10-20.
+- **`IP-14` is `COMPLETE`**, opened and closed 2026-10-27 with 7 of 7 DoD items met. Item 1 names
+  `init` as the one composite command, item 3 is read as corrected with `grant` or `set`, and item
+  7's image half is `IP-15`'s, by dated notes; the scope's `quotacore worker` waits on `Q-13`.
+  `IP-15` now waits on `IP-13` alone.
+- One dispatch for the binary: no argument or `serve` runs the service, and `IP-11`'s four local
+  operations are rows of the same table. Their exit codes follow cli.md §3: `2` is now usage, and
+  an error is `5`, `6`, `9` or `10` by its cause, where it was always `2`.
+- The runbooks call the CLI. Every `curl` to an admin route is its command; the metrics scrape,
+  `/readyz` and `/v1/balance` keep theirs. `TestEveryRunbookIsFollowable` parses each `quotacore`
+  line against the binary and fails on a `curl` to `/v1/admin/`.
+- deployment.md §2: `init --yes`, and the `try` line names a variable rather than printing the key
+  twice; §4.1: the bootstrap key is minted with `quotacore key mint`.
 - **`IP-13` is `IN PROGRESS`**, opened 2026-10-21 before any file it owns exists. Nothing gated it:
   `IP-07` closed on 2026-10-19. By the end of the day 7 of its 8 DoD items were met; item 7 waits on
   a person's review of the runbooks, so `IP-15` stays `BLOCKED`.
@@ -687,6 +713,9 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Fixed
 
+- **A runbook command the binary refused** (`IP-14`): *Data store lost* ran
+  `quotacore rebuild --apply` without the `--reason` a writing rebuild requires. The runbook test
+  checked only a command's first word, and missed two multi-line `curl`s entirely.
 - **Nothing was served at `/metrics`** (`IP-13` finding 1): the collectors were registered on a
   registry no listener served.
 - **A fresh install was never ready** (`IP-13` finding 2): readiness required a known tenant, so an

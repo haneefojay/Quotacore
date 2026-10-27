@@ -91,7 +91,7 @@ Each is a testable property with a test behind it, not a slogan.
 
 ## Documentation map
 
-76 documents. `docs/README.md` is the full index with reading paths. `docs/roadmaps/roadmap-index.md`
+77 documents. `docs/README.md` is the full index with reading paths. `docs/roadmaps/roadmap-index.md`
 is the execution plan: 28 phases, with the specification gate now passed.
 
 ```

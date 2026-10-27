@@ -464,7 +464,4 @@ func TestTheRebuildFlagsAreRead(t *testing.T) {
 			t.Errorf("parseRebuild accepted %v", args)
 		}
 	}
-	if !isCommand([]string{"rebuild"}) || isCommand([]string{"serve"}) || isCommand(nil) {
-		t.Error("isCommand names the wrong set")
-	}
 }

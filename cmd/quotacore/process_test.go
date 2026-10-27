@@ -78,9 +78,15 @@ func freeAddr(t *testing.T) string {
 // out, with env after the stack's own.
 func (s *stack) startWith(dir string, out io.Writer, env ...string) *process {
 	s.t.Helper()
+	return s.startArgs(nil, dir, out, env...)
+}
+
+// startArgs is startWith with the binary's arguments, such as serve.
+func (s *stack) startArgs(args []string, dir string, out io.Writer, env ...string) *process {
+	s.t.Helper()
 	addr := freeAddr(s.t)
 	_, redisURL := integrationURLs(s.t)
-	cmd := exec.Command(binary(s.t))
+	cmd := exec.Command(binary(s.t), args...)
 	cmd.Dir = dir
 	cmd.Env = append(append(os.Environ(),
 		"QUOTACORE_DATABASE_URL="+s.dbURL,
