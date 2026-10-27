@@ -1,9 +1,10 @@
 # Runbook: A cycle rolled over incorrectly
 
-Part of [the runbooks](README.md). Every command assumes `QC_URL` is the API (for example
+Part of [the runbooks](README.md). Every command assumes `QUOTACORE_URL` is the API (for example
 `http://127.0.0.1:8080`), `QC_METRICS` the metrics listener (`http://127.0.0.1:9090`) and
-`QC_ADMIN_KEY` an admin key. The `quotacore` commands run the binary against the same environment
-as the service.
+`QUOTACORE_ADMIN_KEY` an admin key, as [the CLI](../architecture/cli.md#2-environment) reads them.
+The local operations (`verify-tenant`, `verify-all`, `reconcile-report`, `rebuild`) run the binary
+against the same environment as the service.
 
 ## Trigger
 
@@ -16,7 +17,7 @@ One tenant received an allowance in the wrong window, or none.
 ## Check
 
 ```sh
-curl -sS -X GET -H "Authorization: Bearer $RUNTIME_KEY" "$QC_URL/v1/balance?tenant_external_id=$EXTERNAL_ID"
+curl -sS -X GET -H "Authorization: Bearer $RUNTIME_KEY" "$QUOTACORE_URL/v1/balance?tenant_external_id=$EXTERNAL_ID"
 ```
 
 Note `cycle_index`, `cycle_start` and `cycle_end`, and compare them with the boundary table in [cycle-engine.md](../architecture/cycle-engine.md#6-test-matrix) for the interval and zone.
@@ -30,8 +31,7 @@ Note `cycle_index`, `cycle_start` and `cycle_end`, and compare them with the bou
 ## Act
 
 ```sh
-curl -sS -X POST -H "Authorization: Bearer $QC_ADMIN_KEY" -H "Content-Type: application/json" \
-  -d '{"feature_key":"FEATURE","reason":"stuck cycle"}' "$QC_URL/v1/admin/tenants/$TENANT_ID/force-rollover"
+quotacore rollover $TENANT_ID --feature FEATURE --reason "stuck cycle"
 ```
 
 ## Verify

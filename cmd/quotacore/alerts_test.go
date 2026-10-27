@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/quotacore/quotacore/internal/cli"
 	"github.com/quotacore/quotacore/internal/envelope"
 )
 
@@ -200,12 +202,92 @@ func TestEveryAlertReadsAServedMetric(t *testing.T) {
 var runbookHeadings = []string{"Trigger", "Impact", "Check", "Decide", "Act", "Verify", "Escalate", "Source"}
 
 var (
-	commandUse = regexp.MustCompile("quotacore ([a-z][a-z-]+)")
-	curlUse    = regexp.MustCompile(`curl [^\n]*-X ([A-Z]+) [^\n]*"\$QC_URL(/[^"?]*)`)
-	indexRow   = regexp.MustCompile(`\| \[[^\]]+\]\(([a-z-]+\.md)\) \| ([^|]+) \|`)
+	inlineCommand = regexp.MustCompile("`(quotacore [^`]+)`")
+	curlUse       = regexp.MustCompile(`curl [^\n]*-X ([A-Z]+) [^\n]*"\$QUOTACORE_URL(/[^"?]*)`)
+	adminCurl     = regexp.MustCompile(`curl [^\n]*/v1/admin/`)
+	indexRow      = regexp.MustCompile(`\| \[[^\]]+\]\(([a-z-]+\.md)\) \| ([^|]+) \|`)
 )
 
-// TestEveryRunbookIsFollowable (IP-13 DoD 7, D12).
+// commandLines are a runbook's quotacore command lines: every line of a
+// fenced block that starts with one, and every inline code span that is one,
+// with a shell line continuation joined, so a command split over two lines
+// is checked whole.
+func commandLines(text string) []string {
+	text = strings.ReplaceAll(text, "\\\n", " ")
+	var out []string
+	fenced := false
+	for _, line := range strings.Split(text, "\n") {
+		l := strings.TrimSpace(line)
+		if strings.HasPrefix(l, "```") {
+			fenced = !fenced
+			continue
+		}
+		if fenced && strings.HasPrefix(l, "quotacore ") {
+			out = append(out, l)
+		}
+	}
+	for _, m := range inlineCommand.FindAllStringSubmatch(text, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// shellWords splits a command line as a shell would for the simple quoting a
+// runbook uses: single and double quotes, and nothing else.
+func shellWords(line string) []string {
+	var words []string
+	var cur strings.Builder
+	quote, in := rune(0), false
+	for _, r := range line {
+		switch {
+		case quote != 0 && r == quote:
+			quote = 0
+		case quote != 0:
+			cur.WriteRune(r)
+		case r == '\'' || r == '"':
+			quote, in = r, true
+		case r == ' ' || r == '\t':
+			if in {
+				words = append(words, cur.String())
+				cur.Reset()
+				in = false
+			}
+		default:
+			cur.WriteRune(r)
+			in = true
+		}
+	}
+	if in {
+		words = append(words, cur.String())
+	}
+	return words
+}
+
+// checkCommand is cli.Check, plus the flags of the two IP-11 operations
+// that take any, which the binary parses itself.
+func checkCommand(args []string) error {
+	if err := cli.Check(args); err != nil {
+		return err
+	}
+	switch args[0] {
+	case "rebuild":
+		_, err := parseRebuild(args[1:])
+		return err
+	case "verify-tenant":
+		if len(args) != 2 {
+			return fmt.Errorf("verify-tenant takes one tenant")
+		}
+	case "verify-all":
+		if len(args) != 1 {
+			return fmt.Errorf("verify-all takes no argument")
+		}
+	}
+	return nil
+}
+
+// TestEveryRunbookIsFollowable (IP-13 DoD 7, D12; IP-14 D10): every
+// quotacore line parses as a command the binary has, with flags it accepts,
+// and no runbook calls an admin route with curl.
 func TestEveryRunbookIsFollowable(t *testing.T) {
 	dir := filepath.Join("..", "..", "docs", "runbooks")
 	_, index := headings(t, filepath.Join(dir, "README.md"))
@@ -249,17 +331,23 @@ func TestEveryRunbookIsFollowable(t *testing.T) {
 			}
 			last = at
 		}
-		for _, m := range commandUse.FindAllStringSubmatch(text, -1) {
-			if !isCommand([]string{m[1]}) {
-				t.Errorf("%s runs quotacore %s, which the binary does not have", e.Name(), m[1])
+		lines := commandLines(text)
+		for _, line := range lines {
+			if err := checkCommand(shellWords(line)[1:]); err != nil {
+				t.Errorf("%s runs %q, which the binary refuses: %v", e.Name(), line, err)
 			}
 		}
-		for _, m := range curlUse.FindAllStringSubmatch(text, -1) {
+		// A curl to an admin route is a command the CLI has (IP-14 D10).
+		joined := strings.ReplaceAll(text, "\\\n", " ")
+		for _, m := range adminCurl.FindAllString(joined, -1) {
+			t.Errorf("%s calls an admin route with curl; use its quotacore command: %s", e.Name(), m)
+		}
+		for _, m := range curlUse.FindAllStringSubmatch(joined, -1) {
 			if !isRoute(m[1], m[2]) {
 				t.Errorf("%s calls %s %s, which is not a contract route", e.Name(), m[1], m[2])
 			}
 		}
-		if !strings.Contains(text, "curl") && !commandUse.MatchString(text) {
+		if !strings.Contains(text, "curl") && len(lines) == 0 {
 			t.Errorf("%s has no command to run", e.Name())
 		}
 	}

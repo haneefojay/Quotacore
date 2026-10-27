@@ -21,8 +21,11 @@ only the checks, the decision and the action, under the same eight headings. The
 | [Ceiling violated](ceiling-violated.md) | *Ceiling violated* (P0) |
 | [Audit write failure](audit-write-failure.md) | *Audit write failure* (P1) |
 
-The commands are the admin routes and the four local operations on `dev`; `IP-14`'s CLI replaces
-each `curl` with its command.
+The commands are the `quotacore` CLI's ([cli.md](../architecture/cli.md)). Amended 2026-10-27
+(`IP-14`): every `curl` to an admin route is now its command, and three kinds of `curl` stay because
+no command wraps them: the metrics scrape, `/readyz`, and `/v1/balance` with a runtime key.
+`TestEveryRunbookIsFollowable` parses every `quotacore` line against the binary's command table and
+fails on a `curl` to `/v1/admin/`.
 
 ## Review
 
