@@ -299,6 +299,8 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **`IP-14` is `IN PROGRESS`**, opened 2026-10-27 before any file it owns exists. Its dependencies,
+  `IP-09` and `IP-12`, closed on 2026-10-20.
 - **`IP-13` is `IN PROGRESS`**, opened 2026-10-21 before any file it owns exists. Nothing gated it:
   `IP-07` closed on 2026-10-19. By the end of the day 7 of its 8 DoD items were met; item 7 waits on
   a person's review of the runbooks, so `IP-15` stays `BLOCKED`.
