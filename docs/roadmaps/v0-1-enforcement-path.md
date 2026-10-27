@@ -27,7 +27,7 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-12` | Usage ledger, writer and archiver | `IP-08` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-13` | Observability | `IP-07` | `IN PROGRESS`, opened 2026-10-21 |
-| `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `NOT STARTED` |
+| `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `COMPLETE` |
 | `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `BLOCKED` |
 | `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `BLOCKED` on `IP-15` |
 
@@ -1664,7 +1664,9 @@ and what to do about it.
 
 ## IP-14 — The `quotacore` CLI
 
-**Status** `NOT STARTED`; `IP-09` and `IP-12` closed on 2026-10-20, so nothing gates this phase.
+**Status** `COMPLETE` — opened and closed 2026-10-27, 7 of 7 DoD items met, each closed by a test
+in the evidence table below. Item 7's image half belongs to `IP-15` by a dated note. `IP-09` and
+`IP-12` closed on 2026-10-20, so nothing gated this phase.
 
 **Objective.** One binary that administers the service, so an operator never needs a database client
 or a copy-pasted `curl`.
@@ -1674,6 +1676,15 @@ or a copy-pasted `curl`.
 - `quotacore serve` and `quotacore worker`, so the shipped binary is both the server and the
   administration tool.
 - Exit codes distinct from HTTP statuses, and no secret printed.
+
+> **Amended 2026-10-27 (`IP-14`) — the nine words are groups, and there is no worker.** The list
+> above names the groups; [cli.md](../architecture/cli.md#1-commands) is the complete table, one
+> command for each of the contract's 32 admin operations, including `audit`, `status`, the plan
+> and override operations `IP-10` handed here (named `plan apply`, `plan impact` and
+> `tenant override set` and `clear`, which supersede the names in `IP-10`'s note), plus `init`,
+> `serve`, `key mint` and `IP-11`'s four local operations. Nothing is added to the release: every
+> command wraps something already in it. `quotacore worker` is not in v0.1, because no v0.1 phase
+> builds the reset worker it would run; whichever phase answers `Q-13` adds it as one row.
 
 **Specification references.**
 - [mvp-scope.md](../product/mvp-scope.md) §2, the v0.1 CLI row
@@ -1689,11 +1700,19 @@ or a copy-pasted `curl`.
 
 1. Every command maps to exactly one documented endpoint or one local operation, and the mapping is
    a table in the document rather than an inference from the flag names.
+
+   > **Amended 2026-10-27 (`IP-14`).** `init` is the one composite row: it makes the quickstart's
+   > calls in order ([deployment.md](../architecture/deployment.md#2-the-quickstart) §2), and its
+   > row lists them. Making it a local operation would skip the audit log and the API's validation.
 2. `grant`, `set` and `force-rollover` are available from the CLI, because those are the three
    operations an operator reaches for when a customer disputes a deduction
    ([mvp-scope.md](../product/mvp-scope.md) §1).
 3. A disputed deduction is fully investigable from the CLI alone, with no database access. A test
    performs a dispute and resolves it using only `quotacore events` and `quotacore tenant`.
+
+   > **Amended 2026-10-27 (`IP-14`).** Read as: investigated with `events` and `tenant`, and
+   > corrected with `grant` or `set`, which are top-level commands as
+   > [mvp-scope.md](../product/mvp-scope.md) §2 names them.
 4. No command prints a secret, and `quotacore key create` prints a plaintext exactly once, with a
    warning that it cannot be shown again (INV-K3).
 5. Exit codes distinguish client error, not found, conflict, exhausted quota, rate limited,
@@ -1702,6 +1721,12 @@ or a copy-pasted `curl`.
    exercised by a test rather than by a human.
 7. The CLI and the server are one binary, and a single binary is what the reference image ships
    (NFR-OPS6).
+
+   > **Amended 2026-10-27 (`IP-14`) — the image half is `IP-15`'s.** This phase proves the binary
+   > half: the built file serves, with no argument and with `serve`, and administers itself. That
+   > the reference image ships it, with `quotacore` as its entrypoint so that
+   > `docker compose exec quotacore quotacore init` works, is `IP-15`'s, since no image exists
+   > before it.
 
    > **Amended 2026-10-20 (`IP-11`) — four local operations already exist.** `verify-tenant`,
    > `verify-all`, `reconcile-report` and `rebuild` are local operations of the binary, which
@@ -1714,6 +1739,35 @@ or a copy-pasted `curl`.
    > [runbook](../runbooks/README.md) names an admin route by `curl`, because no CLI command exists
    > yet. This phase replaces each with its command, and `TestEveryRunbookIsFollowable` then holds
    > the runbooks to the commands the binary has.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The
+`(integration)` rows run against real valkey and Postgres in CI's `service` job, and drive the CLI
+with stdin that is not a terminal.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestTheMappingTableIsTheBinary`, `TestEveryAdminOperationHasACommand`, `TestEveryCommandCallsItsRow` (integration) | A command missing from [cli.md](../architecture/cli.md) or a row with no command; an admin operation with no command or two; a row whose method, path or operation is not the contract's; a command that, run against a stack, makes any call but its row's |
+| 2 | `TestGrantSetAndRolloverFromTheCLI` (integration) | A grant that does not raise balance and bonus together, a set that does not land the value, a rollover that does not refill, any of the three without its audit row and ledger event, or a `never` rollover exiting other than `6` |
+| 3 | `TestADisputeIsResolvedFromTheCLI` (integration) | J-5 from stdout alone: the deltas not summing to the balance, the disputed `Idempotency-Key` showing other than one deduction, or the correcting grant missing from the events |
+| 4 | `TestNoCommandPrintsASecret` (integration), `TestKeyCreateWarnsOnce`, `TestKeyMintIsAnAdminToken` | A key's secret in any output, on success or on a refused, revoked or unreachable call; `key create`'s plaintext absent, twice, or on stderr; a minted token that is not an admin key |
+| 5 | `TestEveryCatalogueCodeHasOneExitCode`, `TestExitCodesFollowTheCode`, `TestExitCodesFollowTheEnvelope` (integration), `TestAConnectionFailureIsUnavailable` | A catalogue code with no exit code or two, the table and the binary disagreeing, an exit code of 100 or more, or a provoked answer exiting other than its code's |
+| 6 | Every integration test above; `TestInitRunsWithoutAPrompt` (integration), `TestInitPromptsOnlyAtATerminal` | A command that waits on input; `init` prompting without a terminal or with `--yes`, or not offering its defaults at one |
+| 7 | `TestTheBinaryIsTheServerAndTheCLI` (integration, the built binary), `TestTheLocalOperationsAreRows` (integration), `TestEveryRunbookIsFollowable` | The built file failing to serve with no argument or with `serve`, or to run `init --yes`, `tenant list` and `events` against itself; a local operation that is not a row; a runbook line the binary refuses, or a `curl` to an admin route |
+
+Four things are recorded here because the phase surfaced them.
+
+1. **A runbook command the binary refused.** *Data store lost* ran `quotacore rebuild --apply`
+   without the `--reason` the rebuild requires whenever it writes. `TestEveryRunbookIsFollowable`
+   checked only the first word of a command; it now parses every line against the binary, and
+   the runbook is corrected.
+2. **Two runbook `curl`s were never checked.** The two multi-line `POST`s were continued onto a
+   second line, which the runbook test's pattern did not join. Both are commands now, and a `curl`
+   to an admin route fails the test.
+3. **The local operations' exit codes moved.** `IP-11`'s operations exited `2` on any error; `2`
+   is now usage, and an error is `5`, `6`, `9` or `10` by its cause
+   ([cli.md](../architecture/cli.md#3-exit-codes) §3).
+4. **`GET /v1/admin/status` refuses a caller with no envelope,** by contract, so the CLI maps its
+   bare `401`, `403` and `429` by status; every other route is mapped by its code.
 
 **Exit criteria.** The whole administrative surface is reachable from one executable, and CI proves
 it.
@@ -1754,6 +1808,11 @@ procedure that has actually been performed.
 1. `docker compose up` on a clean machine reaches a working service with no account, no signup, no
    egress and no manual step, and the quickstart in the README is executed by a script in CI
    ([mvp-scope.md](../product/mvp-scope.md) §1, NFR-OPS1).
+
+   > **Amended 2026-10-27 (`IP-14`).** The scripted quickstart runs `quotacore init --yes`, which
+   > asks nothing and exits non-zero on any failure ([cli.md](../architecture/cli.md#3-exit-codes)),
+   > and the image's entrypoint is `quotacore`, so `docker compose exec quotacore quotacore init`
+   > works; that is `IP-14` DoD 7's image half.
 2. The service makes no outbound connection of any kind in the MVP, asserted by a test that runs it
    with egress blocked (NFR-S3, NFR-C5).
 3. Graceful shutdown completes in-flight requests, leaves no partial state and finishes within the

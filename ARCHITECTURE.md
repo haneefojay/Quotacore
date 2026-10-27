@@ -204,6 +204,7 @@ Read in this order to build it, or in this order to review it:
 | 10 | [deployment.md](docs/architecture/deployment.md) | Images, configuration, upgrades, backup |
 | 11 | [performance.md](docs/architecture/performance.md) | Budgets and the measurement plan |
 | 12 | [testing-strategy.md](docs/architecture/testing-strategy.md) | The 15 named correctness tests and the 7 further suites that prove the claims |
+| 13 | [cli.md](docs/architecture/cli.md) | The administration commands, their routes and their exit codes |
 
 Decisions and their reasoning: [TECHNICAL-DECISIONS.md](TECHNICAL-DECISIONS.md). Risk:
 [SECURITY.md](SECURITY.md).

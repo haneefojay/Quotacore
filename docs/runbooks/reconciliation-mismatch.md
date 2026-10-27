@@ -1,9 +1,10 @@
 # Runbook: Reconciliation mismatch
 
-Part of [the runbooks](README.md). Every command assumes `QC_URL` is the API (for example
+Part of [the runbooks](README.md). Every command assumes `QUOTACORE_URL` is the API (for example
 `http://127.0.0.1:8080`), `QC_METRICS` the metrics listener (`http://127.0.0.1:9090`) and
-`QC_ADMIN_KEY` an admin key. The `quotacore` commands run the binary against the same environment
-as the service.
+`QUOTACORE_ADMIN_KEY` an admin key, as [the CLI](../architecture/cli.md#2-environment) reads them.
+The local operations (`verify-tenant`, `verify-all`, `reconcile-report`, `rebuild`) run the binary
+against the same environment as the service.
 
 ## Trigger
 
@@ -30,8 +31,7 @@ quotacore verify-tenant $TENANT_ID
 Set the decided balance with a reason; the change is audited and emits a `set` event:
 
 ```sh
-curl -sS -X POST -H "Authorization: Bearer $QC_ADMIN_KEY" -H "Content-Type: application/json" \
-  -d '{"feature_key":"FEATURE","value":0,"reason":"reconciliation"}' "$QC_URL/v1/admin/tenants/$TENANT_ID/set"
+quotacore set $TENANT_ID --feature FEATURE --value 0 --reason reconciliation
 ```
 
 ## Verify
