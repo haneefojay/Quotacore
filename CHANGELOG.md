@@ -315,6 +315,9 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **`IP-15` is `IN PROGRESS`**, opened 2026-10-27 before any file it owns exists, by a dated
+  amendment to its dependency on `IP-13`: the runbook review that `IP-13` waits on is performed on the
+  reference stack, in the same session as `IP-15`'s restore, and both phases close on that row.
 - **`IP-14` is `COMPLETE`**, opened and closed 2026-10-27 with 7 of 7 DoD items met. Item 1 names
   `init` as the one composite command, item 3 is read as corrected with `grant` or `set`, and item
   7's image half is `IP-15`'s, by dated notes; the scope's `quotacore worker` waits on `Q-13`.
