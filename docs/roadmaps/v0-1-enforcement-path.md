@@ -28,7 +28,7 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-12` | Usage ledger, writer and archiver | `IP-08` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-13` | Observability | `IP-07` | `IN PROGRESS`, opened 2026-10-21 |
 | `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `COMPLETE` |
-| `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `BLOCKED` |
+| `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `IN PROGRESS`, opened 2026-10-27 |
 | `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `BLOCKED` on `IP-15` |
 
 ---
@@ -1779,7 +1779,16 @@ environment variable.
 
 ## IP-15 — Reference deployment and restore rehearsal
 
-**Status** `BLOCKED`, gated on `IP-13`.
+**Status** `IN PROGRESS` — opened 2026-10-27, before any file it owns was written; `IP-14` closed
+the same day.
+
+> **Amended 2026-10-27 — the dependency on `IP-13`.** `IP-13` has met seven of its eight items and
+> waits only on item 7, a person following the runbooks against a running instance. That review and
+> this phase's exit criterion, a restore performed by someone following a document, are the same
+> session, and the stack this phase builds is what makes it one command. So this phase depends on
+> `IP-13`'s items 1 to 6 and 8, and carries item 7: the review is performed on the reference stack
+> after this phase's code is merged, recorded in [the runbooks' review table](../runbooks/README.md#review),
+> and both phases close on that row. Accepted by the owner on 2026-10-27.
 
 **Objective.** One `docker compose up`, no account and no external dependency, plus a restore
 procedure that has actually been performed.
