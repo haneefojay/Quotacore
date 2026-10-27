@@ -1,9 +1,10 @@
 # Runbook: Long outage
 
-Part of [the runbooks](README.md). Every command assumes `QC_URL` is the API (for example
+Part of [the runbooks](README.md). Every command assumes `QUOTACORE_URL` is the API (for example
 `http://127.0.0.1:8080`), `QC_METRICS` the metrics listener (`http://127.0.0.1:9090`) and
-`QC_ADMIN_KEY` an admin key. The `quotacore` commands run the binary against the same environment
-as the service.
+`QUOTACORE_ADMIN_KEY` an admin key, as [the CLI](../architecture/cli.md#2-environment) reads them.
+The local operations (`verify-tenant`, `verify-all`, `reconcile-report`, `rebuild`) run the binary
+against the same environment as the service.
 
 ## Trigger
 
@@ -24,7 +25,7 @@ curl -sS "$QC_METRICS/metrics" | grep -E '^(quotacore_reanchors_pending|quotacor
 2. A tenant's state after the outage:
 
 ```sh
-curl -sS -X GET -H "Authorization: Bearer $QC_ADMIN_KEY" "$QC_URL/v1/admin/tenants/$TENANT_ID"
+quotacore tenant get $TENANT_ID
 ```
 
 ## Decide

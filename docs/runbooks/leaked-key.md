@@ -1,9 +1,10 @@
 # Runbook: A leaked key
 
-Part of [the runbooks](README.md). Every command assumes `QC_URL` is the API (for example
+Part of [the runbooks](README.md). Every command assumes `QUOTACORE_URL` is the API (for example
 `http://127.0.0.1:8080`), `QC_METRICS` the metrics listener (`http://127.0.0.1:9090`) and
-`QC_ADMIN_KEY` an admin key. The `quotacore` commands run the binary against the same environment
-as the service.
+`QUOTACORE_ADMIN_KEY` an admin key, as [the CLI](../architecture/cli.md#2-environment) reads them.
+The local operations (`verify-tenant`, `verify-all`, `reconcile-report`, `rebuild`) run the binary
+against the same environment as the service.
 
 ## Trigger
 
@@ -18,13 +19,13 @@ A runtime key can spend any tenant's allowance; an admin key can change any conf
 1. Which key, by its prefix (the part before the dot), and its last use:
 
 ```sh
-curl -sS -X GET -H "Authorization: Bearer $QC_ADMIN_KEY" "$QC_URL/v1/admin/keys"
+quotacore key list --all
 ```
 
 2. For an admin key, every action it took:
 
 ```sh
-curl -sS -X GET -H "Authorization: Bearer $QC_ADMIN_KEY" "$QC_URL/v1/admin/audit?limit=100"
+quotacore audit --limit 100
 ```
 
 ## Decide
@@ -36,7 +37,7 @@ Any suspicion is enough: revoke first, investigate second.
 Revoke it; the revocation is immediate:
 
 ```sh
-curl -sS -X DELETE -H "Authorization: Bearer $QC_ADMIN_KEY" "$QC_URL/v1/admin/keys/$KEY_ID"
+quotacore key revoke $KEY_ID
 ```
 
 Issue a replacement with `POST /v1/admin/keys`, and redeploy the client that used it.

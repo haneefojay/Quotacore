@@ -46,6 +46,12 @@ docker compose exec quotacore quotacore init
 one entitlement, one tenant, and one runtime key. It prints each identifier as it is created, and
 it prints the runtime key exactly once.
 
+> **Amended 2026-10-27 (`IP-14`).** `init` asks only when stdin is a terminal; `init --yes` takes
+> the values below, or its flags, without asking, and is the form a script and IP-15's quickstart
+> check run. Its last call reads the balance with the new runtime key, which proves the key works
+> and is where the cycle line comes from. The `try` line names a variable for the key rather than
+> printing it a second time ([cli.md](cli.md#5-what-a-command-never-does), INV-K3).
+
 ```
 quotacore 0.1.0
   feature  llm.tokens.output  (metered, unit: tokens)
@@ -54,8 +60,8 @@ quotacore 0.1.0
   key      qc_runtime_9f2c1a4e7b8d.kZ3n…   ← shown once
 
   cycle    2026-09-27T00:00:00Z → 2026-10-01T00:00:00Z
-  try      curl -s 'localhost:8080/v1/balance?tenant_external_id=local-dev' \
-             -H "Authorization: Bearer qc_runtime_9f2c1a4e7b8d.kZ3n…"
+  try      curl -s 'http://127.0.0.1:8080/v1/balance?tenant_external_id=local-dev' \
+             -H "Authorization: Bearer $QC_RUNTIME_KEY"
 ```
 
 No account, no signup, no email, no cloud console, no dashboard, no telemetry. The README's
@@ -100,7 +106,7 @@ reading the source.
 | `QUOTACORE_TRUSTED_PROXIES` | *(none)* | CIDR list. Without it, `X-Forwarded-For` is ignored, so a rate limiter behind a proxy sees the proxy |
 | `QUOTACORE_STARTUP_MODE` | `normal` | `readonly` is used by the data-store recovery runbook and blocks every write to the fast store. Amended 2026-10-20 (`IP-11`): it blocks every write to a **tenant's** keys, the balance hashes and idempotency records, answering `503 service_unavailable`, and nothing else, so reads, key revocation and the pagination cursor still work; the re-anchor drain, the reconciliation pass and retention do not run, and `/readyz` is not ready. Any other value refuses to start. A `normal` instance holds the rebuild fence and refuses to start while a rebuild holds it ([consistency-and-recovery.md](consistency-and-recovery.md#41-data-store-lost-or-corrupted--total-loss)) |
 | `QUOTACORE_MIGRATE` | `true` | `false` runs no migration at start-up, for operators who gate deploys and run migrations separately (ADR-0011) |
-| `QUOTACORE_BOOTSTRAP_ADMIN_KEY` | *(none)* | Used only when the `api_keys` table is empty (ADR-0012). Ignored, with a warning, once a key exists. A malformed key refuses start. Mint one with `printf 'qc_admin_%s.%s\n' "$(openssl rand -hex 8)" "$(openssl rand -base64 32 \| tr '+/' '-_' \| tr -d '=')"` (ADR-0018) |
+| `QUOTACORE_BOOTSTRAP_ADMIN_KEY` | *(none)* | Used only when the `api_keys` table is empty (ADR-0012). Ignored, with a warning, once a key exists. A malformed key refuses start. Mint one with `quotacore key mint`, which touches nothing; amended 2026-10-27 (`IP-14`). On a host without the binary, `printf 'qc_admin_%s.%s\n' "$(openssl rand -hex 8)" "$(openssl rand -base64 32 \| tr '+/' '-_' \| tr -d '=')"` is the same (ADR-0018) |
 | `QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK` | *(none)* | NFR-S9. The service **refuses to start** if a bootstrap key is set without a non-empty acknowledgement. Any non-empty value acknowledges; the variable exists so that starting with a key is something the operator did on purpose rather than something a deployment inherited |
 
 ### 4.2 Limits and timeouts
@@ -187,6 +193,16 @@ reading the source.
 | `QUOTACORE_RATELIMIT_RUNTIME_BURST` | `4000` | — |
 | `QUOTACORE_RATELIMIT_ADMIN_RPM` | `60` | Per client address, with a burst of the same size, on every `/v1/admin/*` route and before authentication. The address is the peer, or the right-most `X-Forwarded-For` entry not in `QUOTACORE_TRUSTED_PROXIES` when the peer is a trusted proxy. The admin API is human-driven |
 | `QUOTACORE_RATE_LIMITER_MAX_KEYS` | `100000` | Bounded, so a key-churn flood is not a memory attack |
+
+### 4.6 The CLI
+
+Added 2026-10-27 (`IP-14`). Read by the administration commands, not by the service; the full
+contract of each is in [cli.md](cli.md#2-environment).
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `QUOTACORE_URL` | `http://127.0.0.1:` and `QUOTACORE_LISTEN_ADDR`'s port | The service a command calls. `--url` overrides it |
+| `QUOTACORE_ADMIN_KEY` | `QUOTACORE_BOOTSTRAP_ADMIN_KEY` | The admin key a command authenticates with. There is deliberately no flag for it (NFR-S1) |
 
 ## 5. Sizing
 

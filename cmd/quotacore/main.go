@@ -21,6 +21,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/quotacore/quotacore/internal/auth"
+	"github.com/quotacore/quotacore/internal/cli"
 	"github.com/quotacore/quotacore/internal/db"
 	"github.com/quotacore/quotacore/internal/snapshot"
 	"github.com/quotacore/quotacore/internal/store"
@@ -47,21 +48,46 @@ func (c snapshotClient) SubscribeInvalidations(ctx context.Context) (snapshot.In
 }
 
 func main() {
-	// An argument names a local operation (IP-11 D2b); none serves.
-	if len(os.Args) > 1 {
-		if !isCommand(os.Args[1:]) {
-			fmt.Fprintf(os.Stderr, "unknown command %q; the commands are verify-tenant, verify-all, reconcile-report and rebuild, and no argument serves\n", os.Args[1])
-			os.Exit(exitError)
-		}
-		os.Exit(runCommand(os.Args[1:], os.Stdout, os.Stderr))
+	// One dispatch for the whole binary (IP-14 D11): no argument, or serve,
+	// runs the service; the local operations run here; every other command
+	// is internal/cli's, against a running service.
+	stdin, _ := os.Stdin.Stat()
+	os.Exit(cli.Run(cli.Options{
+		Args:     os.Args[1:],
+		Getenv:   os.Getenv,
+		Stdin:    os.Stdin,
+		Stdout:   os.Stdout,
+		Stderr:   os.Stderr,
+		Terminal: stdin != nil && stdin.Mode()&os.ModeCharDevice != 0,
+		Version:  buildVersion,
+		Locals:   locals(os.Stdout, os.Stderr),
+	}))
+}
+
+// locals are the commands the binary carries out itself.
+func locals(stdout, stderr io.Writer) map[string]func([]string) int {
+	m := map[string]func([]string) int{"serve": serve}
+	for _, name := range []string{"verify-tenant", "verify-all", "reconcile-report", "rebuild"} {
+		m[name] = func(args []string) int { return runCommand(append([]string{name}, args...), stdout, stderr) }
+	}
+	return m
+}
+
+// serve runs the service until a signal, and exits 1 when it refuses to
+// start (IP-01 DoD 4).
+func serve(args []string) int {
+	if len(args) > 0 {
+		fmt.Fprintf(os.Stderr, "error: serve takes no argument; the configuration is the environment (deployment.md section 4)\n")
+		return cli.ExitUsage
 	}
 	// Until the configuration is read, the log is JSON at info, so a refusal
 	// to start is a line a collector can parse like any other (IP-13 D6).
 	log := newLogger(os.Stdout, "json", "info")
 	if err := run(&log); err != nil {
 		log.Error("refusing to start", "job", "startup", "error", err)
-		os.Exit(1)
+		return cli.ExitFinding
 	}
+	return cli.ExitOK
 }
 
 func run(logp **slog.Logger) error {

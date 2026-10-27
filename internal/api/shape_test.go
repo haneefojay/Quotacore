@@ -80,7 +80,12 @@ import (
 // arithmetic, the in-service pass and the rebuild's classification. It does
 // no I/O of its own and imports no store, script or SQL package (its own
 // source check), so the one balance it can move is the reversal's refund,
-// which it hands to the data plane's script. The name of this test is kept
+// which it hands to the data plane's script.
+//
+// `internal/cli` is here because IP-14 owns it: the administration commands.
+// It is a client of the contract over HTTP and imports no store, script or
+// SQL package, so it can decide nothing about a balance; the symbol rules
+// hold for it unchanged. The name of this test is kept
 // for its history; what it guards now is that the package set is exactly the
 // set the phases own, and that the calendar and the script stay single.
 func TestNoProductBehaviour(t *testing.T) {
@@ -96,6 +101,7 @@ func TestNoProductBehaviour(t *testing.T) {
 		"cmd/quotacore":          true,
 		"internal/api":           true,
 		"internal/auth":          true,
+		"internal/cli":           true,
 		"internal/cycle":         true,
 		"internal/dataplane":     true,
 		"internal/envelope":      true,

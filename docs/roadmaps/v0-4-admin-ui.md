@@ -129,7 +129,7 @@ something testable.
 6. Every error code a view can surface has a message that names a remedy, and the catalogue's client
    action is what the view does.
 7. The live balance inspector is read-only, and a test asserts it issues no mutating request.
-8. Every action the interface can take is in the CLI's mapping table from `IP-14`. If the interface
+8. Every action the interface can take is in the CLI's [mapping table](../architecture/cli.md#1-commands) from `IP-14`. If the interface
    can do something the CLI cannot, one of them is missing something, and the test says which.
 
 **Exit criteria.** An operator can do the whole job from the browser, safely, and can explain before
