@@ -27,7 +27,7 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-12` | Usage ledger, writer and archiver | `IP-08` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-13` | Observability | `IP-07` | `IN PROGRESS`, opened 2026-10-21 |
-| `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `NOT STARTED` |
+| `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `IN PROGRESS` |
 | `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `BLOCKED` |
 | `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `BLOCKED` on `IP-15` |
 
@@ -1664,7 +1664,8 @@ and what to do about it.
 
 ## IP-14 — The `quotacore` CLI
 
-**Status** `NOT STARTED`; `IP-09` and `IP-12` closed on 2026-10-20, so nothing gates this phase.
+**Status** `IN PROGRESS` — opened 2026-10-27, before any file it owns was written; `IP-09` and
+`IP-12` closed on 2026-10-20, so nothing gates this phase.
 
 **Objective.** One binary that administers the service, so an operator never needs a database client
 or a copy-pasted `curl`.
