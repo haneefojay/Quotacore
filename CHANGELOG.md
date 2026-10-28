@@ -852,6 +852,11 @@ exists, because a future implementer needs to know which statements are new.
 - **`TestReadyFuncLoggingIsSafeForConcurrentProbes` depended on the scheduler** (`IP-01`'s test,
   failing twice running on `IP-16`'s branch). The flips could finish and `stop` close before any
   probe saw a changed term. One synchronous probe after the flips now logs the transition.
+- **`TestSustainedThroughput` read the collector's sawtooth as a leak** (`IP-16`, second full-suite
+  run). It compared the second half's memory slope, as a rate an hour, with a tenth of the mean: 15
+  minutes of a 23 to 27 MB sawtooth projected to 3.6 MB an hour against a 2.5 MB bound, where the
+  trend moved 0.9 MB across the half. It now compares the growth across the half, as the soak does,
+  and leaves the rate over hours to the soak.
 - **A deleted tenant was still served by the instance that deleted it** (`IP-16`, found by `T-15`,
   DR-047). A tenant in the snapshot stayed there until the invalidation came back over pub/sub, so a
   consume sent after the delete's `200`, to the same instance, could complete. The admin routes now
