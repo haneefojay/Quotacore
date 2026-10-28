@@ -369,7 +369,7 @@ CREATE TABLE audit_log (
   actor_key_id uuid REFERENCES api_keys(id) ON DELETE SET NULL,
   actor        text NOT NULL,                    -- 'bootstrap', 'cli:<host>', or key name
   action       text NOT NULL,                    -- 'tenant.create', 'plan.apply_now', …
-  subject_type text NOT NULL,                    -- 'tenant', 'plan', 'feature', 'api_key'
+  subject_type text NOT NULL,                    -- 'tenant', 'plan', 'feature', 'api_key', 'system'
   subject_id   uuid,
   before       jsonb,
   after        jsonb,
@@ -377,7 +377,7 @@ CREATE TABLE audit_log (
   created_at   timestamptz NOT NULL DEFAULT now(),
   reason       text,                             -- archive, delete, suspend, resume
   CONSTRAINT audit_log_subject_type
-    CHECK (subject_type IN ('tenant', 'plan', 'feature', 'api_key'))
+    CHECK (subject_type IN ('tenant', 'plan', 'feature', 'api_key', 'system'))
 );
 
 CREATE INDEX audit_log_subject_idx ON audit_log (subject_type, subject_id, created_at DESC);
@@ -385,7 +385,7 @@ CREATE INDEX audit_log_time_idx    ON audit_log (created_at DESC);
 ```
 
 `subject_type` is a `CHECK` rather than an enum because it names a kind of resource rather than a
-lifecycle state, and its four values are exactly the `AuditEntry.subject_type` values the API
+lifecycle state, and its values are exactly the `AuditEntry.subject_type` values the API
 returns, so a row the API could not describe cannot be written.
 
 `actor_key_id` is `ON DELETE SET NULL`, which would be the database itself updating an append-only
@@ -400,6 +400,12 @@ api_keys` for that reason.
 > require a reason on the wire, and the table had no column to keep it in, so the reason was
 > required and then discarded. It is last because a migration adds it, and a fresh database and an
 > upgraded one must have the same column order.
+
+> **Amended 2026-10-28 (`IP-16`, Q-28).** `subject_type` gains `system`, for a row about the
+> installation rather than one resource, and the contract's `AuditEntry.subject_type` gains it with
+> it, so the API can still describe every row. Its one writer is `quotacore audit note`, which
+> records the truncation a Postgres restore leaves in the history (consistency-and-recovery.md
+> section 4.2, step 6); its `subject_id` is null and its action `system.note`.
 
 The audit write happens **in the same transaction as the mutation it records** (NFR-D4). An audit
 log that is written best-effort is a log, not an audit trail, and the distinction is the entire

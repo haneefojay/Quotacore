@@ -68,7 +68,7 @@ func main() {
 // locals are the commands the binary carries out itself.
 func locals(stdout, stderr io.Writer) map[string]func([]string) int {
 	m := map[string]func([]string) int{"serve": serve}
-	for _, name := range []string{"verify-tenant", "verify-all", "reconcile-report", "rebuild"} {
+	for _, name := range []string{"verify-tenant", "verify-all", "reconcile-report", "rebuild", "config bump", "audit note"} {
 		m[name] = func(args []string) int { return runCommand(append([]string{name}, args...), stdout, stderr) }
 	}
 	return m

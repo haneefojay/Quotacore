@@ -156,6 +156,8 @@ var commands = []Command{
 	{Name: "verify-all", Kind: Local, Summary: "Check every tenant"},
 	{Name: "reconcile-report", Kind: Local, Summary: "Print the recorded reconciliation findings"},
 	{Name: "rebuild", Kind: Local, Summary: "Rebuild lost balance hashes from the ledger"},
+	{Name: "config bump", Kind: Local, Writes: true, Summary: "Make every instance re-read the configuration now, after a Postgres restore"},
+	{Name: "audit note", Kind: Local, Writes: true, Summary: "Record a note in the audit log, such as a restore's truncation of history"},
 }
 
 // ---- builders --------------------------------------------------------------

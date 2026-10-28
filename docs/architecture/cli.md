@@ -65,6 +65,8 @@ command the table does not have, or a method, path or operation that is not the 
 | `verify-all` | local: the same for every tenant (`IP-11`) | no |
 | `reconcile-report` | local: prints `reconcile_findings`, newest first (`IP-11`) | no |
 | `rebuild` | local: rebuilds lost balance hashes from the ledger (`IP-11`) | with `--apply` |
+| `config bump` | local: records a new configuration version against every tenant and publishes the invalidation, so every instance re-reads the configuration now; step 4 after a Postgres restore (`IP-16`, Q-28) | yes |
+| `audit note` | local: `--reason` is required; appends an audit row with `subject_type` `system` and action `system.note`, such as a restore's truncation of history; step 6 after a Postgres restore (`IP-16`, Q-28) | yes |
 
 A tenant is addressed by its `external_id` or its id, and a plan by its key or its id, as the
 contract's path parameters allow; a key is addressed by its id. `quotacore <command> --help` prints

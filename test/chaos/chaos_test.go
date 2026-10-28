@@ -45,7 +45,7 @@ func TestChaosPostgresDiskFull(t *testing.T) {
 	s := harness.New(t, harness.WithOverride("test/chaos/compose.chaos.yml"))
 	seeded := s.Seed("disk", 1, 1, 1, 1000000, 1)
 	tenant, feature, token := seeded.Tenants[0], seeded.Features[0], seeded.Keys[0]
-	if status, body := consume(s, token, tenant, feature, 1, "disk-warm"); status != 200 {
+	if status, body := consume(s, token, tenant, feature, 1, "chaos-disk-warm"); status != 200 {
 		t.Fatalf("warm-up: %d %v", status, body)
 	}
 
@@ -71,7 +71,7 @@ func TestChaosPostgresDiskFull(t *testing.T) {
 		default:
 			t.Errorf("an administrative write on a full disk answered %d %s, neither a success nor a failure", status, raw)
 		}
-		if status, body := consume(s, token, tenant, feature, 1, fmt.Sprintf("disk-%d", i)); status != 200 {
+		if status, body := consume(s, token, tenant, feature, 1, fmt.Sprintf("chaos-disk-%d", i)); status != 200 {
 			t.Errorf("a cached tenant was refused with the control plane's disk full: %d %v", status, body)
 		}
 	}
@@ -135,7 +135,7 @@ func TestChaosClockJump(t *testing.T) {
 	s.Must(http.StatusCreated, http.MethodPost, "/v1/admin/tenants",
 		`{"external_id":"clock-t","display_name":"T","plan_key":"clock-plan","timezone":"UTC"}`)
 	token := s.Must(http.StatusCreated, http.MethodPost, "/v1/admin/keys", `{"name":"clock","scope":"runtime"}`)["key"].(string)
-	if status, body := consume(s, token, "clock-t", "clock.f", 40, "clock-1"); status != 200 {
+	if status, body := consume(s, token, "clock-t", "clock.f", 40, "chaos-clock-1"); status != 200 {
 		t.Fatalf("before the jump: %d %v", status, body)
 	}
 	shifted := time.Duration(0)
@@ -150,7 +150,7 @@ func TestChaosClockJump(t *testing.T) {
 	before, _ := harness.Scrape()
 	shiftClock(t, 24*time.Hour)
 	shifted = 24 * time.Hour
-	status, body := consume(s, token, "clock-t", "clock.f", 1, "clock-2")
+	status, body := consume(s, token, "clock-t", "clock.f", 1, "chaos-clock-2")
 	if status != 200 || body["balance"] != float64(99) {
 		t.Fatalf("+24 h: %d %v, want the boundary crossed and a fresh allowance of 100 less 1", status, body)
 	}
@@ -163,7 +163,7 @@ func TestChaosClockJump(t *testing.T) {
 	shiftClock(t, -24*time.Hour)
 	shifted = 0
 	for i := range 5 {
-		status, body := consume(s, token, "clock-t", "clock.f", 1, "clock-3-"+strconv.Itoa(i))
+		status, body := consume(s, token, "clock-t", "clock.f", 1, "chaos-clock-3-"+strconv.Itoa(i))
 		if status != 200 {
 			t.Fatalf("-24 h: %d %v", status, body)
 		}

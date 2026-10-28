@@ -29,7 +29,8 @@ import (
 )
 
 // The binary's local operations (IP-11 D2b): `verify-tenant`, `verify-all`,
-// `reconcile-report` and `rebuild`. Each reads Postgres and the fast store
+// `reconcile-report` and `rebuild`, and IP-16's two for a Postgres restore
+// (Q-28): `config bump` and `audit note`. Each reads Postgres and the fast store
 // directly, prints JSON, and exits 1 when it has something a person must look
 // at. They are rows of internal/cli's command table, which dispatches to
 // them (IP-14 D11).
@@ -145,6 +146,13 @@ func (c *commands) run(ctx context.Context, args []string) (int, error) {
 		return c.verifyAll(ctx)
 	case "reconcile-report":
 		return c.report(ctx, args[1:])
+	case "config bump":
+		if len(args) != 1 {
+			return exitUsage, errUsage{errors.New("usage: quotacore config bump")}
+		}
+		return c.configBump(ctx)
+	case "audit note":
+		return c.auditNote(ctx, args[1:])
 	case "rebuild":
 		opts, err := parseRebuild(args[1:])
 		if err != nil {
@@ -648,4 +656,38 @@ func (c *commands) decide(r reconcile.Rebuilt, o rebuildOptions) (*reconcile.Sta
 
 func toWindow(w reconcile.Window) cycle.Window {
 	return cycle.Window{Index: w.Index, Start: w.Start, End: w.End}
+}
+
+// configBump is consistency-and-recovery.md section 4.2, step 4: after a
+// Postgres restore, every snapshot is made to re-read the restored
+// configuration now rather than within a refresh interval. It records a new
+// configuration version against every tenant and publishes the invalidation,
+// the propagation step a committed admin write takes, for all of them at once.
+func (c *commands) configBump(ctx context.Context) (int, error) {
+	ids, err := db.TenantIDs(ctx, c.db)
+	if err != nil {
+		return exitError, err
+	}
+	version, err := c.data.Publish(ctx, ids)
+	if err != nil {
+		return exitError, err
+	}
+	return exitClean, c.print(map[string]any{"config_version": version, "tenants": len(ids)}, "")
+}
+
+// auditNote is section 4.2, step 6: the truncation a restore leaves in the
+// history, written to the audit log as a system note with the operator's
+// words, so the gap is documented rather than discovered later.
+func (c *commands) auditNote(ctx context.Context, args []string) (int, error) {
+	f := flag.NewFlagSet("audit note", flag.ContinueOnError)
+	f.SetOutput(io.Discard)
+	reason := f.String("reason", "", "what the note records, such as the backup's time and the restore's")
+	if err := f.Parse(args); err != nil || f.NArg() != 0 || strings.TrimSpace(*reason) == "" {
+		return exitUsage, errUsage{errors.New(`usage: quotacore audit note --reason "<what the note records>"`)}
+	}
+	n, err := db.WriteNote(ctx, c.db, "cli:"+c.host, "cli-"+uuid.NewString(), *reason)
+	if err != nil {
+		return exitError, err
+	}
+	return exitClean, c.print(n, "")
 }

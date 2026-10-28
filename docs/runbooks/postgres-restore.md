@@ -33,11 +33,13 @@ quotacore status
 
 ## Act
 
-Follow [section 4.2](../architecture/consistency-and-recovery.md#42-postgres-lost--restore-from-backup): stop the service, restore to a new database, start the service, then reconcile:
+Follow [section 4.2](../architecture/consistency-and-recovery.md#42-postgres-lost--restore-from-backup): stop the service, restore to a new database, start the service, make every instance re-read the restored configuration, reconcile, and record the truncation:
 
 ```sh
+quotacore config bump
 quotacore verify-all
 quotacore reconcile-report --since 24h
+quotacore audit note --reason "restored from the backup of <time>; history after it is lost"
 ```
 
 ## Verify

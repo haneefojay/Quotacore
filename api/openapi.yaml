@@ -5157,8 +5157,11 @@ components:
               value: plan.apply_now
         subject_type:
           type: string
-          enum: [tenant, plan, feature, api_key]
-          description: Which kind of resource changed, so a log reader can filter by it.
+          enum: [tenant, plan, feature, api_key, system]
+          description: |
+            Which kind of resource changed, so a log reader can filter by it. `system` is a note
+            about the installation itself, such as the truncation an operator records after a
+            Postgres restore with `quotacore audit note`; its `subject_id` is null.
         subject_id:
           oneOf:
             - type: string

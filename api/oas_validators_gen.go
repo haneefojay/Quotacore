@@ -243,6 +243,8 @@ func (s AuditEntrySubjectType) Validate() error {
 		return nil
 	case "api_key":
 		return nil
+	case "system":
+		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}

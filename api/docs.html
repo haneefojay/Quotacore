@@ -2584,7 +2584,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>action</code></td><td><code>string</code></td><td>yes</td><td><p>A dotted action name.</p>
 </td></tr>
-<tr><td><code>subject_type</code></td><td><code>string</code></td><td>yes</td><td><p>Which kind of resource changed, so a log reader can filter by it.</p>
+<tr><td><code>subject_type</code></td><td><code>string</code></td><td>yes</td><td><p>Which kind of resource changed, so a log reader can filter by it. <code>system</code> is a note<br>about the installation itself, such as the truncation an operator records after a<br>Postgres restore with <code>quotacore audit note</code>; its <code>subject_id</code> is null.</p>
 </td></tr>
 <tr><td><code>subject_id</code></td><td>—</td><td>yes</td><td><p>The resource&#39;s internal id, or null when the mutation has no single subject — a plan<br><code>apply-now</code> touches every assigned tenant, so the tenants are not recorded here one by<br>one.</p>
 </td></tr>
