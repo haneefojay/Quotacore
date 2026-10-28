@@ -119,7 +119,9 @@ found that an immediate override moved a balance with no event, and does not blo
 found a sanity ceiling and a skew threshold the specification names and never defines; neither
 blocks it. [Q-27](#2-open-questions), [Q-28](#2-open-questions) and [Q-29](#2-open-questions) were
 added on 2026-10-27 by `IP-15`, which found a release step, two recovery commands and a rebuild
-edge the specification assumes and no phase owns; none blocks it. Thirteen remain open.
+edge the specification assumes and no phase owns; none blocks it. `IP-16` answered
+[Q-13](#2-open-questions) on 2026-10-28 with its default: the reset worker runs, on by default at 60 s.
+Twelve remain open.
 
 | ID | Question | Proposed default | Deadline | Blocks | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -135,7 +137,7 @@ edge the specification assumes and no phase owns; none blocks it. Thirteen remai
 | Q-10 | Should `GET /v1/balance` return every feature for a tenant, or require a feature key? | **Optional `feature_key`.** Without it, return the full set; with it, one entry. The full set is a small bounded number per plan | Before the OpenAPI is frozen | `GET /v1/balance` | answered — api-conventions 7.3 |
 | Q-11 | Do we accept a numeric `window` for rolling, or a string enum? | **String enum** (`rolling_1h`), because a numeric duration invites unit mistakes and a 32-bit overflow | v0.2 | UC-17 | deferred |
 | Q-12 | What is the official support commitment? | **Community only**, explicitly. A support SLA would be a business change, not a technical one | Before the README claims anything | — | open |
-| Q-13 | Should the reset worker be enabled by default? | **Yes**, at a 60 s interval, because it makes `cycle_end` accurate in the admin views even when a tenant is idle. Correctness does not depend on it | Before v0.1 release | worker config | open |
+| Q-13 | Should the reset worker be enabled by default? | **Yes**, at a 60 s interval, because it makes `cycle_end` accurate in the admin views even when a tenant is idle. Correctness does not depend on it | Before v0.1 release | worker config | answered — `IP-16`, `internal/worker`, on by default at 60 s |
 | Q-14 | Do we need an admin API to *preview* the effect of a plan edit before committing it? | **Yes**, and cheaply: `GET /v1/admin/plans/{id}/impact` returning affected tenant count and the earliest affected `cycle_end`. This is the operator's main anxiety and the API should answer it | Before v0.1 release | `POST /admin/plans/{id}/apply` | answered — UC-19, 10.2 |
 | Q-15 | Is a per-tenant rate limit needed to protect the service from one noisy customer? | **Yes**, per API key, with `rate_limited` distinct from `quota_exceeded` (DR-040). Default generous; configurable | Before v0.1 release | `rate_limited` | open |
 | Q-16 | What is the behaviour when a tenant is deleted while requests are in flight? | **Deny after the delete commits.** In-flight requests that already entered the script before the delete may complete; the deletion is not retroactive and the audit log shows both | Before the OpenAPI is frozen | `DELETE /admin/tenants/{id}` | answered — DR-047 |

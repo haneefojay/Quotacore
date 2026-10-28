@@ -205,6 +205,9 @@ func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
 		// The metrics listener is httptest's, so the configured address is
 		// only validated.
 		"QUOTACORE_METRICS_ADDR": "127.0.0.1:0",
+		// The reset worker would roll a tenant a test seeded at a boundary
+		// before the test's request does, so a test runs it by name.
+		"QUOTACORE_WORKER_ENABLED": "false",
 	}
 	for k, v := range o.env {
 		env[k] = v
@@ -572,13 +575,19 @@ func externalID(prefix string) string {
 // proxy is a TCP proxy whose behaviour a test switches while connections are
 // open: pass forwards both ways, blackhole swallows what the client sends and
 // answers nothing, deaf forwards the client's bytes and drops the server's
-// replies, and refuse closes every connection and turns new ones away.
+// replies, and refuse closes every connection and turns new ones away. Two
+// faults sit beside the mode: delay holds every chunk that long before it is
+// forwarded, either way, and muteSubscribers drops what the server sends on
+// any connection that has subscribed, so a subscriber believes it is
+// listening and hears nothing (IP-16's chaos rows).
 type proxy struct {
-	ln     net.Listener
-	target string
-	mode   atomic.Value // string
-	mu     sync.Mutex
-	conns  []net.Conn
+	ln              net.Listener
+	target          string
+	mode            atomic.Value // string
+	delay           atomic.Int64 // nanoseconds
+	muteSubscribers atomic.Bool
+	mu              sync.Mutex
+	conns           []net.Conn
 }
 
 func newProxy(t *testing.T, target string) *proxy {
@@ -633,13 +642,23 @@ func (p *proxy) serve(client net.Conn) {
 	p.mu.Lock()
 	p.conns = append(p.conns, client, server)
 	p.mu.Unlock()
+	var subscribed atomic.Bool
 	pump := func(dst, src net.Conn, upstream bool) {
 		buf := make([]byte, 32<<10)
 		for {
 			n, err := src.Read(buf)
 			if n > 0 {
+				if upstream && bytes.Contains(bytes.ToLower(buf[:n]), []byte("subscribe")) {
+					subscribed.Store(true)
+				}
+				if d := p.delay.Load(); d > 0 {
+					time.Sleep(time.Duration(d))
+				}
 				mode := p.mode.Load().(string)
 				forward := mode == "pass" || (mode == "deaf" && upstream)
+				if !upstream && subscribed.Load() && p.muteSubscribers.Load() {
+					forward = false
+				}
 				if forward {
 					if _, werr := dst.Write(buf[:n]); werr != nil {
 						return

@@ -563,8 +563,8 @@ func TestListUsageEventsReadsWhatTheWriterWrote(t *testing.T) {
 	}
 	for _, e := range evs {
 		got, err := time.Parse(time.RFC3339Nano, str(e, "cycle_start"))
-		// The route renders whole seconds.
-		if err != nil || !got.Equal(start.Truncate(time.Second)) || e["cycle_end"] == nil {
+		// The route renders a boundary as its second, rounded up (api-conventions §3).
+		if err != nil || !got.Equal(roundUp(start)) || e["cycle_end"] == nil {
 			t.Errorf("event %s has window %v to %v, want from %s", str(e, "event_type"), e["cycle_start"], e["cycle_end"], start)
 		}
 	}
@@ -594,7 +594,7 @@ func TestListUsageEventsReadsWhatTheWriterWrote(t *testing.T) {
 	if len(evs) != 4 || str(evs[0], "event_type") != "plan_changed" {
 		t.Fatalf("events after the plan change = %s", mustJSON(evs))
 	}
-	if got, err := time.Parse(time.RFC3339Nano, str(evs[0], "cycle_start")); err != nil || !got.Equal(newStart.Truncate(time.Second)) {
+	if got, err := time.Parse(time.RFC3339Nano, str(evs[0], "cycle_start")); err != nil || !got.Equal(roundUp(newStart)) {
 		t.Errorf("the plan change's window starts %v, want %s", evs[0]["cycle_start"], newStart)
 	}
 	for _, e := range evs[1:] {
@@ -895,4 +895,13 @@ func TestAnImmediateOverrideIsWrittenAsAPlanChange(t *testing.T) {
 		expect{"plan_changed", "admin", 400, 900}) {
 		t.Errorf("the ledger is %v", shapes(rows))
 	}
+}
+
+// roundUp is a boundary as the wire renders it: its second, rounded up
+// (envelope.Boundary).
+func roundUp(t time.Time) time.Time {
+	if r := t.Truncate(time.Second); !r.Equal(t) {
+		return r.Add(time.Second)
+	}
+	return t
 }

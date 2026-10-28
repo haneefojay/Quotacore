@@ -73,6 +73,14 @@ display a cycle that ends an hour early or late, and the customer will notice.
 | Precision | Milliseconds in storage, RFC 3339 to the second in responses unless sub-second precision was configured |
 | Display advice | Documented in the reference: render in the tenant's zone, and say which zone |
 
+> **Amended 2026-10-28 (`IP-16`) — which second a boundary is rendered as.** An anchor keeps
+> milliseconds (a re-anchor moves it by at least one), so a cycle boundary can fall inside a second,
+> and no configuration of sub-second precision exists. A `cycle_start` or `cycle_end` is rendered as
+> the boundary rounded **up** to its second, so the instant a client is told is one at which the
+> boundary has passed: waiting until the `cycle_end` a `429` names lands in the next cycle, never a
+> fraction of a second early. It was rounded down until `IP-16`'s formatting property found it.
+> Every other timestamp, an audit or event time, is a record of an instant and is rounded down.
+
 ## 4. Amounts
 
 ```json

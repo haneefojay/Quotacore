@@ -1,0 +1,36 @@
+# IP-16's measurement override of the reference file (D3). Each service is pinned to the CPUs in
+# QUOTACORE_PERF_CPUS, two by default, so the stack runs on what NFR section 0 calls the reference
+# host: 2 vCPU with both datastores on it. The service and Postgres are held to 2 GiB and 1 GiB. The
+# data store is sized apart, by deployment.md section 5: every idempotency record is held for 24 h at
+# about 523 bytes, so a 30-minute run at 2,000 a second needs about 2 GiB of it and the soak more,
+# and the harness raises QUOTACORE_VALKEY_MAXMEMORY to match. The load generator runs on the
+# runner's other CPUs (taskset in the workflow), so it does not take the stack's. The metrics
+# listener and both stores are published on loopback, because the suites read the service's metrics
+# and the stores' own figures. Nothing else differs from the reference file.
+services:
+  quotacore:
+    cpuset: ${QUOTACORE_PERF_CPUS:-0,1}
+    mem_limit: ${QUOTACORE_PERF_SERVICE_MEMORY:-2g}
+    environment:
+      QUOTACORE_METRICS_ADDR: 0.0.0.0:9090
+      QUOTACORE_CONFIG_REFRESH_MISS_RATE_LIMIT: ${QUOTACORE_CONFIG_REFRESH_MISS_RATE_LIMIT:-20}
+      QUOTACORE_CONFIG_CACHE_ENTRIES: ${QUOTACORE_CONFIG_CACHE_ENTRIES:-50000}
+      QUOTACORE_EVENT_QUEUE_SIZE: ${QUOTACORE_EVENT_QUEUE_SIZE:-10000}
+      QUOTACORE_WORKER_ENABLED: ${QUOTACORE_WORKER_ENABLED:-true}
+      QUOTACORE_RATELIMIT_RUNTIME_RPS: ${QUOTACORE_RATELIMIT_RUNTIME_RPS:-2000}
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  postgres:
+    cpuset: ${QUOTACORE_PERF_CPUS:-0,1}
+    mem_limit: ${QUOTACORE_PERF_POSTGRES_MEMORY:-1g}
+    ports:
+      - "127.0.0.1:15432:5432"
+    networks: [internal, published]
+
+  valkey:
+    cpuset: ${QUOTACORE_PERF_CPUS:-0,1}
+    mem_limit: ${QUOTACORE_PERF_VALKEY_MEMORY:-8g}
+    ports:
+      - "127.0.0.1:16379:6379"
+    networks: [internal, published]

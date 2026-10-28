@@ -319,6 +319,28 @@ func (s *Snapshot) firstSightOf(externalID string) (*Tenant, error) {
 	return nil, fmt.Errorf("%w: %v", ErrRefreshFailed, err)
 }
 
+// Cached is every tenant the snapshot holds now, in no particular order, for
+// the reset worker (Q-13): the tenants this instance serves. It touches no
+// recency, so a scan does not keep an idle tenant cached, and it reads no
+// control plane, so the worker adds no load there (INV-WK2).
+func (s *Snapshot) Cached() []*Tenant {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cache.all()
+}
+
+// Forget drops tenants from the cache, so the next request for each loads it
+// afresh. The admin routes call it on the instance that committed a write
+// (DR-047); every other instance learns of the write from the invalidation.
+func (s *Snapshot) Forget(tenantIDs []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cache.forget(tenantIDs)
+	if s.metrics != nil {
+		s.metrics.CacheEntries.Set(float64(s.cache.len()))
+	}
+}
+
 // Decide resolves a feature for a tenant Tenant returned, at the instant the
 // request was accepted. It is Resolve's decision with no lookup, so the order
 // archived, suspended, in-plan lives in one place still.

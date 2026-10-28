@@ -168,3 +168,16 @@ func JSON(w http.ResponseWriter, r *http.Request, status int, body json.Marshale
 	w.WriteHeader(status)
 	_, _ = w.Write(encoded)
 }
+
+// Boundary is a cycle boundary as the wire carries it: RFC 3339 to the second
+// in the tenant's zone (api-conventions.md section 3), rounded up rather than
+// down. An anchor keeps milliseconds, so a boundary can fall inside a second,
+// and the second it is rendered as must be one at which the boundary has
+// passed: a client that waits until the cycle_end it was told is then in the
+// next cycle, never a fraction of a second early and refused again (IP-16).
+func Boundary(t time.Time, loc *time.Location) contract.Timestamp {
+	if r := t.Truncate(time.Second); !r.Equal(t) {
+		t = r.Add(time.Second)
+	}
+	return contract.Timestamp(t.In(loc))
+}

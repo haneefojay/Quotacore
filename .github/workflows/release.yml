@@ -1,0 +1,83 @@
+name: release
+
+# Publishing and signing (Q-27, IP-16 Q4). A `v*` tag builds the image from the tagged commit, scans
+# it and writes its SBOM, pushes it to GHCR by digest, signs that digest with Cosign keyless through
+# GitHub's OIDC token, and attaches the SBOM as a signed attestation (deployment.md section 3).
+#
+# Run by hand, or on a pull request that changes this file, it is a dry run: it builds, scans and
+# writes the SBOM, then stops before anything leaves the runner. That is how IP-16 proves the
+# workflow without publishing; a manual run needs the file on main first. The first tag,
+# `v0.1.0`, is pushed by a maintainer after `dev` reaches main: a published image and a signature
+# in the public transparency log cannot be taken back.
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths: ['.github/workflows/release.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+      REPOSITORY: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+      - name: Module sources for the image's licence scan
+        run: go mod download
+      - name: Build the image
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [ "$PUBLISH" != true ]; then version="0.1.0-dryrun"; fi
+          QUOTACORE_VERSION="$version" docker compose build quotacore
+          echo "VERSION=$version" >>"$GITHUB_ENV"
+        env:
+          QUOTACORE_REVISION: ${{ github.sha }}
+      - name: SBOM and licence scan over the image
+        run: |
+          mkdir -p dist
+          make sbom IMAGE=quotacore:local SBOM=dist/sbom.image.cdx.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-sbom
+          path: dist/sbom.image.cdx.json
+          if-no-files-found: error
+      - name: Stop here on a dry run
+        if: env.PUBLISH != 'true'
+        run: echo "Dry run: the image and its SBOM were built and scanned; nothing was pushed or signed."
+      - name: Install Cosign
+        if: env.PUBLISH == 'true'
+        # From the pinned release, checked against its published digest, as promtool is in ci.yml.
+        run: |
+          curl -fsSL -o /tmp/cosign https://github.com/sigstore/cosign/releases/download/v2.6.1/cosign-linux-amd64
+          echo '064954c5d8c7e3b28188eee5b1727b31c411550bc5fefd41aa672d3c761d103a  /tmp/cosign' | sha256sum -c -
+          sudo install -m 0755 /tmp/cosign /usr/local/bin/cosign
+      - name: Push to GHCR by digest
+        if: env.PUBLISH == 'true'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          repo="$(echo "$REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          docker tag quotacore:local "$repo:$VERSION"
+          docker push "$repo:$VERSION"
+          digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$repo:$VERSION")"
+          echo "DIGEST=$digest" >>"$GITHUB_ENV"
+          echo "pushed $digest"
+      - name: Sign the digest and attest the SBOM
+        if: env.PUBLISH == 'true'
+        run: |
+          cosign sign --yes "$DIGEST"
+          cosign attest --yes --type cyclonedx --predicate dist/sbom.image.cdx.json "$DIGEST"

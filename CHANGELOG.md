@@ -18,6 +18,44 @@ exists, because a future implementer needs to know which statements are new.
   now runs under `-race` in CI, and the step fails if a named test of its suite did not run, was
   skipped or failed; the reference suite is reported the same way. `T-15`, a consume raced against
   a tenant delete over 40 randomised interleavings, is the fifteenth row's first test.
+- **The reset worker (`IP-16`, `Q-13`).** `internal/worker` runs inside the service while
+  `QUOTACORE_WORKER_ENABLED` is true (the default), every `QUOTACORE_RESET_SCAN_INTERVAL` (60 s) in
+  pages of `QUOTACORE_RESET_BATCH_SIZE` (500): each cached tenant-feature whose cycle began since
+  the previous scan is advanced through the data plane's new `Advance`, which is the check script for
+  an amount of zero, the request path's own transition. A tenant this instance serves is therefore
+  rolled at its boundary, and its ledger opening written then, rather than at its next request. The
+  worker has no route to SQL, the store or the scripts except that call (INV-WK2, a source check),
+  pauses in read-only mode, and loses a race with a request harmlessly; a test drives both orders and
+  a simultaneous one on the same boundary and finds one transition and one event every time.
+- **The property tests (`IP-16`, testing-strategy §3).** `pgregory.net/rapid`, a test-only
+  dependency, generates operation sequences (consume, refund, grant, set, an override applied now, a
+  plan edit, boundaries passing, a caller behind the store, a replayed key) against one balance hash
+  through the real scripts, and a model that knows only the rules predicts every field after every
+  step: the ceiling, a never-decreasing index, a denial that changes nothing byte for byte, one
+  application per key, no expiry, and DR-042's opening-plus-deltas identity per cycle. A failure
+  shrinks to its shortest sequence. A second property renders random boundaries in six zones and
+  parses them back. CI runs 100 sequences of each; the nightly run passes `-rapid.checks`.
+- **The load, soak and chaos suites (`IP-16`, testing-strategy §5 and §6).** `test/harness` starts
+  the Compose stack with `compose.perf.yml`, which pins the service and both stores to two CPUs
+  (NFR §0's reference host) and sizes the data store by deployment §5, seeds it through the admin
+  API, and drives it with an open-loop generator that measures from each request's release, so a
+  stall is counted rather than omitted. `test/load` runs every row of §5: warm consume and check
+  latency, gated on the service's own time from its access log with the client's beside it;
+  2,000 a second for 30 minutes with D16's proof that no request touches Postgres (commits,
+  connections and pool wait) and the store's growth per idempotency record against `IP-15`'s
+  figures; 10,000 a second for a minute; 50,000 tenants on a plan of 100 features; ledger
+  saturation and throughput (NFR-T8); a Postgres outage under load; startup to ready; and a soak
+  that asserts slopes rather than final values. The chaos rows a proxy can inject run in process
+  under `-race` on every pull request: one balance hash deleted, the data store delayed by 400 ms
+  and by 2 s, and pub/sub muted. `TestQ08ConfigurationPropagation` measures NFR-D3 over 200
+  changes between two instances. `test/chaos` fills the disk under Postgres and moves the host's
+  clock 24 h each way. T-11 takes `QUOTACORE_T11_OPERATIONS` for its 5,000-operation run.
+- **The heavy workflows (`IP-16` D11).** `heavy.yml` runs load, chaos, the clock pair, T-11 and the
+  properties at scale, and the soak, each job recording its environment with
+  `tools/environment.sh` and uploading its figures. `nightly.yml` calls it every night and adds
+  the soak on Sundays; `full-suite.yml` calls it on a pull request labelled `full-suite` (and the
+  soak with `soak`), because a schedule runs only from main. `release.yml` publishes and signs an
+  image from a `v*` tag (`Q-27`) and is a dry run otherwise.
 - **The reference deployment (`IP-15`).** A two-stage [Dockerfile](Dockerfile): a builder pinned
   by digest, and a `scratch` runtime holding the static binary and `/tmp`, uid 65532, entrypoint
   `quotacore`, healthcheck `quotacore healthcheck`. [docker-compose.yml](docker-compose.yml) is now
@@ -777,6 +815,15 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Fixed
 
+- **A cycle boundary was rendered up to a second early** (`IP-16`, found by the formatting property).
+  An anchor keeps milliseconds and the wire carries seconds, so a `cycle_end` was rounded down to a
+  second at which the old cycle was still open, and a client that waited until it was refused again.
+  Every `cycle_start` and `cycle_end` is now rounded up (`envelope.Boundary`, api-conventions §3).
+- **A deleted tenant was still served by the instance that deleted it** (`IP-16`, found by `T-15`,
+  DR-047). A tenant in the snapshot stayed there until the invalidation came back over pub/sub, so a
+  consume sent after the delete's `200`, to the same instance, could complete. The admin routes now
+  drop each tenant they wrote from that instance's snapshot before publishing, so the next request
+  reads it as committed; other instances still learn of it within NFR-D3.
 - **A full store did not refuse writes** (`IP-15`, T-13). A script without a shebang is checked
   against `maxmemory` only at its first write that may grow memory; the consume script's first
   write is a `PERSIST`, which is not one, so every later `SET` and `HINCRBY` went through and a
