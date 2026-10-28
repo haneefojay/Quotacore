@@ -278,6 +278,13 @@ the event an operator will need to explain afterwards.
 > `normal` mode, so an instance started read-only, or one whose fence is lost or held by a rebuild,
 > is not ready. A Postgres outage is deliberately not a term: cached tenants still enforce, and
 > making every instance unready at once would turn a P2 into an outage (NFR-A2).
+>
+> **Amended 2026-10-27 (`IP-15`).** One more term: the data store reports `maxmemory_policy`
+> `noeviction` in `INFO memory`, read at start (where any other value refuses to start, DR-048) and
+> on every slow probe after. A policy changed under a running instance makes it unready as `data
+> store refuses to evict`, logs the old and new policy at `error`, and logs again at `info` when it
+> is restored. The image's healthcheck, `quotacore healthcheck`, is a client of `/readyz` and
+> nothing more, so the Compose healthcheck and a load balancer see the same answer.
 
 **Liveness and readiness are deliberately different, and liveness deliberately ignores
 dependencies.** Conflating them is the classic way an infrastructure outage becomes a crash loop
