@@ -60,6 +60,7 @@ command the table does not have, or a method, path or operation that is not the 
 | `status` | `GET /v1/admin/status` (`status`) | no |
 | `init` | composite: `createFeature`, `createPlan`, `createTenant`, `createKey` (`runtime`), then `balance` with the new runtime key | yes |
 | `serve` | local: the service; no argument does the same | no |
+| `healthcheck` | local: `GET /readyz` on `127.0.0.1` at `QUOTACORE_LISTEN_ADDR`'s port, never `QUOTACORE_URL`; exits `0` when ready and `9` otherwise, and prints nothing on success. The reference image's `HEALTHCHECK`, which has no shell to ask with; added 2026-10-27 (`IP-15`) | no |
 | `verify-tenant <tenant>` | local: verifies one tenant's ledger against itself and its balance hashes (`IP-11`) | no |
 | `verify-all` | local: the same for every tenant (`IP-11`) | no |
 | `reconcile-report` | local: prints `reconcile_findings`, newest first (`IP-11`) | no |

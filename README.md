@@ -33,6 +33,25 @@ boundary in the tenant's own time zone, computed on demand — so nothing depend
 not run, on a server that was down at midnight, or on adding 30 days to a timestamp across a
 daylight-saving change.
 
+## Quickstart
+
+Docker with Compose v2, and nothing else: no account, no signup, no egress.
+
+```bash
+git clone https://github.com/quotacore/quotacore.git
+cd quotacore
+export QUOTACORE_BOOTSTRAP_ADMIN_KEY="$(docker compose run --rm --no-deps quotacore key mint)"
+export QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK=yes
+docker compose up -d --wait
+docker compose exec quotacore quotacore init
+```
+
+The first line after `cd` builds the image and mints an admin key into your shell, never onto disk;
+the second says you meant to start with it. `init` creates a feature, a plan, a tenant and a runtime
+key, prints the key once, and ends with a `curl` you can paste. The API listens on
+`127.0.0.1:8080` only. CI runs this block on a clean runner, so it cannot rot; the deployment guide
+explains each line and everything after it ([deployment.md](docs/architecture/deployment.md#2-the-quickstart)).
+
 ## The three claims, and the tests behind them
 
 | Claim | Enforced by | Proven by |
@@ -52,7 +71,7 @@ permanent, not a roadmap item.
 
 ## Status
 
-**Specification complete; implementation started.** 77 documents, 17 accepted
+**Specification complete; implementation started.** 78 documents, 17 accepted
 decisions, 49 domain rules, 35 error codes, 15 named correctness tests. Every blocking question is
 answered — the four former blockers plus
 [Q-21](docs/product/assumptions-and-open-questions.md#2-open-questions), the eviction question that

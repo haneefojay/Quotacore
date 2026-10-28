@@ -28,7 +28,7 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-12` | Usage ledger, writer and archiver | `IP-08` | `COMPLETE`, opened and closed 2026-10-20 |
 | `IP-13` | Observability | `IP-07` | `IN PROGRESS`, opened 2026-10-21 |
 | `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `COMPLETE` |
-| `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `BLOCKED` |
+| `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `IN PROGRESS`, opened 2026-10-27 |
 | `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `BLOCKED` on `IP-15` |
 
 ---
@@ -1779,7 +1779,16 @@ environment variable.
 
 ## IP-15 — Reference deployment and restore rehearsal
 
-**Status** `BLOCKED`, gated on `IP-13`.
+**Status** `IN PROGRESS` — opened 2026-10-27, before any file it owns was written; `IP-14` closed
+the same day.
+
+> **Amended 2026-10-27 — the dependency on `IP-13`.** `IP-13` has met seven of its eight items and
+> waits only on item 7, a person following the runbooks against a running instance. That review and
+> this phase's exit criterion, a restore performed by someone following a document, are the same
+> session, and the stack this phase builds is what makes it one command. So this phase depends on
+> `IP-13`'s items 1 to 6 and 8, and carries item 7: the review is performed on the reference stack
+> after this phase's code is merged, recorded in [the runbooks' review table](../runbooks/README.md#review),
+> and both phases close on that row. Accepted by the owner on 2026-10-27.
 
 **Objective.** One `docker compose up`, no account and no external dependency, plus a restore
 procedure that has actually been performed.
@@ -1800,6 +1809,11 @@ procedure that has actually been performed.
   [ADR-0011](../decisions/0011-postgres-only-control-plane.md),
   [ADR-0017](../decisions/0017-noeviction-and-duplicate-reversal.md)
 - NFR-A1 to NFR-A6, NFR-D4, NFR-D6, NFR-D7, NFR-T9, NFR-T10, NFR-OPS1 to NFR-OPS8, NFR-C5, NFR-C6
+
+> **Amended 2026-10-27 (`IP-15`) — NFR-A1.** A 99.9% uptime is not something a phase can measure.
+> It is read here as its measure: the image's healthcheck is `/readyz`, through `quotacore
+> healthcheck`, so Compose and any orchestrator see the readiness NFR-A1 is counted by, and the
+> figure itself is the operator's to observe.
 
 **Dependencies.** Blocked by `IP-13` and `IP-14`. Blocks `IP-16`.
 
@@ -1824,20 +1838,52 @@ procedure that has actually been performed.
    > **Amended 2026-10-20 (`IP-11`).** Steps 5 and 6 are `IP-11` DoD 3, 5 and 6, which that phase
    > proves in `cmd/quotacore`'s integration suite. This item is the same assertion against the
    > Compose stack with the real `quotacore rebuild`, run nightly, and adds T-14 end to end.
+
+   > **Amended 2026-10-27 (`IP-15`) — where "nightly" runs.** The drill runs in CI's `reference`
+   > job on every pull request, which is this phase's evidence, and in `.github/workflows/nightly.yml`
+   > on a schedule. GitHub runs a schedule only from the default branch, so the nightly run starts
+   > when `dev` merges to `main`; until then "nightly" describes the workflow, not a run history.
 6. The data store's memory projection for the idempotency window is measured, not estimated, and it
    is the figure in [deployment.md](../architecture/deployment.md) §5. The measurement is the per-record
    footprint of an idempotency entry at the sustained-throughput figure in NFR-T1, held in a scratch
    instance that is then destroyed; the projection in §5 is a floor until it exists, and this item
    replaces the floor with a number (NFR-T9).
+
+   > **Amended 2026-10-27 (`IP-15`) — "measured" and "soak".** NFR-T9 names a 24-hour projected
+   > soak, which at 2,000/s is 172.8 million records and a machine with tens of GiB for a day. What
+   > this item asks for is the per-record footprint, so it is measured directly: `tools/idemsize`
+   > drives the real consume script against a scratch store, reads `used_memory` at doubling record
+   > counts on either side of the engine's hash-table resizes, and projects the marginal cost at the
+   > contract's longest key to 172.8 million. The report is
+   > [ip-15-idempotency-footprint.md](../research/ip-15-idempotency-footprint.md).
 7. The store runs `maxmemory-policy noeviction`, and the rehearsal demonstrates the two states that
    policy creates: at the configured `maxmemory` the service returns `503 store_capacity_exhausted`
    and rejects writes, and a full flush of the idempotency namespace is never observed (DR-048,
    NFR-T9, T-13).
+
+   > **Amended 2026-10-27 (`IP-15`) — the code, and a finding.** The catalogue has no
+   > `store_capacity_exhausted`; FS-21, DR-048 and ADR-0017 all say a write that does not fit is
+   > `503 service_unavailable`, and that is the answer, because a full store and a dead store are both
+   > "the store cannot take this write". Building T-13 found that the store did *not* refuse: a script
+   > without a shebang is checked against `maxmemory` only at its first write that may grow memory,
+   > and the consume script's first write is a `PERSIST`, which is not one, so every later write in
+   > the script went through and the store grew far past its limit. Every script now declares
+   > `#!lua`, under which the engine refuses the whole script while the store is over `maxmemory`;
+   > `internal/script`'s `TestAFullStoreRefusesEveryScript` holds each one to it.
 8. Total store loss is rehearsed, and the automatic reversal of a duplicate detected after it is
    observed end to end: an idempotency record lost to a flush, a replayed request, a detection, a
    `reversal` API-key event and a balance that returns to its prior value (DR-049, T-14).
+
+   > **Amended 2026-10-27 (`IP-15`).** The "`reversal` API-key event" is the row DR-049 and `IP-11`
+   > write: a `refunded` usage event, `source: system`, under the key `#reversal/<event_id>`, which
+   > the events filter by the client's key returns beside the two deductions.
 9. An upgrade path from the previous release is documented and exercised, and rollback is a restore
    (NFR-OPS7).
+
+   > **Amended 2026-10-27 (`IP-15`).** There is no previous release yet. Until v0.1 is tagged, "the
+   > previous release" is the previous build: CI's `reference` job builds the image from the pull
+   > request's merge base as well as its head, and `TestUpgradeAndRollback` upgrades from one to the
+   > other and rolls back with a restore, following [deployment.md](../architecture/deployment.md) §11.
 10. The image runs unprivileged, on a non-root port, with a read-only root filesystem (NFR-S6).
     > **Amended 2026-10-21 (`IP-13`) — the image half.** `IP-13` item 8 proved the process half: the
     > binary refuses a port below 1024, writes no file and runs from a read-only directory. This item
