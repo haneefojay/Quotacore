@@ -839,6 +839,12 @@ exists, because a future implementer needs to know which statements are new.
   Every `cycle_start` and `cycle_end` is now rounded up (`envelope.Boundary`, api-conventions §3).
   `TestUpgradeAndRollback` compares a balance read from builds either side of the change with a
   boundary allowed to differ by that second; every figure must still be equal.
+- **`TestSustainedThroughput` read noise as creep** (`IP-16`, first full-suite run). It fitted a
+  least-squares slope to the client's per-minute p99, and two noisy late minutes on the shared runner
+  (6.8 and 6.4 ms against a typical 1.3 ms) projected to 1.4 ms of creep where the median p99 of the
+  first and last thirds differed by 0.4 ms. "p99 stable" is now gated on the service's own per-minute
+  p99 from its access log, as Q-30 gates every latency figure, as the median of the last third of the
+  run's minutes less the median of the first, within 1 ms; both creeps are recorded.
 - **A deleted tenant was still served by the instance that deleted it** (`IP-16`, found by `T-15`,
   DR-047). A tenant in the snapshot stayed there until the invalidation came back over pub/sub, so a
   consume sent after the delete's `200`, to the same instance, could complete. The admin routes now

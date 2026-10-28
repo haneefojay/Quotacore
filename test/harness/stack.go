@@ -383,6 +383,44 @@ func (s *Stack) Prime(seeded Seeded) {
 // hundred microseconds to every hop, and that is the runner, not the service.
 func (s *Stack) ServerLatency(endpoint string, since time.Time) Percentiles {
 	s.T.Helper()
+	var d []time.Duration
+	for _, e := range s.serverEntries(endpoint, since) {
+		d = append(d, e.took)
+	}
+	return percentiles(d)
+}
+
+// ServerLatencyPerMinute is ServerLatency for each minute since a time, by
+// the time the service logged each request.
+func (s *Stack) ServerLatencyPerMinute(endpoint string, since time.Time) []MinutePercentile {
+	s.T.Helper()
+	var byMinute [][]time.Duration
+	for _, e := range s.serverEntries(endpoint, since) {
+		m := int(e.at.Sub(since) / time.Minute)
+		if m < 0 {
+			continue
+		}
+		for len(byMinute) <= m {
+			byMinute = append(byMinute, nil)
+		}
+		byMinute[m] = append(byMinute[m], e.took)
+	}
+	var out []MinutePercentile
+	for m, v := range byMinute {
+		if len(v) > 0 {
+			out = append(out, MinutePercentile{Minute: m, Percentiles: percentiles(v)})
+		}
+	}
+	return out
+}
+
+type serverEntry struct {
+	at   time.Time
+	took time.Duration
+}
+
+func (s *Stack) serverEntries(endpoint string, since time.Time) []serverEntry {
+	s.T.Helper()
 	cmd := exec.Command("docker", "logs", "--since", since.UTC().Format(time.RFC3339Nano), s.Container("quotacore"))
 	out, err := cmd.StdoutPipe()
 	if err != nil {
@@ -392,7 +430,7 @@ func (s *Stack) ServerLatency(endpoint string, since time.Time) Percentiles {
 	if err := cmd.Start(); err != nil {
 		s.T.Fatal(err)
 	}
-	var d []time.Duration
+	var entries []serverEntry
 	sc := bufio.NewScanner(out)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	want := []byte(`"endpoint":"` + endpoint + `"`)
@@ -402,14 +440,15 @@ func (s *Stack) ServerLatency(endpoint string, since time.Time) Percentiles {
 			continue
 		}
 		var entry struct {
-			Duration float64 `json:"duration_ms"`
+			At       time.Time `json:"ts"`
+			Duration float64   `json:"duration_ms"`
 		}
 		if json.Unmarshal(line, &entry) == nil && entry.Duration > 0 {
-			d = append(d, time.Duration(entry.Duration*float64(time.Millisecond)))
+			entries = append(entries, serverEntry{at: entry.At, took: time.Duration(entry.Duration * float64(time.Millisecond))})
 		}
 	}
 	_ = cmd.Wait()
-	return percentiles(d)
+	return entries
 }
 
 // StoreRejections is how many commands the data store has answered with an
