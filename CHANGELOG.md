@@ -349,6 +349,10 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **`IP-16` is `IN PROGRESS`**, opened 2026-10-28, the day `IP-15`'s code merged and before any file
+  it owns exists, by a dated amendment to its dependency on `IP-15`: the runbook and restore review
+  that `IP-13` and `IP-15` wait on is carried as the release's one named gap, and v0.1 is declared
+  done only once it is recorded. Its "Blocks" line now matches the index (`IP-19` and `IP-27` added).
 - **The Compose file's role** (`IP-15`): from two development stores to the reference
   deployment. The integration suite in CI now publishes the stores with `.github/compose.ci.yml`,
   runs as the superuser it needs to create scratch databases, and has a scratch store of its own;
