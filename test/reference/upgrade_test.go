@@ -1,6 +1,7 @@
 package reference_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"strings"
@@ -75,7 +76,7 @@ func TestUpgradeAndRollback(t *testing.T) {
 		t.Fatalf("status after the upgrade: %d %s %s", code, out, errw)
 	}
 	for _, tn := range tenants {
-		if _, r := balanceOf(t, token, tn); string(r.body) != before[tn] {
+		if _, r := balanceOf(t, token, tn); !sameBalance(string(r.body), before[tn]) {
 			t.Errorf("%s changed across the upgrade:\n%s\nwas\n%s", tn, r.body, before[tn])
 		}
 	}
@@ -104,7 +105,7 @@ func TestUpgradeAndRollback(t *testing.T) {
 	if _, r := balanceOf(t, token, quiet); string(r.body) != before[quiet] {
 		t.Errorf("%s after the rollback:\n%s\nwas\n%s", quiet, r.body, before[quiet])
 	}
-	if _, r := balanceOf(t, token, busy); string(r.body) != busyAfter {
+	if _, r := balanceOf(t, token, busy); !sameBalance(string(r.body), busyAfter) {
 		t.Errorf("the data store's balance for %s moved with the rollback, which restores only Postgres", busy)
 	}
 	if code, out, errw := s.cli("verify-tenant", quiet); code != 0 {
@@ -116,6 +117,61 @@ func TestUpgradeAndRollback(t *testing.T) {
 	if code, out, _ := s.cli("verify-tenant", busy); code != 1 {
 		t.Errorf("verify-tenant %s after the rollback exited %d, want 1 for the truncation since the backup:\n%s", busy, code, out)
 	}
+}
+
+// sameBalance compares two balance bodies read from different builds. The
+// figures must be equal; a cycle boundary may differ by under a second plus
+// rendering, because IP-16 rounds a boundary inside a second up where the
+// builds before it rounded down (CHANGELOG, envelope.Boundary). The state is
+// the same either way; only its rendering moved.
+func sameBalance(a, b string) bool {
+	if a == b {
+		return true
+	}
+	var x, y struct {
+		Tenant  string           `json:"tenant_external_id"`
+		Entries []map[string]any `json:"entries"`
+	}
+	if json.Unmarshal([]byte(a), &x) != nil || json.Unmarshal([]byte(b), &y) != nil ||
+		x.Tenant != y.Tenant || len(x.Entries) != len(y.Entries) {
+		return false
+	}
+	for i := range x.Entries {
+		for k, v := range x.Entries[i] {
+			w := y.Entries[i][k]
+			if k == "cycle_start" || k == "cycle_end" {
+				if !withinASecond(v, w) {
+					return false
+				}
+				continue
+			}
+			if v != w {
+				return false
+			}
+		}
+		if len(x.Entries[i]) != len(y.Entries[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func withinASecond(a, b any) bool {
+	if a == b {
+		return true
+	}
+	sa, ok1 := a.(string)
+	sb, ok2 := b.(string)
+	if !ok1 || !ok2 {
+		return false
+	}
+	ta, err1 := time.Parse(time.RFC3339, sa)
+	tb, err2 := time.Parse(time.RFC3339, sb)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	d := ta.Sub(tb)
+	return d <= time.Second && d >= -time.Second
 }
 
 func runDocker(args ...string) (string, error) {

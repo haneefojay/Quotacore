@@ -837,6 +837,8 @@ exists, because a future implementer needs to know which statements are new.
   An anchor keeps milliseconds and the wire carries seconds, so a `cycle_end` was rounded down to a
   second at which the old cycle was still open, and a client that waited until it was refused again.
   Every `cycle_start` and `cycle_end` is now rounded up (`envelope.Boundary`, api-conventions §3).
+  `TestUpgradeAndRollback` compares a balance read from builds either side of the change with a
+  boundary allowed to differ by that second; every figure must still be equal.
 - **A deleted tenant was still served by the instance that deleted it** (`IP-16`, found by `T-15`,
   DR-047). A tenant in the snapshot stayed there until the invalidation came back over pub/sub, so a
   consume sent after the delete's `200`, to the same instance, could complete. The admin routes now
