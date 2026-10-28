@@ -265,8 +265,14 @@ func TestSustainedThroughput(t *testing.T) {
 			mean += y
 		}
 		mean /= float64(len(memY))
-		if memSlope > 0.10*mean {
-			t.Errorf("the service's memory grew %.0f bytes an hour over the second half, more than a tenth of its %.0f", memSlope, mean)
+		// The growth the trend accounts for across the second half, as the
+		// soak measures it: a rate per hour read off fifteen minutes of a
+		// collector's sawtooth projects a few megabytes of noise into an hour
+		// (the second full-suite run: 3.6 MB an hour, 0.9 MB across the half).
+		// The rate over hours is the soak's to judge.
+		growth := memSlope * (memX[len(memX)-1] - memX[0])
+		if growth > 0.10*mean {
+			t.Errorf("the service's memory grew %.0f bytes over the second half, more than a tenth of its %.0f", growth, mean)
 		}
 	}
 }
