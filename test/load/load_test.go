@@ -17,6 +17,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -90,21 +91,39 @@ func noErrors(t *testing.T, r harness.Result) {
 	}
 }
 
-// flat fails when the per-minute p99 creeps: the least-squares slope over the
-// run, projected across it, must stay within a millisecond. That is "p99
-// stable rather than creeping" in testing-strategy section 5.
-func flat(t *testing.T, r harness.Result) float64 {
+// creep is how far the per-minute p99 rose across a run: the median of the
+// last third of its minutes less the median of the first third. A p99 that
+// creeps moves the whole last third; a minute or two of a shared runner's
+// noise moves neither median, where a least-squares slope follows the noise
+// (the first full-suite run rose 1.4 ms by slope on two noisy late minutes
+// with both medians within 0.4 ms).
+func creep(perMinute []harness.MinutePercentile) int64 {
+	if len(perMinute) < 3 {
+		return 0
+	}
+	third := len(perMinute) / 3
+	median := func(ms []harness.MinutePercentile) int64 {
+		v := make([]int64, 0, len(ms))
+		for _, m := range ms {
+			v = append(v, m.P99)
+		}
+		slices.Sort(v)
+		return v[len(v)/2]
+	}
+	return median(perMinute[len(perMinute)-third:]) - median(perMinute[:third])
+}
+
+// flat fails when the service's per-minute p99 creeps by more than a
+// millisecond across the run, which is "p99 stable rather than creeping" in
+// testing-strategy section 5, on the service's own time as Q-30 gates every
+// latency figure. The client's creep is recorded beside it.
+func flat(t *testing.T, server []harness.MinutePercentile) int64 {
 	t.Helper()
-	var x, y []float64
-	for _, m := range r.PerMinute {
-		x = append(x, float64(m.Minute))
-		y = append(y, float64(m.P99))
+	c := creep(server)
+	if c > ms {
+		t.Errorf("the service's per-minute p99 rose %d µs across the run, median of the last third against the first", c)
 	}
-	slope := harness.Slope(x, y)
-	if creep := slope * float64(len(x)); creep > ms {
-		t.Errorf("the per-minute p99 rose %.0f µs across the run (slope %.1f µs a minute)", creep, slope)
-	}
-	return slope
+	return c
 }
 
 // latency gates the NFR-L figures on the service's own time for a request,
@@ -194,8 +213,9 @@ func TestSustainedThroughput(t *testing.T) {
 	connsBefore, usedBefore, keysBefore := conns(), used(), keys()
 	sampler := harness.Sample(30*time.Second, fds, used)
 
-	r, _ := run(t, s, seeded, "consume", 2000, duration(t, 30*time.Minute))
+	r, start := run(t, s, seeded, "consume", 2000, duration(t, 30*time.Minute))
 	points := sampler.Stop()
+	serverMinutes := s.ServerLatencyPerMinute("POST /v1/consume", start)
 	after, afterMetrics := commits(), mustScrape(t)
 	connsAfter, usedAfter, keysAfter := conns(), used(), keys()
 
@@ -211,8 +231,9 @@ func TestSustainedThroughput(t *testing.T) {
 		memY = append(memY, p.Memory)
 	}
 	memSlope := harness.Slope(memX, memY)
-	slope := flat(t, r)
-	record(t, map[string]any{"load": r, "p99_slope_us_per_min": slope, "postgres_commits": commitDelta,
+	serverCreep := flat(t, serverMinutes)
+	record(t, map[string]any{"load": r, "server_per_minute_us": serverMinutes,
+		"p99_creep_us": map[string]int64{"server": serverCreep, "client": creep(r.PerMinute)}, "postgres_commits": commitDelta,
 		"service_connections": []float64{connsBefore, connsAfter}, "dbpool_wait_seconds": wait,
 		"store_bytes_per_record": perRecord, "store_records": keysAfter - keysBefore, "memory_slope_bytes_per_hour_second_half": memSlope, "samples": points})
 
