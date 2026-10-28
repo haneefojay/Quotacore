@@ -50,6 +50,15 @@ exists, because a future implementer needs to know which statements are new.
   and by 2 s, and pub/sub muted. `TestQ08ConfigurationPropagation` measures NFR-D3 over 200
   changes between two instances. `test/chaos` fills the disk under Postgres and moves the host's
   clock 24 h each way. T-11 takes `QUOTACORE_T11_OPERATIONS` for its 5,000-operation run.
+- **The two commands after a Postgres restore (`IP-16`, `Q-28`).** `quotacore config bump` records
+  a new configuration version against every tenant and publishes the invalidation, so every
+  instance re-reads the restored configuration at once (consistency-and-recovery §4.2, step 4).
+  `quotacore audit note --reason` appends an audit row about the installation itself, recording the
+  truncation a restore leaves in the history (step 6). `audit_log.subject_type` and the contract's
+  `AuditEntry.subject_type` gain `system` for it, in migration 12. The restore runbook names both
+  commands.
+- **NFR-L7 measured (`IP-16`).** `TestNFRL7RolloverOverhead` compares the median consume that
+  crosses a boundary with one that does not, against the real store, on every commit.
 - **The heavy workflows (`IP-16` D11).** `heavy.yml` runs load, chaos, the clock pair, T-11 and the
   properties at scale, and the soak, each job recording its environment with
   `tools/environment.sh` and uploading its figures. `nightly.yml` calls it every night and adds
@@ -393,6 +402,15 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **Register (`IP-16`).** The seven rows due before v0.1 and still open are answered, each with its
+  default: `Q-08` (measured), `Q-12`, `Q-15`, `Q-25`, `Q-26`, `Q-27` and `Q-28`. `Q-30` is new and
+  asks where NFR-L3 is measured; it does not block v0.1. Six questions remain open, none due before
+  v0.1.
+- **testing-strategy §5 and §6, and IP-16's DoD 1 and DoD 6, amended (`IP-16`).**
+  - The latency rows are gated on the service's own time, with the client's figure recorded.
+  - The soak is 5 h 30 m, with slope assertions, because a hosted runner's job ends at 6 h.
+  - Each chaos row now has a stated place to run.
+  - DoD 1 counts all fifteen named tests.
 - **`IP-16` is `IN PROGRESS`**, opened 2026-10-28, the day `IP-15`'s code merged and before any file
   it owns exists, by a dated amendment to its dependency on `IP-15`: the runbook and restore review
   that `IP-13` and `IP-15` wait on is carried as the release's one named gap, and v0.1 is declared

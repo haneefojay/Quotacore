@@ -719,6 +719,8 @@ func (s *AuditEntrySubjectType) Decode(d *jx.Decoder) error {
 		*s = AuditEntrySubjectTypeFeature
 	case AuditEntrySubjectTypeAPIKey:
 		*s = AuditEntrySubjectTypeAPIKey
+	case AuditEntrySubjectTypeSystem:
+		*s = AuditEntrySubjectTypeSystem
 	default:
 		*s = AuditEntrySubjectType(v)
 	}

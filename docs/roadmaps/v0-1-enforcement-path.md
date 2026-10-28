@@ -1960,6 +1960,15 @@ checklist.
    evidence.
 10. The change is recorded in [CHANGELOG.md](../../CHANGELOG.md).
 
+> **Amended 2026-10-28 (`IP-16`) — DoD 1 and DoD 6.** DoD 1 was written when there were eleven
+> named tests; [testing-strategy.md](../architecture/testing-strategy.md#2-correctness-tests-the-ones-that-matter)
+> §2 now has fifteen. All fifteen are reported by name: `T-01` to `T-12`, `T-14` and `T-15` under
+> `-race` in the integration suite, and `T-13` and `T-14`'s stack form in the reference suite.
+> DoD 6's soak is 5 h 30 m, not 24 h: a hosted runner's job ends at 6 h, and "no leak" is asserted
+> as a slope over the run's second half rather than as a final value, which a longer run would
+> only confirm (testing-strategy §5, amended). The soak's duration is one variable, so a 24-hour
+> run on a self-hosted runner changes nothing else.
+
 **Exit criteria.** Every claim in the README has a measurement, every capability in the scope has a
 test, and a reader who doubts the product can find the evidence in one place.
 

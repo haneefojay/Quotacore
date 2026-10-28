@@ -125,7 +125,7 @@ func New(t testing.TB, opts ...Option) *Stack {
 	}
 	t.Cleanup(func() {
 		if t.Failed() {
-			out, _ := s.ComposeOut("logs", "--no-color", "--tail", "100")
+			out, _ := s.ComposeOut("logs", "--no-color", "--tail", "40")
 			t.Logf("logs of %s:\n%s", s.Project, out)
 		}
 		_, _ = s.ComposeOut("down", "-v", "--remove-orphans", "--timeout", "5")

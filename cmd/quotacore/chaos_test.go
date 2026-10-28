@@ -77,7 +77,10 @@ func TestChaosStoreLatency(t *testing.T) {
 			mustStatus(t, s.consume(s.runtime, f, 1, tn.External, newKey()), http.StatusOK)
 
 			p.delay.Store(int64(delay))
-			const n = 50
+			// Ten at once: enough that a queue behind the delay would show, and
+			// few enough that a -race build on a shared runner does not add its
+			// own wait to the server's figure.
+			const n = 10
 			keys := make([]string, n)
 			results := make([]response, n)
 			took := make([]time.Duration, n)

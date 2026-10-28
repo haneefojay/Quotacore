@@ -45,7 +45,12 @@ func TestTheWorkerAndTheRequestPathRollABoundaryOnce(t *testing.T) {
 			w := s.currentWindow(tn, feature, at)
 			prevStart, prevEnd := w.Start.Add(-time.Hour), w.Start
 			s.seed(tn, feature, stored{Balance: 40, Limit: 100, Index: w.Index - 1, Start: prevStart, End: &prevEnd})
-			mustStatus(t, s.do(http.MethodGet, "/v1/balance?tenant_external_id="+tn.External, s.runtime, ""), http.StatusOK)
+			// The read caches the tenant. Forty-five new tenants in a few
+			// seconds outrun the snapshot's miss limiter, which answers 503
+			// with a retry_after_ms (DR-039), so the read is retried.
+			until(t, "", func() response {
+				return s.do(http.MethodGet, "/v1/balance?tenant_external_id="+tn.External, s.runtime, "")
+			})
 
 			scan := func() { s.app.Worker.Sweep(ctx, w.Start.Add(-time.Millisecond), time.Now()) }
 			consume := func() response { return s.consume(s.runtime, feature, 10, tn.External, newKey()) }
