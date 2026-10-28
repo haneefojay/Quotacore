@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -129,8 +130,17 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 	// Readiness is decided here, from the same sources the process serves
 	// with, so a test of the assembly is a test of what ships (IP-13 D7,
 	// D14). The store term is the prober's; the draining term is main's.
-	ready := newReadinessState(termDataStore, termSnapshot, termMigrations, termDraining, termNormal)
+	ready := newReadinessState(termDataStore, termNoEviction, termSnapshot, termMigrations, termDraining, termNormal)
 	ready.Set(termDraining, true)
+	// A store that answers at start and may evict is refused outright
+	// (DR-048, deployment.md section 6). One that does not answer is left to
+	// the prober, as every other store fault is (NFR-A3).
+	policyCtx, cancelPolicy := context.WithTimeout(ctx, cfg.DataScriptTimeout)
+	mem, memErr := data.Memory(policyCtx)
+	cancelPolicy()
+	if memErr == nil && mem.Policy != store.EvictionPolicy {
+		return nil, fmt.Errorf("the data store's maxmemory-policy is %q; Quotacore runs only against noeviction, because any other policy may discard an idempotency record inside its window and charge a retry twice (DR-048)", mem.Policy)
+	}
 	current, err := db.MigrationsCurrent(ctx, dbConn)
 	if err != nil {
 		return nil, err
@@ -293,7 +303,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 	// (observability.md section 1.4).
 	db.StartPoolObserver(ctx, dbConn, metrics, 10*time.Second)
 	go probe(ctx, probeOptions{data: data, db: dbConn, deps: deps, ready: ready, log: log.With("job", "probe"),
-		timeout: cfg.DataScriptTimeout, pgWait: cfg.ControlPlaneTimeout, every: opt.probeEvery, slow: opt.probeSlow, warned: new(atomic.Bool)})
+		timeout: cfg.DataScriptTimeout, pgWait: cfg.ControlPlaneTimeout, every: opt.probeEvery, slow: opt.probeSlow, warned: new(atomic.Bool), policy: new(policyState)})
 
 	// Every (code, endpoint) cell the contract allows is warmed at zero, so the
 	// code label set of quotacore_errors_total is the catalogue (IP-07 DoD 7).

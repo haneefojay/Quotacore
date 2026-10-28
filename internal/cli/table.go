@@ -150,6 +150,7 @@ var commands = []Command{
 
 	// The process and the local operations (IP-11).
 	{Name: "serve", Kind: Local, Summary: "Run the service; no argument does the same"},
+	{Name: "healthcheck", Kind: Local, Summary: "Exit 0 if the service on this host is ready; the image's healthcheck"},
 	{Name: "verify-tenant", Kind: Local, Args: []string{"tenant"},
 		Summary: "Check one tenant's ledger against itself and its balances"},
 	{Name: "verify-all", Kind: Local, Summary: "Check every tenant"},

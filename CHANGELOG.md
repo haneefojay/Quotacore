@@ -12,6 +12,40 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **The reference deployment (`IP-15`).** A two-stage [Dockerfile](Dockerfile): a builder pinned
+  by digest, and a `scratch` runtime holding the static binary and `/tmp`, uid 65532, entrypoint
+  `quotacore`, healthcheck `quotacore healthcheck`. [docker-compose.yml](docker-compose.yml) is now
+  the whole reference stack: the service read-only, without capabilities, under
+  `no-new-privileges`, on host loopback only, with a 40 s stop grace; Postgres 16 and Valkey 8
+  pinned by digest; Postgres `scram-sha-256` only, with an init script that creates the
+  non-superuser `quotacore` role the service connects as; Valkey `noeviction` under a `maxmemory`,
+  with no persistence; and the stores on an internal network. `docker-compose.metrics.yml`
+  publishes the metrics listener for an outside scraper.
+- **The quickstart in the README**, identical to deployment.md §2 and run verbatim on a clean
+  runner by `tools/quickstart.sh`, which then checks J-1 step 6.
+- `quotacore healthcheck`, which asks the service's own `/readyz` and exits 0 only on `200`.
+- **The start-up check DR-048 asked for.** The service reads `maxmemory_policy` from `INFO memory`
+  and refuses to start against anything but `noeviction`; the prober reads it again, and a policy
+  changed under a running instance makes it unready as `data store refuses to evict`.
+- `test/reference`, the suite against the Compose stack and the built image: the restore drill and
+  T-14 with the real `quotacore rebuild`; T-13 at a 12 MB `maxmemory`; a stop under load and a
+  `SIGKILL`; a packet capture of the service's namespace with a negative control
+  (no egress); an upgrade from the previous build and a rollback by restore; the image's hardening,
+  size and layers; the SBOM; and two file-only tests, every Compose variable documented and the
+  README's quickstart equal to the guide's.
+- `tools/license-scan.ps1 -Image`: the licence gate over a whole image, every OS package's
+  copyright text and every file no package owns, and a CycloneDX SBOM naming the base, the OS
+  packages (none, for `scratch`, said explicitly) and the modules. `make sbom IMAGE=…` runs it. A
+  distroless control image fails it, naming `base-files`, `netbase` and `ca-certificates`.
+- `tools/idemsize`, which measures an idempotency record's cost in the fast store and a ledger
+  row's in Postgres; its report is
+  [ip-15-idempotency-footprint.md](docs/research/ip-15-idempotency-footprint.md).
+- CI: a `reference` workflow (the image, the quickstart, the suite, the image SBOM) on every pull
+  request, and `nightly.yml`, which runs it on a schedule once it is on `main`.
+- deployment.md §4.7, the Reference Compose file's own variables, and Q-27 (publishing and signing
+  the image), Q-28 (no command for consistency-and-recovery §4.2's steps 4 and 6) and Q-29
+  (`rebuild --set` keeps an estimated limit) in the register, each with a default.
+
 - **The `quotacore` CLI (`IP-14`).** `internal/cli`: one command for each of the contract's 32 admin
   operations, read from the contract by `operationId` so a route cannot drift from its command;
   `grant`, `set` and `rollover` at the top level; `init`, the quickstart's five calls, which asks
@@ -315,6 +349,26 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **The Compose file's role** (`IP-15`): from two development stores to the reference
+  deployment. The integration suite in CI now publishes the stores with `.github/compose.ci.yml`,
+  runs as the superuser it needs to create scratch databases, and has a scratch store of its own;
+  the `service` job runs the built image instead of the binary in a `postgres:16` container, and
+  the former `compose` job is part of `reference`.
+- **The data-store memory floor** (`IP-15`, deployment §5): 106 GiB, measured, replacing the
+  projected 24 GiB. A record costs 522.9 bytes at the contract's 255-character key and 266.9 at a
+  UUID's, so a deployment whose clients send UUIDs may size to 54 GiB; the old projection counted a
+  short key and value and no table. A ledger row costs Postgres 475 bytes with its indexes.
+- **The drain** (`IP-15`): a shutdown that overruns `QUOTACORE_SHUTDOWN_GRACE` closes the listener
+  and still gives the ledger five seconds to flush what the answered requests wrote, rather than
+  none.
+- **The pools' connection parameters** (`IP-15`, deployment §7): `search_path=public` and a
+  `statement_timeout` of `QUOTACORE_CONTROLPLANE_TIMEOUT` on every service pool; the local
+  operations' pool has no timeout, because a rebuild reads the whole ledger.
+- deployment.md §1 to §3, §6, §7, §11 and §12 item 2, consistency-and-recovery §4.1 (nightly, not
+  weekly), observability §4 and `IP-15`'s DoD items 5 to 9, by dated amendments.
+- **`IP-15` is `IN PROGRESS`**, opened 2026-10-27 before any file it owns exists, by a dated
+  amendment to its dependency on `IP-13`: the runbook review that `IP-13` waits on is performed on the
+  reference stack, in the same session as `IP-15`'s restore, and both phases close on that row.
 - **`IP-14` is `COMPLETE`**, opened and closed 2026-10-27 with 7 of 7 DoD items met. Item 1 names
   `init` as the one composite command, item 3 is read as corrected with `grant` or `set`, and item
   7's image half is `IP-15`'s, by dated notes; the scope's `quotacore worker` waits on `Q-13`.
@@ -712,6 +766,12 @@ exists, because a future implementer needs to know which statements are new.
   point-in-time records they are.
 
 ### Fixed
+
+- **A full store did not refuse writes** (`IP-15`, T-13). A script without a shebang is checked
+  against `maxmemory` only at its first write that may grow memory; the consume script's first
+  write is a `PERSIST`, which is not one, so every later `SET` and `HINCRBY` went through and a
+  store with a 12 MB limit grew past 70 MB. Every script now declares `#!lua`, under which the store
+  refuses the whole script while it is over its limit, and a test holds every script to it.
 
 - **A runbook command the binary refused** (`IP-14`): *Data store lost* ran
   `quotacore rebuild --apply` without the `--reason` a writing rebuild requires. The runbook test

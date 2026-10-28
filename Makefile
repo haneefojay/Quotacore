@@ -2,6 +2,10 @@ GO ?= go
 BINARY ?= bin/quotacore
 SBOM ?= dist/sbom.cdx.json
 CONTRACT ?= api/openapi.yaml
+# IMAGE, when set, makes license-check and sbom scan that built image, its OS packages and the
+# binary inside it, rather than a binary built here (IP-15 D18): make sbom IMAGE=quotacore:local
+IMAGE ?=
+SCAN = $(if $(IMAGE),-Image $(IMAGE),-Binary $(BINARY))
 OGEN_VERSION ?= v1.24.0
 OGEN ?= go run github.com/ogen-go/ogen/cmd/ogen@$(OGEN_VERSION)
 
@@ -95,20 +99,20 @@ check-docs:
 		printf 'neither pwsh nor powershell was found, so the specification cannot be checked\n' >&2; exit 1; \
 	fi
 
-license-check: binary
+license-check: $(if $(IMAGE),,binary)
 	@if command -v pwsh >/dev/null 2>&1; then \
-		pwsh -NoProfile -File tools/license-scan.ps1 -Binary $(BINARY); \
+		pwsh -NoProfile -File tools/license-scan.ps1 $(SCAN); \
 	elif command -v powershell >/dev/null 2>&1; then \
-		powershell -NoProfile -File tools/license-scan.ps1 -Binary $(BINARY); \
+		powershell -NoProfile -File tools/license-scan.ps1 $(SCAN); \
 	else \
 		printf 'neither pwsh nor powershell was found, so no licence can be checked\n' >&2; exit 1; \
 	fi
 
-sbom: binary
+sbom: $(if $(IMAGE),,binary)
 	@if command -v pwsh >/dev/null 2>&1; then \
-		pwsh -NoProfile -File tools/license-scan.ps1 -Binary $(BINARY) -SbomPath $(SBOM); \
+		pwsh -NoProfile -File tools/license-scan.ps1 $(SCAN) -SbomPath $(SBOM); \
 	elif command -v powershell >/dev/null 2>&1; then \
-		powershell -NoProfile -File tools/license-scan.ps1 -Binary $(BINARY) -SbomPath $(SBOM); \
+		powershell -NoProfile -File tools/license-scan.ps1 $(SCAN) -SbomPath $(SBOM); \
 	else \
 		printf 'neither pwsh nor powershell was found, so no SBOM can be produced\n' >&2; exit 1; \
 	fi

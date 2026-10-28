@@ -1,3 +1,10 @@
+#!lua
+-- The shebang declares this a flagged script, which the store refuses whole,
+-- before its first command, while it is over maxmemory (DR-048). Without it
+-- the store checks memory only at a script's first write, and only when that
+-- write is one that can grow memory: PERSIST is not, and the transition block
+-- runs one on every call, so a full store took every consume after it and
+-- noeviction refused nothing (IP-15, T-13).
 -- consume.lua: the deduction, as one indivisible step.
 --
 -- KEYS[1]  qc:{t:<tenant_id>}:bal:<feature_key>

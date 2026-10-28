@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,6 +32,15 @@ type probeOptions struct {
 	every   time.Duration // the store probe; zero is storeProbeEvery
 	slow    time.Duration // memory and Postgres; zero is memoryProbeEvery
 	warned  *atomic.Bool  // the unbounded-memory warning, given once
+	policy  *policyState  // the eviction-policy term (IP-15 D6)
+}
+
+// policyState remembers the store's last-read maxmemory-policy, so a change
+// is one log line and the store probe knows whether it has been read at all.
+type policyState struct {
+	mu    sync.Mutex
+	known bool
+	last  string
 }
 
 // probe watches the two dependencies until ctx ends: the store's clock every
@@ -59,6 +69,12 @@ func probe(ctx context.Context, o probeOptions) {
 		}
 		o.deps.DataStoreUp.Set(float64(now))
 		o.ready.Set(termDataStore, now == 1)
+		// A store that was down at start has never had its policy read; read
+		// it as soon as it answers rather than on the next slow tick, so
+		// readiness is not held back ten seconds by a term nobody checked.
+		if now == 1 && !o.policy.isKnown() {
+			o.memory(ctx)
+		}
 		if now == up || ctx.Err() != nil {
 			return
 		}
@@ -74,18 +90,7 @@ func probe(ctx context.Context, o probeOptions) {
 
 // slowProbe reads the store's memory and pings Postgres.
 func (o probeOptions) slowProbe(ctx context.Context) {
-	mctx, cancel := context.WithTimeout(ctx, o.timeout)
-	used, limit, err := o.data.Memory(mctx)
-	cancel()
-	if err == nil {
-		ratio := 0.0
-		if limit > 0 {
-			ratio = float64(used) / float64(limit)
-		} else if !o.warned.Swap(true) {
-			o.log.Warn("the data store has no maxmemory, so its memory ratio is reported as 0 and nothing bounds it (DR-048)")
-		}
-		o.deps.MemoryUsedRatio.Set(ratio)
-	}
+	o.memory(ctx)
 	pctx, cancel := context.WithTimeout(ctx, o.pgWait)
 	defer cancel()
 	up := 0.0
@@ -93,6 +98,56 @@ func (o probeOptions) slowProbe(ctx context.Context) {
 		up = 1
 	}
 	o.deps.ControlPlaneUp.Set(up)
+}
+
+// memory reads INFO memory once: the used-memory ratio, and the eviction
+// policy, which is a readiness term (DR-048). A store that may evict can
+// discard an idempotency record inside its window, so an instance against one
+// is not ready; it is not stopped, because a process that exits on a store
+// setting turns one CONFIG SET into a restart loop (IP-15 D6).
+func (o probeOptions) memory(ctx context.Context) {
+	mctx, cancel := context.WithTimeout(ctx, o.timeout)
+	m, err := o.data.Memory(mctx)
+	cancel()
+	if err != nil {
+		return
+	}
+	ratio := 0.0
+	if m.Limit > 0 {
+		ratio = float64(m.Used) / float64(m.Limit)
+	} else if !o.warned.Swap(true) {
+		o.log.Warn("the data store has no maxmemory, so its memory ratio is reported as 0 and nothing bounds it (DR-048)")
+	}
+	o.deps.MemoryUsedRatio.Set(ratio)
+	ok := m.Policy == store.EvictionPolicy
+	o.ready.Set(termNoEviction, ok)
+	if o.policy.changed(m.Policy) {
+		if ok {
+			o.log.Info("the data store refuses to evict again", "policy", m.Policy)
+		} else {
+			o.log.Error("the data store's maxmemory-policy is not noeviction, so it may discard an idempotency record inside its window; not ready (DR-048)", "policy", m.Policy)
+		}
+	}
+}
+
+func (p *policyState) isKnown() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.known
+}
+
+// changed records policy and reports whether it differs from the last one
+// read; the first read is a change only when it is not noeviction, so a
+// healthy start logs nothing.
+func (p *policyState) changed(policy string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	was, known := p.last, p.known
+	p.last, p.known = policy, true
+	if !known {
+		return policy != store.EvictionPolicy
+	}
+	return was != policy
 }
 
 // tick runs f now and every interval until ctx ends.

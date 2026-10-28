@@ -215,7 +215,7 @@ func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	conn, err := db.Open(ctx, cfg.DatabaseURL)
+	conn, err := openServicePool(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

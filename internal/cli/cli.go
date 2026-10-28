@@ -87,6 +87,9 @@ func Run(o Options) int {
 		if c.Name == "key mint" {
 			return o.mint(c, rest)
 		}
+		if c.Name == "healthcheck" {
+			return o.healthcheck(c, rest)
+		}
 		if len(rest) > 0 && isHelp(rest[0]) {
 			commandHelp(o.Stdout, c, nil)
 			return ExitOK
@@ -208,7 +211,7 @@ func Check(args []string) error {
 			err = checkArgs(c, f, pos)
 		}
 		return err
-	case c.Name == "key mint":
+	case c.Name == "key mint", c.Name == "healthcheck":
 		f := newFlags(c.Name)
 		pos, err := f.parse(rest)
 		if err == nil {
@@ -331,6 +334,57 @@ func (o Options) mint(c Command, args []string) int {
 	fmt.Fprintln(o.Stderr, shownOnce)
 	return ExitOK
 }
+
+// healthcheck asks the service on this host whether it is ready, for the
+// image's HEALTHCHECK, which has no shell or curl to ask with (IP-15 D4). It
+// calls /readyz on loopback at QUOTACORE_LISTEN_ADDR's port, never
+// QUOTACORE_URL, because a healthcheck reports on its own container. Ready is
+// 0 and anything else is ExitUnavailable; it prints nothing on success, and the
+// reason on stderr otherwise, which Docker keeps in the health log.
+func (o Options) healthcheck(c Command, args []string) int {
+	f := newFlags(c.Name)
+	pos, err := f.parse(args)
+	if errors.Is(err, flag.ErrHelp) {
+		commandHelp(o.Stdout, c, f)
+		return ExitOK
+	}
+	if err == nil {
+		err = checkArgs(c, f, pos)
+	}
+	if err != nil {
+		return o.usage(c, err)
+	}
+	base, err := baseURL("", func(k string) string {
+		if k == "QUOTACORE_URL" {
+			return ""
+		}
+		return o.Getenv(k)
+	})
+	if err != nil {
+		fmt.Fprintf(o.Stderr, "error: %v\n", err)
+		return ExitUsage
+	}
+	h := o.HTTP
+	if h == nil {
+		h = &http.Client{Timeout: healthcheckTimeout}
+	}
+	resp, err := h.Get(base.JoinPath("readyz").String())
+	if err != nil {
+		fmt.Fprintf(o.Stderr, "not ready: %v\n", err)
+		return ExitUnavailable
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		fmt.Fprintf(o.Stderr, "not ready: %d %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
+		return ExitUnavailable
+	}
+	return ExitOK
+}
+
+// healthcheckTimeout is shorter than Docker's default healthcheck timeout of
+// 30 s and the Compose file's 3 s, so the command answers before it is killed.
+const healthcheckTimeout = 2 * time.Second
 
 // shownOnce is the warning beside every plaintext a command prints (INV-K3).
 const shownOnce = "warning: this key is shown once and cannot be recovered; store it now (INV-K3)"

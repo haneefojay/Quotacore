@@ -1,3 +1,6 @@
+#!lua
+-- Flagged, so a store over maxmemory refuses it whole (DR-048); consume.lua
+-- says why.
 -- check.lua: may this request be served, and what is the state now.
 --
 -- KEYS[1]  qc:{t:<tenant_id>}:bal:<feature_key>

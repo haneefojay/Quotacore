@@ -66,7 +66,7 @@ var allowedLogKeys = map[string]bool{
 	"pending": true, "events": true, "dropped": true, "event_id": true, "event_type": true,
 	"events_deleted": true, "audit_deleted": true, "dead_letters_replayed": true, "reversed": true,
 	"referred": true, "verified": true, "findings": true, "kind": true, "retry_in": true, "detail": true,
-	"refund": true,
+	"refund": true, "policy": true,
 }
 
 // forbiddenLogKeys are what section 2.1 and DR-043 keep out of every line,

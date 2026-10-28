@@ -66,37 +66,29 @@ jobs:
           path: dist/sbom.cdx.json
           if-no-files-found: error
 
-  compose:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Development backing services reach a healthy state
-        run: docker compose up -d --wait
-      - name: The fast store refuses to evict
-        run: |
-          test "$(docker compose exec -T valkey valkey-cli config get maxmemory-policy | tail -n 1)" = "noeviction"
-      - name: Report
-        if: always()
-        run: docker compose ps
+  # The reference stack end to end (IP-15). It also asserts everything the former `compose` job
+  # did: the stores reach a healthy state and the fast store refuses to evict.
+  reference:
+    uses: ./.github/workflows/reference.yml
 
   service:
     runs-on: ubuntu-latest
+    env:
+      DB_URL: 'postgresql://quotacore:quotacore_dev_only@postgres:5432/quotacore?sslmode=disable'
+      REDIS_URL: 'redis://valkey:6379/0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.1'
           check-latest: false
-      - name: Backing services
+      - name: Build the image
+        run: docker compose build quotacore
+        env:
+          QUOTACORE_REVISION: ${{ github.sha }}
+      - name: The reference stack, with the stores published for the integration suite
+        # IP-15: the service under test is the image, as the reference file runs it.
         run: docker compose -f docker-compose.yml -f .github/compose.ci.yml up -d --wait
-      - name: Build the binary
-        run: go build -o bin/quotacore ./cmd/quotacore
-      - name: Start the service on the compose network
-        run: |
-          docker run -d --name quotacore-under-test --network quotacore_default -p 8080:8080 \
-            -e QUOTACORE_DATABASE_URL='postgresql://quotacore:quotacore_dev_only@postgres:5432/quotacore?sslmode=disable' \
-            -e QUOTACORE_REDIS_URL='redis://valkey:6379/0' \
-            -v "$PWD/bin/quotacore:/app/quotacore:ro" --entrypoint /app/quotacore postgres:16
       - name: Liveness answers, and a fresh install becomes ready
         # IP-13 finding 2: readiness needs no tenant, so an empty install is ready.
         run: |
@@ -127,22 +119,21 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/v1/admin/tenants)" = "401"
       - name: Refuses to start on an unacknowledged bootstrap key
         run: |
-          if docker run --rm --network quotacore_default \
-            -e QUOTACORE_DATABASE_URL='postgresql://quotacore:quotacore_dev_only@postgres:5432/quotacore?sslmode=disable' \
-            -e QUOTACORE_REDIS_URL='redis://valkey:6379/0' \
-            -e QUOTACORE_BOOTSTRAP_ADMIN_KEY=qc_admin_abc.def \
-            -v "$PWD/bin/quotacore:/app/quotacore:ro" --entrypoint /app/quotacore postgres:16; then
+          if docker run --rm --network quotacore_internal \
+            -e QUOTACORE_DATABASE_URL="$DB_URL" -e QUOTACORE_REDIS_URL="$REDIS_URL" \
+            -e QUOTACORE_BOOTSTRAP_ADMIN_KEY=qc_admin_abc.def quotacore:local; then
             echo 'the service started with an unacknowledged bootstrap key, which NFR-S9 forbids' >&2
             exit 1
           fi
       - name: An acknowledged bootstrap key opens the admin API
         run: |
-          key="$(printf 'qc_admin_%s.%s' "$(openssl rand -hex 8)" "$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')")"
-          docker run -d --name quotacore-bootstrap --network quotacore_default -p 8081:8080 \
-            -e QUOTACORE_DATABASE_URL='postgresql://quotacore:quotacore_dev_only@postgres:5432/quotacore?sslmode=disable' \
-            -e QUOTACORE_REDIS_URL='redis://valkey:6379/0' \
-            -e QUOTACORE_BOOTSTRAP_ADMIN_KEY="$key" -e QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK=1 \
-            -v "$PWD/bin/quotacore:/app/quotacore:ro" --entrypoint /app/quotacore postgres:16
+          key="$(docker run --rm quotacore:local key mint)"
+          # Published from the network with a gateway, joined to the stores' before it starts.
+          docker create --name quotacore-bootstrap --network quotacore_published -p 127.0.0.1:8081:8080 \
+            -e QUOTACORE_DATABASE_URL="$DB_URL" -e QUOTACORE_REDIS_URL="$REDIS_URL" \
+            -e QUOTACORE_BOOTSTRAP_ADMIN_KEY="$key" -e QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK=1 quotacore:local
+          docker network connect quotacore_internal quotacore-bootstrap
+          docker start quotacore-bootstrap
           for attempt in $(seq 1 30); do
             if curl -fsS -o /dev/null http://127.0.0.1:8081/healthz; then break; fi
             sleep 1
@@ -156,22 +147,37 @@ jobs:
           docker rm -f quotacore-bootstrap
       - name: Refuses to start on a shortened idempotency window
         run: |
-          if docker run --rm --network quotacore_default \
-            -e QUOTACORE_DATABASE_URL='postgresql://quotacore:quotacore_dev_only@postgres:5432/quotacore?sslmode=disable' \
-            -e QUOTACORE_REDIS_URL='redis://valkey:6379/0' \
-            -e QUOTACORE_IDEMPOTENCY_TTL=1h \
-            -v "$PWD/bin/quotacore:/app/quotacore:ro" --entrypoint /app/quotacore postgres:16; then
+          if docker run --rm --network quotacore_internal \
+            -e QUOTACORE_DATABASE_URL="$DB_URL" -e QUOTACORE_REDIS_URL="$REDIS_URL" \
+            -e QUOTACORE_IDEMPOTENCY_TTL=1h quotacore:local; then
             echo 'the service started with a shortened idempotency window, which DR-029 pins' >&2
             exit 1
           fi
+      - name: Refuses to start against a store that may evict
+        # DR-048, IP-15 D6: the policy is read from INFO memory at start.
+        run: |
+          docker compose -f docker-compose.yml -f .github/compose.ci.yml exec -T valkey-scratch \
+            valkey-cli config set maxmemory-policy allkeys-lru
+          if out="$(docker run --rm --network quotacore_published -e QUOTACORE_DATABASE_URL="$DB_URL" \
+            -e QUOTACORE_REDIS_URL='redis://valkey-scratch:6379/0' quotacore:local 2>&1)"; then
+            echo 'the service started against an evicting store, which DR-048 forbids' >&2
+            exit 1
+          fi
+          echo "$out"
+          grep -q 'Quotacore runs only against noeviction' <<<"$out"
+          docker compose -f docker-compose.yml -f .github/compose.ci.yml exec -T valkey-scratch \
+            valkey-cli config set maxmemory-policy noeviction
       - name: Integration tests against real backing services
+        # As the superuser, which the suite needs to create its scratch databases; the service
+        # itself connects as the non-superuser role (deployment.md section 7).
         run: go test -count=1 ./...
         env:
           QUOTACORE_REQUIRE_INTEGRATION: '1'
-          QUOTACORE_DATABASE_URL: 'postgresql://quotacore:quotacore_dev_only@127.0.0.1:15432/quotacore?sslmode=disable'
+          QUOTACORE_DATABASE_URL: 'postgresql://postgres:quotacore_dev_only@127.0.0.1:15432/quotacore?sslmode=disable'
           QUOTACORE_REDIS_URL: 'redis://127.0.0.1:16379/0'
+          QUOTACORE_SCRATCH_REDIS_URL: 'redis://127.0.0.1:16380/0'
       - name: Report
         if: always()
         run: |
-          docker logs quotacore-under-test || true
+          docker compose -f docker-compose.yml -f .github/compose.ci.yml logs --no-color quotacore || true
           docker compose -f docker-compose.yml -f .github/compose.ci.yml ps

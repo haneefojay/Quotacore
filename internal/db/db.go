@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -24,9 +25,32 @@ const (
 )
 
 func Open(ctx context.Context, url string) (*sql.DB, error) {
+	return OpenWith(ctx, url, OpenOptions{})
+}
+
+// OpenOptions are the per-connection settings deployment.md section 7 asks
+// for. They are runtime parameters sent at connect, so every connection the
+// pool opens has them and none depends on a SET that a reset could lose.
+type OpenOptions struct {
+	// StatementTimeout bounds every statement on the pool, so a hung admin
+	// query fails rather than holding a slot. Zero leaves the server's.
+	StatementTimeout time.Duration
+}
+
+// OpenWith is Open with the options. The search_path is always explicit
+// (public, the one schema the migrations write), unless the URL sets its own,
+// so a server or role default cannot point the service at another schema.
+func OpenWith(ctx context.Context, url string, opts OpenOptions) (*sql.DB, error) {
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
+	}
+	params := cfg.ConnConfig.RuntimeParams
+	if _, set := params["search_path"]; !set {
+		params["search_path"] = "public"
+	}
+	if opts.StatementTimeout > 0 {
+		params["statement_timeout"] = strconv.FormatInt(opts.StatementTimeout.Milliseconds(), 10)
 	}
 	db := stdlib.OpenDB(*cfg.ConnConfig)
 	if err := db.PingContext(ctx); err != nil {

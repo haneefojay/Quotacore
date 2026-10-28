@@ -224,6 +224,15 @@ recovery procedure that has never been run is a hypothesis.
 > the real code by IP-11's integration tests; the drill itself, run nightly against the Compose
 > stack with the real binary, is `IP-15`'s.
 
+> **Amended 2026-10-27 (`IP-15`).** "Weekly" above is nightly, which is what `IP-15`'s DoD 5 and
+> [testing-strategy.md](testing-strategy.md) §9 say: `TestTheRestoreDrill` and
+> `TestAStoreLossInsideTheWindowIsReversed` run in CI's `reference` job on every pull request, and
+> nightly from `.github/workflows/nightly.yml` once that workflow is on the default branch, since
+> GitHub runs a schedule only from there. The drill follows `data-store-lost.md`: the fleet
+> read-only first, the store flushed, `quotacore rebuild` as a dry run and then `--apply`,
+> `--set` for each tenant-feature it flags, and normal mode; every balance must then be exactly
+> what it was before the loss, and no answer in between may show more than that.
+
 ### 4.2 Postgres lost — restore from backup
 
 **Impact.** Audit history and ledger history are truncated to the backup point. Configuration is
