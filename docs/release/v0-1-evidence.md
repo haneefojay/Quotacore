@@ -32,7 +32,7 @@ Compose stack and the built image on every pull request.
 | `T-02` | 50 deliveries of one key deduct once and answer one state | `TestT02FiftyDuplicateDeliveriesAreChargedOnce`, `TestT02AReplayReportsTheRecordedStateNotTheLiveOne`, `TestT02FiftyDeliveriesOverHTTP` | integration |
 | `T-03` | A reused key with a different operation is refused and the record survives | `TestT03AReusedKeyIsRefusedAndTheRecordSurvives` | integration |
 | `T-04` | The ceiling `limit + bonus` holds | `TestT04TheCeilingHolds` | integration |
-| `T-05` | A transition never moves backwards | `TestT05TheTransitionIsMonotonic` | integration |
+| `T-05` | A transition never moves backwards, and the request path and the reset worker racing on one boundary roll it once | `TestT05TheTransitionIsMonotonic`, `TestTheWorkerAndTheRequestPathRollABoundaryOnce` | integration |
 | `T-06` | Missed boundaries are skipped, not replayed, and a plan applied across an outage converges | `TestT06MissedBoundariesSkippedIsNotMissed`, `TestT06PlanAppliedAcrossAnOutage` | integration |
 | `T-07` | Every row of the boundary table | `TestBoundaryMatrix` | integration |
 | `T-08` | A refusal changes nothing | `TestT08ADenialChangesNothing`, `TestT08EveryRefusalChangesNothing` | integration |

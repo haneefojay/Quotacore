@@ -1,0 +1,166 @@
+name: heavy
+
+# IP-16's heavy suites (D11): load, chaos, the clock pair, T-11 and the property tests at scale, and
+# the soak. Each is too long or too intrusive for every push. nightly.yml calls this on a schedule,
+# and full-suite.yml calls it on a pull request that carries the `full-suite` label, which is how the
+# evidence of record for a release is produced before the branch reaches main.
+#
+# Every figure is measured on the stack of test/harness/compose.perf.yml: the service and both
+# stores pinned to CPUs 0 and 1, which is NFR section 0's reference host, with the load generator on
+# CPUs 2 and 3. Each job writes the runner's CPU, kernel, image version and the images' digests
+# beside its figures (DoD 7), and uploads both as an artifact that v0-1-evidence.md cites.
+
+on:
+  workflow_call:
+    inputs:
+      soak:
+        description: Run the soak, which takes 5 h 30 m
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+      - name: Build the image from this commit
+        run: docker compose build quotacore
+        env:
+          QUOTACORE_REVISION: ${{ github.sha }}
+      - name: Record the environment
+        run: tools/environment.sh evidence/environment.txt
+      - name: The load suite, the generator on CPUs 2 and 3
+        # Built first, so the compiler does not share the generator's CPUs with the measurement.
+        run: |
+          go test -c -o load.test ./test/load/
+          taskset -c 2,3 ./load.test -test.v -test.count=1 -test.timeout=140m -test.skip TestSoak
+        env:
+          QUOTACORE_LOAD: '1'
+          QUOTACORE_REQUIRE_LOAD: '1'
+          QUOTACORE_EVIDENCE_DIR: ${{ github.workspace }}/evidence
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: evidence-load
+          path: evidence/
+          if-no-files-found: error
+
+  chaos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+      - name: Build the image from this commit
+        run: docker compose build quotacore
+        env:
+          QUOTACORE_REVISION: ${{ github.sha }}
+      - name: The chaos suite against the stack
+        run: go test -v -count=1 -timeout 40m -skip TestChaosClockJump ./test/chaos/
+        env:
+          QUOTACORE_CHAOS: '1'
+          QUOTACORE_REQUIRE_CHAOS: '1'
+
+  clock:
+    # A job of its own, because it moves the runner's clock (D8). The test puts it back, and the
+    # last step does too, whatever happened.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+      - name: Build the image from this commit
+        run: docker compose build quotacore
+        env:
+          QUOTACORE_REVISION: ${{ github.sha }}
+      - name: The clock pair
+        run: |
+          go test -c -o chaos.test ./test/chaos/
+          ./chaos.test -test.v -test.count=1 -test.run TestChaosClockJump
+        env:
+          QUOTACORE_CHAOS: '1'
+          QUOTACORE_REQUIRE_CHAOS: '1'
+          QUOTACORE_CHAOS_CLOCK: '1'
+      - name: Put the clock back
+        if: always()
+        run: |
+          sudo timedatectl set-ntp true || true
+          sudo chronyc makestep 2>/dev/null || true
+          date -u
+
+  deep:
+    # T-11 at 5,000 operations and the property tests at thousands of sequences (D10, D15), against
+    # the stores the integration suite uses.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+      - name: The stores, published on loopback
+        run: docker compose -f docker-compose.yml -f .github/compose.ci.yml up -d --wait postgres valkey valkey-scratch
+      - name: T-11 at 5,000 operations
+        run: go test -count=1 -timeout 30m -run TestT11 -v ./cmd/quotacore/
+        env:
+          QUOTACORE_T11_OPERATIONS: '5000'
+          QUOTACORE_REQUIRE_INTEGRATION: '1'
+          QUOTACORE_DATABASE_URL: 'postgresql://postgres:quotacore_dev_only@127.0.0.1:15432/quotacore?sslmode=disable'
+          QUOTACORE_REDIS_URL: 'redis://127.0.0.1:16379/0'
+          QUOTACORE_SCRATCH_REDIS_URL: 'redis://127.0.0.1:16380/0'
+      - name: The property tests at 5,000 sequences
+        run: |
+          go test -count=1 -timeout 30m -run TestProperty ./internal/script/ -rapid.checks=5000
+          go test -count=1 -timeout 10m -run TestProperty ./internal/dataplane/ -rapid.checks=20000
+        env:
+          QUOTACORE_REQUIRE_INTEGRATION: '1'
+          QUOTACORE_DATABASE_URL: 'postgresql://postgres:quotacore_dev_only@127.0.0.1:15432/quotacore?sslmode=disable'
+          QUOTACORE_REDIS_URL: 'redis://127.0.0.1:16379/0'
+          QUOTACORE_SCRATCH_REDIS_URL: 'redis://127.0.0.1:16380/0'
+
+  soak:
+    if: inputs.soak
+    runs-on: ubuntu-latest
+    # A hosted job ends at 6 h; the soak is 5 h 30 m of it (D4).
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+      - name: Build the image from this commit
+        run: docker compose build quotacore
+        env:
+          QUOTACORE_REVISION: ${{ github.sha }}
+      - name: Record the environment
+        run: tools/environment.sh evidence/environment.txt
+      - name: The soak, the generator on CPUs 2 and 3
+        run: |
+          go test -c -o load.test ./test/load/
+          taskset -c 2,3 ./load.test -test.v -test.count=1 -test.timeout=345m -test.run TestSoak
+        env:
+          QUOTACORE_SOAK: '1'
+          QUOTACORE_REQUIRE_SOAK: '1'
+          QUOTACORE_EVIDENCE_DIR: ${{ github.workspace }}/evidence
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: evidence-soak
+          path: evidence/
+          if-no-files-found: error

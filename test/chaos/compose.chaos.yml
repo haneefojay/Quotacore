@@ -1,0 +1,9 @@
+# IP-16's disk-full override (testing-strategy.md section 6): Postgres keeps its data on a 256 MiB
+# tmpfs instead of the named volume, so the chaos suite can fill the disk under it and free it again
+# without touching the host's.
+services:
+  postgres:
+    environment:
+      PGDATA: /pgtmp/data
+    tmpfs:
+      - /pgtmp:size=256m,mode=1777

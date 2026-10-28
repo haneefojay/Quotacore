@@ -66,6 +66,11 @@ type Config struct {
 	// section 4.1, and how often the reconciliation pass runs (S1).
 	StartupMode       string
 	ReconcileInterval time.Duration
+
+	// The IP-16 keys: the reset worker of deployment.md section 4.3 (Q-13).
+	WorkerEnabled     bool
+	ResetScanInterval time.Duration
+	ResetBatchSize    int
 }
 
 // The startup modes (deployment.md section 4.1).
@@ -118,6 +123,10 @@ func Load(getenv Getenv) (Config, error) {
 
 		StartupMode:       ModeNormal,
 		ReconcileInterval: 5 * time.Minute,
+
+		WorkerEnabled:     true,
+		ResetScanInterval: 60 * time.Second,
+		ResetBatchSize:    500,
 	}
 	if c.DatabaseURL == "" {
 		return c, fmt.Errorf("QUOTACORE_DATABASE_URL is required and is not set")
@@ -283,6 +292,9 @@ func Load(getenv Getenv) (Config, error) {
 	if err := loadReconcile(getenv, &c); err != nil {
 		return c, err
 	}
+	if err := loadWorker(getenv, &c); err != nil {
+		return c, err
+	}
 	proxies, err := admin.ParseProxies(getenv("QUOTACORE_TRUSTED_PROXIES"))
 	if err != nil {
 		return c, fmt.Errorf("QUOTACORE_TRUSTED_PROXIES: %w", err)
@@ -371,6 +383,37 @@ func loadReconcile(getenv Getenv, c *Config) error {
 			return fmt.Errorf("QUOTACORE_RECONCILE_INTERVAL is %q, which is shorter than a minute", raw)
 		}
 		c.ReconcileInterval = d
+	}
+	return nil
+}
+
+// loadWorker reads the three reset-worker keys (deployment.md section 4.3,
+// Q-13). A scan more often than a second would be load rather than accuracy,
+// and a batch of zero would scan nothing.
+func loadWorker(getenv Getenv, c *Config) error {
+	if raw := getenv("QUOTACORE_WORKER_ENABLED"); raw != "" {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return fmt.Errorf("QUOTACORE_WORKER_ENABLED is %q, which is not true or false", raw)
+		}
+		c.WorkerEnabled = b
+	}
+	if raw := getenv("QUOTACORE_RESET_SCAN_INTERVAL"); raw != "" {
+		d, err := parseDuration(raw, "QUOTACORE_RESET_SCAN_INTERVAL")
+		if err != nil {
+			return err
+		}
+		if d < time.Second {
+			return fmt.Errorf("QUOTACORE_RESET_SCAN_INTERVAL is %q, which is shorter than a second", raw)
+		}
+		c.ResetScanInterval = d
+	}
+	if raw := getenv("QUOTACORE_RESET_BATCH_SIZE"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			return fmt.Errorf("QUOTACORE_RESET_BATCH_SIZE is %q, which is not an integer of at least 1", raw)
+		}
+		c.ResetBatchSize = n
 	}
 	return nil
 }

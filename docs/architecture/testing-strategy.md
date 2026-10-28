@@ -259,7 +259,7 @@ The generator is not a fuzzer over bytes; it is a generator over **valid operati
 | The same key never applies twice | Random sequences with deliberate repeats | One deduction per key, always |
 | `balance == opening + Σ(delta)` per cycle | Random sequences crossing boundaries | The DR-042 identity holds for every cycle |
 | The projected window equals the computed window | Random anchors, intervals, zones and times | The transition's view and the engine's pure function always agree |
-| Rounding and formatting round-trip | Random instants and zones | A rendered timestamp parses back to the same instant at the same offset |
+| Rounding and formatting round-trip | Random instants and zones | A rendered timestamp parses back to the same instant at the same offset. Amended 2026-10-28 (`IP-16`): for a boundary, the same instant rounded up to its second ([api-conventions.md](api-conventions.md#3-time) §3) |
 
 **Shrinking is mandatory.** A property test that reports a violation with a 4,000-step sequence
 and no minimal example will be ignored, and therefore will not be fixed. The generator shrinks to

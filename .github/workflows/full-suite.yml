@@ -1,0 +1,25 @@
+name: full-suite
+
+# The heavy suites on a pull request (IP-16 D11). GitHub runs a schedule only from the default
+# branch, so before `dev` reaches main the nightly suites cannot run on a schedule. A pull request
+# that carries the `full-suite` label runs them here instead, and one that also carries `soak` runs
+# the 5 h 30 m soak. The release's evidence of record is the run on the pull request that closes
+# IP-16.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: full-suite-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  heavy:
+    if: contains(github.event.pull_request.labels.*.name, 'full-suite')
+    uses: ./.github/workflows/heavy.yml
+    with:
+      soak: ${{ contains(github.event.pull_request.labels.*.name, 'soak') }}

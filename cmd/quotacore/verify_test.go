@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -72,7 +74,7 @@ func foundOf(fs []reconcile.Finding) []found {
 }
 
 // TestT11EveryCycleReconcilesAndAMismatchIsReported is IP-11 DoD 1 and T-11:
-// over a seeded dataset in three zones, verify-all and the pass find
+// over a seeded dataset in the four zones of testing-strategy section 11, verify-all and the pass find
 // nothing; then five faults, one per tenant-feature, are each found under
 // their own kind and tenant-feature, counted once across two passes, and
 // corrected by nothing (DR-042, INV-C4, D1).
@@ -81,9 +83,22 @@ func TestT11EveryCycleReconcilesAndAMismatchIsReported(t *testing.T) {
 		o.appender = func(l *db.Ledger) ledger.Appender { return dropping{l} }
 	})
 	seed := time.Now().UnixNano()
-	t.Logf("seed %d", seed)
-	tenants, features, _ := s.workload(t, rand.New(rand.NewSource(seed)), []string{"UTC", "America/New_York", "Asia/Kolkata"},
-		6, 600)
+	if raw := os.Getenv("QUOTACORE_T11_SEED"); raw != "" {
+		seed, _ = strconv.ParseInt(raw, 10, 64)
+	}
+	// Per commit, 600 operations over 6 tenants; the nightly run sets
+	// QUOTACORE_T11_OPERATIONS to 5,000 over 20 (IP-16 D15).
+	n, ops := 6, 600
+	if raw := os.Getenv("QUOTACORE_T11_OPERATIONS"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < ops {
+			t.Fatalf("QUOTACORE_T11_OPERATIONS=%q is not a count of at least %d", raw, ops)
+		}
+		n, ops = max(n, v/250), v
+	}
+	t.Logf("seed %d, %d tenants, %d operations", seed, n, ops)
+	tenants, features, _ := s.workload(t, rand.New(rand.NewSource(seed)),
+		[]string{"UTC", "Europe/Berlin", "America/New_York", "Asia/Kolkata"}, n, ops)
 	hourly, monthly, never := features[0], features[1], features[2]
 	s.flush()
 	if code, v := s.verifyAll(); code != exitClean || len(v.Findings) != 0 || v.Verified < len(tenants)*len(features) {
