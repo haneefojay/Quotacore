@@ -107,6 +107,10 @@ func TestReadyFuncLoggingIsSafeForConcurrentProbes(t *testing.T) {
 		s.Set("tenant", i%2 == 0)
 		s.Set("draining", i%3 != 0)
 	}
+	// The flips can finish before any probe runs again, and a probe can then
+	// see stop first, so one more synchronous probe logs the transition: the
+	// terms now differ from those the first probe logged.
+	f()
 	close(stop)
 	wg.Wait()
 

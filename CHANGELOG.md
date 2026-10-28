@@ -849,6 +849,9 @@ exists, because a future implementer needs to know which statements are new.
   full-suite run). It set the clock to the second, dropping up to a second of the jump, and the
   tenant's daily boundary kept the anchor's milliseconds. It now sets the clock to the nanosecond and
   jumps a day and five seconds.
+- **`TestReadyFuncLoggingIsSafeForConcurrentProbes` depended on the scheduler** (`IP-01`'s test,
+  failing twice running on `IP-16`'s branch). The flips could finish and `stop` close before any
+  probe saw a changed term. One synchronous probe after the flips now logs the transition.
 - **A deleted tenant was still served by the instance that deleted it** (`IP-16`, found by `T-15`,
   DR-047). A tenant in the snapshot stayed there until the invalidation came back over pub/sub, so a
   consume sent after the delete's `200`, to the same instance, could complete. The admin routes now
