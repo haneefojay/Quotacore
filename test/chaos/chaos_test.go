@@ -101,10 +101,12 @@ func TestChaosPostgresDiskFull(t *testing.T) {
 	t.Logf("on a full disk: %d writes failed, %d were acknowledged and kept", failed, len(acknowledged))
 }
 
-// shiftClock moves the host's clock, which every container shares, by d.
+// shiftClock moves the host's clock, which every container shares, by d, to
+// the nanosecond: a target cut to the second could land up to a second short
+// of a boundary the test means to cross.
 func shiftClock(t *testing.T, d time.Duration) {
 	t.Helper()
-	target := time.Now().Add(d).UTC().Format("2006-01-02 15:04:05")
+	target := time.Now().Add(d).UTC().Format("2006-01-02 15:04:05.000000000")
 	if out, err := exec.Command("sudo", "-n", "date", "-u", "-s", target).CombinedOutput(); err != nil {
 		t.Fatalf("set the clock to %s: %v: %s", target, err, out)
 	}
@@ -147,9 +149,12 @@ func TestChaosClockJump(t *testing.T) {
 	})
 	_ = exec.Command("sudo", "-n", "timedatectl", "set-ntp", "false").Run()
 
+	// A day and a few seconds, so the jump crosses the daily boundary however
+	// long the calls since the tenant was created took.
+	jump := 24*time.Hour + 5*time.Second
 	before, _ := harness.Scrape()
-	shiftClock(t, 24*time.Hour)
-	shifted = 24 * time.Hour
+	shiftClock(t, jump)
+	shifted = jump
 	status, body := consume(s, token, "clock-t", "clock.f", 1, "chaos-clock-2")
 	if status != 200 || body["balance"] != float64(99) {
 		t.Fatalf("+24 h: %d %v, want the boundary crossed and a fresh allowance of 100 less 1", status, body)
@@ -160,7 +165,7 @@ func TestChaosClockJump(t *testing.T) {
 	}
 	window := body["cycle_end"]
 
-	shiftClock(t, -24*time.Hour)
+	shiftClock(t, -jump)
 	shifted = 0
 	for i := range 5 {
 		status, body := consume(s, token, "clock-t", "clock.f", 1, "chaos-clock-3-"+strconv.Itoa(i))

@@ -845,6 +845,10 @@ exists, because a future implementer needs to know which statements are new.
   first and last thirds differed by 0.4 ms. "p99 stable" is now gated on the service's own per-minute
   p99 from its access log, as Q-30 gates every latency figure, as the median of the last third of the
   run's minutes less the median of the first, within 1 ms; both creeps are recorded.
+- **`TestChaosClockJump` could land short of the boundary it meant to cross** (`IP-16`, second
+  full-suite run). It set the clock to the second, dropping up to a second of the jump, and the
+  tenant's daily boundary kept the anchor's milliseconds. It now sets the clock to the nanosecond and
+  jumps a day and five seconds.
 - **A deleted tenant was still served by the instance that deleted it** (`IP-16`, found by `T-15`,
   DR-047). A tenant in the snapshot stayed there until the invalidation came back over pub/sub, so a
   consume sent after the delete's `200`, to the same instance, could complete. The admin routes now
