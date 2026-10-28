@@ -85,7 +85,15 @@ import (
 // `internal/cli` is here because IP-14 owns it: the administration commands.
 // It is a client of the contract over HTTP and imports no store, script or
 // SQL package, so it can decide nothing about a balance; the symbol rules
-// hold for it unchanged. The name of this test is kept
+// hold for it unchanged.
+//
+// `test/reference` and `tools/idemsize` are here because IP-15 owns them. The
+// first is the suite against the Compose stack: it drives the built image over
+// HTTP and the CLI and holds no code the service runs. The second measures what
+// an idempotency record costs by calling the real consume script through
+// internal/script, so the symbol rules hold for it unchanged: it decides
+// nothing, and it runs only against a scratch store it refuses to touch unless
+// empty. The name of this test is kept
 // for its history; what it guards now is that the package set is exactly the
 // set the phases own, and that the calendar and the script stay single.
 func TestNoProductBehaviour(t *testing.T) {
@@ -113,6 +121,8 @@ func TestNoProductBehaviour(t *testing.T) {
 		"internal/script":        true,
 		"internal/store":         true,
 		"tools/gendocs":          true,
+		"tools/idemsize":         true,
+		"test/reference":         true,
 	}
 	gotPackages := map[string]bool{}
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {

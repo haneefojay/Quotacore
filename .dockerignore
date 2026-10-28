@@ -1,0 +1,11 @@
+# The build context is the module and nothing else: no history, no build output, no local
+# environment file with a key in it.
+.git
+.github
+bin
+dist
+.ogen-check
+.env
+.env.*
+*.test
+coverage.out

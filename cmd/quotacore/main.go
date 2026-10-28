@@ -31,6 +31,7 @@ import (
 // not among them: cached tenants enforce through a control-plane outage.
 const (
 	termDataStore  = "data store answered within the timeout"
+	termNoEviction = "data store refuses to evict"
 	termSnapshot   = "snapshot has read the configuration"
 	termMigrations = "migrations are current"
 	termDraining   = "not draining"
@@ -104,19 +105,28 @@ func run(logp **slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	dbConn, err := db.Open(ctx, cfg.DatabaseURL)
+	// Migrations and the bootstrap run on a connection of their own with no
+	// statement timeout: a migration may wait on another instance's lock, or
+	// build an index, for longer than an admin query may take.
+	setup, err := db.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	if err := db.Migrate(ctx, setup, db.MigrateOptions{Disabled: !cfg.Migrate}); err != nil {
+		setup.Close()
+		return err
+	}
+	if err := bootstrap(ctx, cfg, log, setup); err != nil {
+		setup.Close()
+		return err
+	}
+	setup.Close()
+
+	dbConn, err := openServicePool(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer dbConn.Close()
-
-	if err := db.Migrate(ctx, dbConn, db.MigrateOptions{Disabled: !cfg.Migrate}); err != nil {
-		return err
-	}
-
-	if err := bootstrap(ctx, cfg, log, dbConn); err != nil {
-		return err
-	}
 
 	data, err := store.Open(store.Options{URL: cfg.RedisURL, DataScriptTimeout: cfg.DataScriptTimeout})
 	if err != nil {
@@ -176,18 +186,51 @@ func run(logp **slog.Logger) error {
 
 	app.Ready.Set(termDraining, false)
 	log = (*logp).With("job", "shutdown")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownGrace)
-	defer cancel()
-	log.Info("draining", "grace", cfg.ShutdownGrace.String())
-	if err := srv.Shutdown(shutdownCtx); err != nil {
+	if err := shutdown(srv, metricsSrv, app.Drain, cfg.ShutdownGrace, log); err != nil {
 		return err
 	}
-	// Every request has answered, so nothing more is enqueued; the ledger
-	// writes what is queued within what remains of the grace (IP-12 D8).
-	app.Drain(shutdownCtx)
-	_ = metricsSrv.Shutdown(shutdownCtx)
 	log.Info("stopped")
 	return nil
+}
+
+// openServicePool opens the pool the admin API, the snapshot and the key cache
+// read through, with deployment.md section 7's per-connection settings: an
+// explicit search_path, and a statement timeout of QUOTACORE_CONTROLPLANE_TIMEOUT
+// so a hung admin query fails rather than holding a slot (IP-15 D19). The
+// ledger, fence and reconciliation pools are their own, and keep the server's
+// timeout, because a reconciliation read is bounded by its own job.
+func openServicePool(ctx context.Context, cfg Config) (*sql.DB, error) {
+	return db.OpenWith(ctx, cfg.DatabaseURL, db.OpenOptions{StatementTimeout: cfg.ControlPlaneTimeout})
+}
+
+// ledgerDrainAfterOverrun is the ledger's own budget when the HTTP drain used
+// the whole grace. It is short and separate, because the events of requests
+// that did answer are history a customer will dispute, and a drain that
+// overran is exactly when they are most likely to be queued (IP-15 D9).
+const ledgerDrainAfterOverrun = 5 * time.Second
+
+// shutdown drains the API listener within grace (NFR-A5), then the ledger,
+// then the metrics listener. When requests are still open at the end of the
+// grace they are closed and the ledger still drains, on its own short budget,
+// before the overrun is reported: returning first would drop every queued
+// event of a request that had already answered.
+func shutdown(srv, metricsSrv *http.Server, drain func(context.Context), grace time.Duration, log *slog.Logger) error {
+	ctx, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	log.Info("draining", "grace", grace.String())
+	overrun := srv.Shutdown(ctx)
+	if overrun != nil {
+		log.Warn("the grace ended with requests still open; closing them, then writing the ledger", "error", overrun)
+		_ = srv.Close()
+		var cancelLedger context.CancelFunc
+		ctx, cancelLedger = context.WithTimeout(context.Background(), ledgerDrainAfterOverrun)
+		defer cancelLedger()
+	}
+	// Every request has answered or been closed, so nothing more is
+	// enqueued; the ledger writes what is queued (IP-12 D8).
+	drain(ctx)
+	_ = metricsSrv.Shutdown(ctx)
+	return overrun
 }
 
 // loopback reports whether a listen address binds only the loopback

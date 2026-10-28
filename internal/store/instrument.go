@@ -109,12 +109,26 @@ func (s *Store) Clock(ctx context.Context) (skew time.Duration, err error) {
 	return mid.Sub(theirs), nil
 }
 
-// Memory reads used_memory and maxmemory from INFO memory. A maxmemory of
-// zero is an unbounded store.
-func (s *Store) Memory(ctx context.Context) (used, limit int64, err error) {
+// MemoryInfo is what INFO memory says about the store's capacity: what it
+// uses, its maxmemory (zero is unbounded), and the policy it applies when the
+// two meet.
+type MemoryInfo struct {
+	Used, Limit int64
+	Policy      string
+}
+
+// EvictionPolicy is the only maxmemory-policy the product runs against
+// (DR-048): a write that does not fit is refused, never made room for.
+const EvictionPolicy = "noeviction"
+
+// Memory reads used_memory, maxmemory and maxmemory_policy from INFO memory.
+// INFO rather than CONFIG GET, because INFO is in the required command list
+// (deployment.md section 6) and CONFIG is disabled on most managed services.
+func (s *Store) Memory(ctx context.Context) (MemoryInfo, error) {
+	var m MemoryInfo
 	info, err := s.client.Info(ctx, "memory").Result()
 	if err != nil {
-		return 0, 0, err
+		return m, err
 	}
 	for _, line := range strings.Split(info, "\n") {
 		k, v, ok := strings.Cut(strings.TrimSpace(line), ":")
@@ -123,10 +137,12 @@ func (s *Store) Memory(ctx context.Context) (used, limit int64, err error) {
 		}
 		switch k {
 		case "used_memory":
-			used, _ = strconv.ParseInt(v, 10, 64)
+			m.Used, _ = strconv.ParseInt(v, 10, 64)
 		case "maxmemory":
-			limit, _ = strconv.ParseInt(v, 10, 64)
+			m.Limit, _ = strconv.ParseInt(v, 10, 64)
+		case "maxmemory_policy":
+			m.Policy = v
 		}
 	}
-	return used, limit, nil
+	return m, nil
 }

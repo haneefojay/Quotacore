@@ -580,3 +580,52 @@ func TestTheCLIReachesNoDatastore(t *testing.T) {
 		t.Errorf("read %d files", read)
 	}
 }
+
+// TestHealthcheckAsksItsOwnReadyz (IP-15 D4): the image's healthcheck is a
+// GET /readyz on loopback at QUOTACORE_LISTEN_ADDR's port, never QUOTACORE_URL;
+// ready is 0, anything else is 9, and nothing reaches stdout either way.
+func TestHealthcheckAsksItsOwnReadyz(t *testing.T) {
+	status := http.StatusOK
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		if r.Header.Get("Authorization") != "" {
+			t.Error("the healthcheck sent a credential")
+		}
+		w.WriteHeader(status)
+		io.WriteString(w, `{"status":"not_ready"}`)
+	}))
+	defer srv.Close()
+	_, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	check := func() (int, string, string) {
+		var out, errw bytes.Buffer
+		code := Run(Options{
+			Args: []string{"healthcheck"},
+			Getenv: func(k string) string {
+				switch k {
+				case "QUOTACORE_LISTEN_ADDR":
+					return ":" + port
+				case "QUOTACORE_URL":
+					return "http://192.0.2.1:1" // never asked
+				}
+				return ""
+			},
+			Stdout: &out, Stderr: &errw,
+		})
+		return code, out.String(), errw.String()
+	}
+	if code, out, _ := check(); code != ExitOK || out != "" {
+		t.Fatalf("ready: exit %d, stdout %q", code, out)
+	}
+	status = http.StatusServiceUnavailable
+	if code, out, errw := check(); code != ExitUnavailable || out != "" || !strings.Contains(errw, "503") {
+		t.Fatalf("not ready: exit %d, stdout %q, stderr %q", code, out, errw)
+	}
+	srv.Close()
+	if code, _, _ := check(); code != ExitUnavailable {
+		t.Fatalf("no listener: exit %d, want %d", code, ExitUnavailable)
+	}
+	if !slices.Equal(paths, []string{"GET /readyz", "GET /readyz"}) {
+		t.Fatalf("calls %v", paths)
+	}
+}

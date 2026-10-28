@@ -1,0 +1,7 @@
+# The upgrade test's override for the previous build (IP-15 D11). A build from before this phase
+# has no `quotacore healthcheck`, so its container is not health-checked; the test waits on
+# /readyz from the host instead.
+services:
+  quotacore:
+    healthcheck:
+      disable: true

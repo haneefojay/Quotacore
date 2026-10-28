@@ -26,6 +26,29 @@ first enforced request is the difference between adoption and a repository they 
 └─────────────────────────────────────────────────────────┘
 ```
 
+> **Amended 2026-10-27 (`IP-15`).** The diagram above is the design; this is what
+> [docker-compose.yml](../../docker-compose.yml) ships. The API is published on host loopback only,
+> `127.0.0.1:8080`, so the quickstart is reachable from the machine and from nowhere else until the
+> operator decides otherwise. The metrics listener is not published, and
+> `docker-compose.metrics.yml` publishes it for a scraper outside the container. The stores sit on
+> an `internal` network with no route out; the service also joins a second network, because Docker
+> publishes a port only from a network with a gateway, so "no egress" (NFR-S3) is proved by a packet
+> capture rather than by the file (`TestTheServiceMakesNoOutboundConnection`). There is no `vdata`
+> volume: the store runs without persistence (section 6).
+>
+> ```
+> ┌──────────────── host ─────────────────────────────────────────┐
+> │  127.0.0.1:8080 ──▶ quotacore:local   uid 65532, read-only fs, │
+> │                     no capability, no-new-privileges           │
+> │                     :9090 metrics inside the container only    │
+> │                        │  network: internal (no route out)     │
+> │        ┌───────────────┴───────────────┐                       │
+> │   postgres:16@sha256…             valkey:8@sha256…             │
+> │   volume pgdata, scram-sha-256,   noeviction, maxmemory,       │
+> │   non-superuser `quotacore` role  no persistence, no volume    │
+> └────────────────────────────────────────────────────────────────┘
+> ```
+
 All three containers on one host is the reference and is adequate for the great majority of
 deployments, including production for a single-tenant customer. The two datastores may be moved
 to separate hosts; nothing about the design requires co-location, only that the data store is
@@ -38,9 +61,21 @@ The first-run experience is a product requirement, not a convenience (JTBD-7, NF
 ```bash
 git clone https://github.com/quotacore/quotacore.git
 cd quotacore
-docker compose up -d
+export QUOTACORE_BOOTSTRAP_ADMIN_KEY="$(docker compose run --rm --no-deps quotacore key mint)"
+export QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK=yes
+docker compose up -d --wait
 docker compose exec quotacore quotacore init
 ```
+
+> **Amended 2026-10-27 (`IP-15`).** The block gains two lines, and `up` waits. The service never
+> generates a credential (ADR-0012, NFR-S9), so the operator mints the admin key with the image's
+> own `key mint`, which builds the image on first use and touches nothing, and acknowledges it in
+> the shell. The key lives in that shell's environment, never in a file or on disk; `init` finds it
+> in the container's. Copying two lines from the README is the step J-1 already describes, and CI
+> runs this block on a clean runner (`tools/quickstart.sh`), which is how NFR-OPS1's "no manual
+> step" is read. `--wait` returns when the healthcheck says the service is ready, so `init` never
+> races the start. The README's block is this one, character for character
+> (`TestTheQuickstartIsTheDeploymentGuide`).
 
 `init` is interactive, takes about sixty seconds, and does the minimum: create a feature, a plan,
 one entitlement, one tenant, and one runtime key. It prints each identifier as it is created, and
@@ -83,6 +118,30 @@ quickstart is executed by a script in CI against a real stack, so it cannot rot
 | Health | `HEALTHCHECK` using `/readyz` | `docker compose up` reports a working service rather than a running one |
 | SBOM | Generated per build, published as an artifact | NFR-C3, NFR-C4 |
 | Signature | Cosign or equivalent, documented | Supply-chain verification the customer can actually perform |
+
+> **Amended 2026-10-27 (`IP-15`).** The [Dockerfile](../../Dockerfile) as built:
+>
+> - **Base.** `scratch`, not a distroless base. The distroless static image ships five Debian
+>   packages, and `base-files`, `netbase` and `ca-certificates` carry GPL-2 or MPL-2.0 text that
+>   the licence gate refuses (NFR-C4); `scratch` ships no package, so there is nothing copyleft,
+>   nothing to patch and nothing for the SBOM to leave out. `scratch` has no digest to pin; the
+>   builder, `golang:1.27.1-bookworm`, is pinned by digest (NFR-S7).
+> - **CA roots.** `scratch` has none. A deployment that verifies TLS to a managed Postgres or data
+>   store mounts the host's bundle read-only and points Go at it:
+>   `-v /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro` and
+>   `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`.
+> - **User.** uid and gid 65532, with no `/etc/passwd` entry, because the image has no
+>   `/etc/passwd`.
+> - **Health.** The healthcheck is `quotacore healthcheck`, which asks the service's own `/readyz`
+>   on loopback and exits 0 only when it answers `200`; `scratch` has no `curl` to do it
+>   ([cli.md](cli.md#1-commands)).
+> - **Size.** About 27 MB in two layers, the binary and `/tmp`; `TestTheImageIsSmallAndStatic`
+>   holds it under 30 MB.
+> - **SBOM.** `tools/license-scan.ps1 -Image quotacore:local` exports the image, scans every OS
+>   package it finds (none, for `scratch`, which the SBOM states rather than omits) and the
+>   binary's modules, and fails on copyleft or on a file it cannot account for. Publishing and
+>   signing the image need a release, and are
+>   [Q-27](../product/assumptions-and-open-questions.md#2-open-questions).
 
 Migrations are embedded in the binary and applied at startup by `goose` (ADR-0011). There is no
 migration container, no manual step, and nothing for the operator to install (NFR-OPS3).
@@ -204,6 +263,21 @@ contract of each is in [cli.md](cli.md#2-environment).
 | `QUOTACORE_URL` | `http://127.0.0.1:` and `QUOTACORE_LISTEN_ADDR`'s port | The service a command calls. `--url` overrides it |
 | `QUOTACORE_ADMIN_KEY` | `QUOTACORE_BOOTSTRAP_ADMIN_KEY` | The admin key a command authenticates with. There is deliberately no flag for it (NFR-S1) |
 
+### 4.7 Reference Compose file
+
+Added 2026-10-27 (`IP-15`). Read by [docker-compose.yml](../../docker-compose.yml), not by the
+service. Every other `QUOTACORE_*` the file passes is the service's own and is in the tables above;
+`TestEveryComposeVariableIsDocumented` fails on one that is in the file and not here.
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `QUOTACORE_IMAGE` | `quotacore:local` | The image the service runs. Built from this repository by `docker compose up`; set it to a tag or digest to run a published build, or to the previous one to roll back (section 11) |
+| `QUOTACORE_VERSION` | `0.1.0-dev` | Build argument: the version `quotacore version` and `/healthz` report |
+| `QUOTACORE_REVISION` | *(none)* | Build argument: the commit the image was built from, which the SBOM and `quotacore version` name |
+| `QUOTACORE_POSTGRES_PASSWORD` | `quotacore_dev_only` | The non-superuser `quotacore` role's password, used by the init script and in the default `QUOTACORE_DATABASE_URL`. A development placeholder: replace it for anything but a laptop |
+| `QUOTACORE_POSTGRES_SUPERUSER_PASSWORD` | `quotacore_dev_only` | The `postgres` superuser's, the same development placeholder as the role's and replaced with it, which only the init script and an operator's `pg_dump` use. The service never connects as it |
+| `QUOTACORE_VALKEY_MAXMEMORY` | `1gb` | The store's `maxmemory`. 1 GiB holds a laptop's quickstart; a production store is sized by section 5, and a full one refuses rather than evicts (DR-048) |
+
 ## 5. Sizing
 
 Derived from the envelopes in [non-functional-requirements.md](non-functional-requirements.md),
@@ -216,6 +290,16 @@ not from a benchmark on a laptop.
 | Data store memory | 24 GiB | 32 GiB+ | **A floor, not a recommendation.** The idempotency set alone is 20 GB at NFR-T1 and the store runs `noeviction` (DR-048), so running out is a `503` for every tenant rather than a silent eviction. Measured by `IP-15`; until then, stay above it |
 | Postgres | 512 MiB | 2 GiB | Configuration is tiny. The ledger grows with volume and is the reason to move it to faster storage as it grows |
 | Disk | 2 GiB | 20 GiB+ | Postgres is the growing component. The fast store is bounded by its own TTLs |
+
+> **Amended 2026-10-27 (`IP-15`) — measured.** The data-store floor is **106 GiB**, measured
+> rather than projected: 522.9 bytes per idempotency record at the contract's longest key, 266.9 at
+> a UUID's, flat across three doublings of the record count, × 172.8 million records for 24 hours
+> at 2,000/s, plus a quarter for headroom
+> ([ip-15-idempotency-footprint.md](../research/ip-15-idempotency-footprint.md), Valkey 8.1.11). A
+> deployment whose clients send UUID keys may size to 54 GiB. Every figure scales with sustained
+> throughput, so at 200/s it is a tenth. The ledger costs Postgres 0.44 GiB per million events,
+> indexes included, so the Postgres and disk rows grow at that rate until the retention job's
+> cutoff. The 24 GiB and 120-byte figures below are the projection this replaces.
 
 **Sizing the data store for idempotency.** This is the sizing step people miss, and it is the
 reason the data-store memory row above is a 24 GiB floor rather than a 1–4 GiB range. At 2,000
@@ -270,8 +354,8 @@ which is rarer, detected, and rehearsed. The rule is unchanged and the exposure 
 | Redis support | Any engine implementing the Redis protocol, verified against a test matrix: Redis 7.4+, Valkey 7.2+, KeyDB where the client library is verified |
 | Required commands | `EVALSHA`, `EVAL`, `SCRIPT LOAD`, `HGET`, `HSET`, `HINCRBY`, `HMGET`, `GET`, `SET … EX`, `PERSIST`, `PTTL`, `PUBLISH`, `SUBSCRIBE`, `PING`, `INFO`, `DBSIZE`, `SCAN` |
 | Forbidden | `KEYS` anywhere in the product. A `KEYS` call on a large key space is an outage, and the temptation appears precisely when someone wants to debug |
-| Persistence | **None required.** The store is rebuildable and is not backed up (NFR-OPS4). Persistence is optional and only reduces recovery time after an unclean restart. It is deliberately *not* the mechanism protecting the idempotency window: an append on every `consume` would put NFR-L1 and NFR-T1 at risk, and the window is protected by sizing plus reversal instead (DR-048, DR-049) |
-| Eviction | `noeviction` on the fast store, per section 5. A write that cannot fit is refused `503 service_unavailable` (FS-21). The compose file ships this policy, and the startup check refuses to run against a store configured otherwise, because a silently downgraded policy turns a capacity limit into an uncorrectable double charge |
+| Persistence | **None, in the reference file** (amended 2026-10-27, `IP-15`): `--save ""` and `--appendonly no`, and no volume. A snapshot reloaded after a crash would put every balance back to that moment and hand back every consume since, which is the over-grant DR-045 exists to prevent; without persistence a restart is a clean total loss, answered fail-closed and by the rebuild runbook. **None required.** The store is rebuildable and is not backed up (NFR-OPS4). Persistence is optional and only reduces recovery time after an unclean restart. It is deliberately *not* the mechanism protecting the idempotency window: an append on every `consume` would put NFR-L1 and NFR-T1 at risk, and the window is protected by sizing plus reversal instead (DR-048, DR-049) |
+| Eviction | `noeviction` on the fast store, per section 5. A write that cannot fit is refused `503 service_unavailable` (FS-21). The compose file ships this policy, and the startup check refuses to run against a store configured otherwise, because a silently downgraded policy turns a capacity limit into an uncorrectable double charge. Amended 2026-10-27 (`IP-15`): the check reads `maxmemory_policy` from `INFO memory`, which a managed store that disables `CONFIG` still answers, and refuses to start on any other value; the prober reads it again every probe, so a policy changed under a running service takes it out of readiness with the term `data store refuses to evict` and logs the change ([observability.md](observability.md#4-health-and-status)). Every script declares `#!lua`, so a full store refuses the whole script before it runs rather than after a first write (T-13) |
 | Replication | Optional. Point `QUOTACORE_REDIS_URL` at a sentinel or a managed endpoint. The product is unchanged. Replication is a latency and availability choice, not a durability one, because no write is acknowledged as durable |
 | Cluster | Supported by the key design. The per-tenant hash tag makes every multi-key script single-slot (A-11) |
 | TLS | `rediss://` supported. A plaintext URL outside a private network logs a `warn` at startup |
@@ -298,6 +382,20 @@ upgrade does not surface as a surprise.
 it:** `pg_dump -Fc` for consistency, restore into a **new** database, point the service at it,
 start, then reconcile (§4.2 of [consistency-and-recovery.md](consistency-and-recovery.md)). Never
 restore over a live database.
+
+> **Amended 2026-10-27 (`IP-15`).** On the reference stack, as `TestUpgradeAndRollback` runs them:
+>
+> ```text
+> docker compose exec -T -e PGPASSWORD postgres \
+>   pg_dump -Fc -U quotacore -d quotacore -f /tmp/backup.dump
+> docker compose cp postgres:/tmp/backup.dump ./backup.dump
+> ```
+>
+> `PGPASSWORD` is the `quotacore` role's (section 4.7), exported in the shell first. A copy that
+> stays inside the container is not a backup. The service's pools set `search_path=public` and a
+> `statement_timeout` of `QUOTACORE_CONTROLPLANE_TIMEOUT` as connection parameters, so the two rows
+> above hold for every pool but the local operations', since a rebuild reads the whole ledger in
+> one statement.
 
 ## 8. High availability
 
@@ -365,6 +463,38 @@ docker compose up -d
 # reconcile per consistency-and-recovery.md §4.2
 ```
 
+> **Amended 2026-10-27 (`IP-15`).** The block above names a `verify --sample` that does not exist
+> and a `down` that is not needed. The procedure, with the commands `TestUpgradeAndRollback` runs
+> against the previous build:
+>
+> ```text
+> # before: a backup, per section 7
+> docker compose exec -T -e PGPASSWORD postgres pg_dump -Fc -U quotacore -d quotacore -f /tmp/pre-upgrade.dump
+>
+> # upgrade: drain and restart onto the new image; migrations apply at start
+> QUOTACORE_IMAGE=<new tag or digest> docker compose up -d --wait quotacore
+> docker compose exec quotacore quotacore status
+> docker compose exec quotacore quotacore verify-all
+>
+> # rollback: a restore into a new database, with the previous image pinned
+> docker compose stop quotacore
+> docker compose exec -T -e PGPASSWORD=<superuser password> postgres \
+>   psql -U postgres -c 'CREATE DATABASE quotacore_restore OWNER quotacore'
+> docker compose exec -T -e PGPASSWORD postgres \
+>   pg_restore -U quotacore -d quotacore_restore --no-owner /tmp/pre-upgrade.dump
+> QUOTACORE_IMAGE=<previous tag or digest> \
+> QUOTACORE_DATABASE_URL='postgresql://quotacore:<password>@postgres:5432/quotacore_restore?sslmode=disable' \
+>   docker compose up -d --wait --no-deps quotacore
+> docker compose exec quotacore quotacore verify-tenant <tenant>
+> ```
+>
+> `verify-tenant` exits 0 for a tenant with no activity since the backup and 1 for one with
+> activity, whose ledger ends at the backup while its balance does not: the known truncation that
+> consistency-and-recovery §4.2 step 5 says to expect and step 6 says to record. Steps 4 and 6 of
+> that procedure have no command yet; the configuration refresh interval is the backstop for step 4
+> ([Q-28](../product/assumptions-and-open-questions.md#2-open-questions)). Until v0.1 is tagged,
+> "the previous release" is the previous build, which CI makes from the pull request's merge base.
+
 Migrations are forward-only in production, so a code rollback against a newer schema is expected
 to work: additive columns and enum values are ignored by the older binary, and a migration that
 removes something is a two-release change for exactly this reason
@@ -377,7 +507,10 @@ still a key it can safely leave alone, and the fast store is rebuildable regardl
 For a production rollout, in order. The first three are the ones people skip.
 
 1. **Clock.** NTP is synchronised and the skew alert is wired. Every boundary is a contract term.
-2. **Data store memory.** Sized for the 24-hour idempotency set. A `noeviction` rejection is a `503`
+2. **Data store memory.** Amended 2026-10-27 (`IP-15`): sized per section 5's measured figure; a
+   full store is a `503`, never an eviction, because ADR-0017 closed the trade the rest of this item
+   describes, and the service refuses to start against any policy but `noeviction`. As first
+   written: Sized for the 24-hour idempotency set. A `noeviction` rejection is a `503`
    on the hot path, which is not acceptable; an `allkeys-lru` eviction of an idempotency record is
    a lost replay, which trades a hard `503` against the "charged once" guarantee. Which of those
    two the product is willing to accept at production throughput is
