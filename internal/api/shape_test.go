@@ -93,7 +93,11 @@ import (
 // an idempotency record costs by calling the real consume script through
 // internal/script, so the symbol rules hold for it unchanged: it decides
 // nothing, and it runs only against a scratch store it refuses to touch unless
-// empty. The name of this test is kept
+// empty.
+//
+// `tools/testreport` is here because IP-16 owns it: it reads go test's JSON
+// stream and reports the named correctness tests. It imports nothing of the
+// product. The name of this test is kept
 // for its history; what it guards now is that the package set is exactly the
 // set the phases own, and that the calendar and the script stay single.
 func TestNoProductBehaviour(t *testing.T) {
@@ -122,6 +126,7 @@ func TestNoProductBehaviour(t *testing.T) {
 		"internal/store":         true,
 		"tools/gendocs":          true,
 		"tools/idemsize":         true,
+		"tools/testreport":       true,
 		"test/reference":         true,
 	}
 	gotPackages := map[string]bool{}

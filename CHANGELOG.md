@@ -12,6 +12,12 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **The v0.1 evidence and the named-test report (`IP-16`).** [docs/release/v0-1-evidence.md](docs/release/v0-1-evidence.md)
+  holds, in one place, each claim, NFR, named test and scope line with what proves it. Its table of
+  named tests is the catalogue `tools/testreport` reads from `go test -json`: the integration suite
+  now runs under `-race` in CI, and the step fails if a named test of its suite did not run, was
+  skipped or failed; the reference suite is reported the same way. `T-15`, a consume raced against
+  a tenant delete over 40 randomised interleavings, is the fifteenth row's first test.
 - **The reference deployment (`IP-15`).** A two-stage [Dockerfile](Dockerfile): a builder pinned
   by digest, and a `scratch` runtime holding the static binary and `/tmp`, uid 65532, entrypoint
   `quotacore`, healthcheck `quotacore healthcheck`. [docker-compose.yml](docker-compose.yml) is now
