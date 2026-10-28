@@ -9,7 +9,7 @@ release in [mvp-scope.md](docs/product/mvp-scope.md).
 
 ## Current position
 
-**Specification complete; implementation started.** 78 documents, 17 accepted decisions, 15
+**Specification complete; implementation started.** 79 documents, 17 accepted decisions, 15
 named correctness tests, 35 error codes, 49 domain rules — and the first code, in
 [`IP-01`](docs/roadmaps/v0-1-enforcement-path.md#ip-01--repository-toolchain-and-ci-foundation),
 which owns no product behaviour. See

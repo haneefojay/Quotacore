@@ -71,7 +71,7 @@ permanent, not a roadmap item.
 
 ## Status
 
-**Specification complete; implementation started.** 78 documents, 17 accepted
+**Specification complete; implementation started.** 79 documents, 17 accepted
 decisions, 49 domain rules, 35 error codes, 15 named correctness tests. Every blocking question is
 answered — the four former blockers plus
 [Q-21](docs/product/assumptions-and-open-questions.md#2-open-questions), the eviction question that
