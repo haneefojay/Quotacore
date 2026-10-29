@@ -13,7 +13,7 @@ exists, because a future implementer needs to know which statements are new.
 ### Added
 
 - **v0.1 is complete, pending the runbook review row (`IP-16`).** [docs/release/v0-1-evidence.md](docs/release/v0-1-evidence.md)
-  is filled in from the run of record at `a6b093e`. It holds each of the three claims with its
+  is filled in from the run of record at `01ddb7d`. It holds each of the three claims with its
   measurement, each measured NFR with its figure, the run and the environment, and each line of
   mvp-scope §3 with its test. Its named gaps are the maintainer's runbook and restore review, NFR-L6
   unmeasured (`Q-31`, new, with a default), the burst run's latency as information (`Q-30`), the
@@ -413,6 +413,11 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **History rewritten to the maintainer's identity (2026-10-29).** Every commit on `dev` and `main`
+  is now authored and committed by Haneef, and the Claude co-author trailers are gone; the trees
+  are unchanged, but every commit identifier changed. The two cited in the documents follow: the
+  run of record `a6b093e` is now `01ddb7d`, and the runbook review's `dev` `98ad1c1` is now
+  `5b81d38`. Merged pull requests and Actions runs still show the old identifiers.
 - **Register (`IP-16`).** The seven rows due before v0.1 and still open are answered, each with its
   default: `Q-08` (measured), `Q-12`, `Q-15`, `Q-25`, `Q-26`, `Q-27` and `Q-28`. `Q-30` is new and
   asks where NFR-L3 is measured; it does not block v0.1. Six questions remain open, none due before
