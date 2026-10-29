@@ -167,10 +167,15 @@ jobs:
           grep -q 'Quotacore runs only against noeviction' <<<"$out"
           docker compose -f docker-compose.yml -f .github/compose.ci.yml exec -T valkey-scratch \
             valkey-cli config set maxmemory-policy noeviction
-      - name: Integration tests against real backing services
+      - name: Integration tests against real backing services, under the race detector
         # As the superuser, which the suite needs to create its scratch databases; the service
-        # itself connects as the non-superuser role (deployment.md section 7).
-        run: go test -count=1 ./...
+        # itself connects as the non-superuser role (deployment.md section 7). Under -race, and
+        # reported by name: tools/testreport fails the step if a named test of the integration
+        # suite did not run, was skipped or failed (IP-16 DoD 1).
+        shell: bash
+        run: |
+          set -o pipefail
+          CGO_ENABLED=1 go test -race -count=1 -timeout 30m -json ./... | tee integration.json | go run ./tools/testreport -suite integration
         env:
           QUOTACORE_REQUIRE_INTEGRATION: '1'
           QUOTACORE_DATABASE_URL: 'postgresql://postgres:quotacore_dev_only@127.0.0.1:15432/quotacore?sslmode=disable'

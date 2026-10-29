@@ -392,3 +392,14 @@ because its interaction with cycle state is the single most dangerous part of th
 - INV-WK1 The worker is an optimisation. Deleting it, stalling it, or running it twice changes
   nothing observable, because the request path repairs any tenant it touches (DR-009).
 - INV-WK2 The worker holds a runtime-scoped credential and has no direct database access.
+
+> **Amended 2026-10-28 (`IP-16`) — the worker as built.** It runs inside the service process, on
+> `QUOTACORE_WORKER_ENABLED` (`Q-13`, answered yes). *Select* is read as the tenants this instance's
+> snapshot holds whose cycle began since the previous scan: a look-behind, because a transition
+> cannot be applied before its boundary, and a boundary that passed while the process was down is
+> the request path's to repair (INV-WK1). *Act* is the data plane's `Advance`, which runs the check
+> script for an amount of zero through the request path's resolution, so the transition is the one
+> implementation (INV-C2) and a stale verdict is success. INV-WK2 is read in process: the worker has
+> no credential of its own and no route to the database or the store except that call, which
+> `internal/worker`'s source check asserts (`TestTheWorkerHasNoDatabaseAccess`). Read-only mode
+> pauses it.

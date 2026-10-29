@@ -431,7 +431,7 @@ func TestT12WideApplyNeedsAConfirmation(t *testing.T) {
 			earliest = end
 		}
 	}
-	if got, _ := time.Parse(time.RFC3339, d["earliest_cycle_end"].(string)); !got.Equal(earliest.Truncate(time.Second)) {
+	if got, _ := time.Parse(time.RFC3339, d["earliest_cycle_end"].(string)); !isBoundaryOf(got, earliest) {
 		t.Errorf("the 409's earliest end is %v, want %v", d["earliest_cycle_end"], earliest)
 	}
 	unchanged("two 409s")
@@ -516,7 +516,7 @@ func TestImpactChangesNothing(t *testing.T) {
 	if num(t, m, "affected_tenants") != 12 || m["exceeds_confirmation_threshold"] != false {
 		t.Errorf("impact answered %v, want 12 tenants under the threshold", m)
 	}
-	if got, err := time.Parse(time.RFC3339Nano, str(m, "earliest_cycle_end")); err != nil || !got.Equal(earliest.Truncate(time.Second)) {
+	if got, err := time.Parse(time.RFC3339Nano, str(m, "earliest_cycle_end")); err != nil || !isBoundaryOf(got, earliest) {
 		t.Errorf("impact's earliest end is %v, want %v", m["earliest_cycle_end"], earliest)
 	}
 	if m := mustStatus(t, s.adminDo(http.MethodGet, "/v1/admin/plans/"+never+"/impact", ""), http.StatusOK); m["earliest_cycle_end"] != nil {
@@ -704,4 +704,13 @@ func TestT06PlanAppliedAcrossAnOutage(t *testing.T) {
 			t.Errorf("a restart changed the drained state:\n%s\nthen\n%s", before, after)
 		}
 	})
+}
+
+// isBoundaryOf reports whether got is how the wire renders the boundary at, as
+// the test computed it from an anchor that may itself have been read to the
+// second: at rounded up, or, when at lost its milliseconds on the way in, the
+// second after it.
+func isBoundaryOf(got, at time.Time) bool {
+	want := roundUp(at)
+	return got.Equal(want) || (want.Equal(at) && got.Equal(at.Add(time.Second)))
 }

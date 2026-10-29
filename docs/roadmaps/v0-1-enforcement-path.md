@@ -29,7 +29,7 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | `IP-13` | Observability | `IP-07` | `IN PROGRESS`, opened 2026-10-21 |
 | `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `COMPLETE` |
 | `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `IN PROGRESS`, opened 2026-10-27 |
-| `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `BLOCKED` on `IP-15` |
+| `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `IN PROGRESS`, opened 2026-10-28 |
 
 ---
 
@@ -1909,7 +1909,19 @@ following a document rather than by someone who remembered the commands.
 
 ## IP-16 — Full suite, the three claims, v0.1 exit
 
-**Status** `BLOCKED`, gated on `IP-15`.
+**Status** `IN PROGRESS` — opened 2026-10-28, before any file it owns was written; `IP-15`'s code
+merged the same day. On 2026-10-29, 9 of 10 DoD items are met, each with its proof in
+[v0-1-evidence.md](../release/v0-1-evidence.md). Item 9 says v0.1 is complete pending the runbook
+and restore review, and becomes "done" when [the runbooks' review table](../runbooks/README.md#review)
+records that session.
+
+> **Amended 2026-10-28 — the dependency on `IP-15`.** `IP-15`'s code is merged and its one open item
+> is the human session it carries for `IP-13`: a person follows the README, two runbooks and
+> deployment §11 on the reference stack. That session needs nothing this phase builds, and nothing
+> this phase builds needs it, so this phase depends on `IP-15`'s code and carries the session as the
+> release's one named gap (DoD 8). PROJECT.md and ROADMAP.md state v0.1 as done only once
+> [the runbooks' review table](../runbooks/README.md#review) records it. Accepted by the owner on
+> 2026-10-28.
 
 **Objective.** Run everything, demonstrate the three claims, and tick every line of the release
 checklist.
@@ -1928,7 +1940,8 @@ checklist.
 - [PROJECT.md](../../PROJECT.md) and [ROADMAP.md](../../ROADMAP.md), for the status this phase
   changes
 
-**Dependencies.** Blocked by every other v0.1 phase. Blocks `IP-17`, `IP-21`, `IP-24` and `IP-26`.
+**Dependencies.** Blocked by every other v0.1 phase. Blocks `IP-17`, `IP-19`, `IP-21`, `IP-24`,
+`IP-26` and `IP-27`, as [the index](roadmap-index.md#6-dependency-chain) lists them.
 
 **Definition of Done.**
 
@@ -1949,6 +1962,15 @@ checklist.
 9. `tools/check-docs.ps1` exits 0, and `PROJECT.md` and `ROADMAP.md` state v0.1 as done with the
    evidence.
 10. The change is recorded in [CHANGELOG.md](../../CHANGELOG.md).
+
+> **Amended 2026-10-28 (`IP-16`) — DoD 1 and DoD 6.** DoD 1 was written when there were eleven
+> named tests; [testing-strategy.md](../architecture/testing-strategy.md#2-correctness-tests-the-ones-that-matter)
+> §2 now has fifteen. All fifteen are reported by name: `T-01` to `T-12`, `T-14` and `T-15` under
+> `-race` in the integration suite, and `T-13` and `T-14`'s stack form in the reference suite.
+> DoD 6's soak is 5 h 30 m, not 24 h: a hosted runner's job ends at 6 h, and "no leak" is asserted
+> as a slope over the run's second half rather than as a final value, which a longer run would
+> only confirm (testing-strategy §5, amended). The soak's duration is one variable, so a 24-hour
+> run on a self-hosted runner changes nothing else.
 
 **Exit criteria.** Every claim in the README has a measurement, every capability in the scope has a
 test, and a reader who doubts the product can find the evidence in one place.

@@ -15,6 +15,7 @@ require (
 	github.com/redis/go-redis/v9 v9.22.0
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/sync v0.22.0
+	pgregory.net/rapid v1.2.0
 )
 
 require (

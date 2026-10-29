@@ -10,7 +10,7 @@
 
 | Field | Value |
 | --- | --- |
-| Stage | Specification complete; `IP-01`, `IP-02`, `IP-03` and `IP-04` closed |
+| Stage | v0.1 complete, pending the runbook review row — [evidence](docs/release/v0-1-evidence.md) |
 | Version target | v0.1.0 (MVP) |
 | Canonical name | Quotacore. "Threshold" is a deprecated alias and must not appear in code, docs or marketing |
 | Licence | Apache-2.0 — [LICENSE](LICENSE), decided in [ADR-0014](docs/decisions/0014-apache-2-0-license.md) |
@@ -18,9 +18,17 @@
 | Owner | Project owner |
 | Language and stack | Go 1.27, PostgreSQL 16+, Redis-compatible store (Valkey by default) |
 | Decisions | 17 accepted, and ADR-0012 superseded by ADR-0018 on 2026-10-19 |
-| Open questions | 21 logged, none blocking — [register](docs/product/assumptions-and-open-questions.md) |
+| Open questions | 31 logged, none blocking — [register](docs/product/assumptions-and-open-questions.md) |
 
-**Current phase.** The specification is complete and internally consistent, and every blocking
+**v0.1 status (2026-10-29).** Every phase from `IP-00` to `IP-16` has done its work, and v0.1 is
+complete pending the runbook review row: one maintainer session that walks the runbook and the
+restore drill, carried from `IP-13` and `IP-15`. Each of the three claims, each measured NFR and
+each line of [mvp-scope.md](docs/product/mvp-scope.md#3-definition-of-done-per-capability) §3 is
+in [the v0.1 evidence](docs/release/v0-1-evidence.md), with the test that proves it, the run it was
+measured in, and the named gaps. Merging `dev` into `main`, the `v0.1.0` tag and the signed image
+are a maintainer's steps.
+
+**How it began.** The specification is complete and internally consistent, and every blocking
 question is now answered: [Q-01, Q-02, Q-04, Q-14](docs/product/assumptions-and-open-questions.md#2-open-questions)
 and [Q-21](docs/product/assumptions-and-open-questions.md#2-open-questions). Implementation has
 started, and deliberately at the bottom rather than the top:
@@ -91,7 +99,7 @@ Each is a testable property with a test behind it, not a slogan.
 
 ## Documentation map
 
-78 documents. `docs/README.md` is the full index with reading paths. `docs/roadmaps/roadmap-index.md`
+79 documents. `docs/README.md` is the full index with reading paths. `docs/roadmaps/roadmap-index.md`
 is the execution plan: 28 phases, with the specification gate now passed.
 
 ```

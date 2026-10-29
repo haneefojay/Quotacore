@@ -101,7 +101,9 @@ type AuditEntry struct {
 	ActorKeyID NilUUID `json:"actor_key_id"`
 	// A dotted action name.
 	Action string `json:"action"`
-	// Which kind of resource changed, so a log reader can filter by it.
+	// Which kind of resource changed, so a log reader can filter by it. `system` is a note about the
+	// installation itself, such as the truncation an operator records after a Postgres restore with
+	// `quotacore audit note`; its `subject_id` is null.
 	SubjectType AuditEntrySubjectType `json:"subject_type"`
 	// The resource's internal id, or null when the mutation has no single subject — a plan `apply-now`
 	// touches every assigned tenant, so the tenants are not recorded here one by one.
@@ -306,7 +308,9 @@ func (s *AuditEntryListOKHeaders) SetResponse(val AuditEntryList) {
 
 func (*AuditEntryListOKHeaders) listAuditRes() {}
 
-// Which kind of resource changed, so a log reader can filter by it.
+// Which kind of resource changed, so a log reader can filter by it. `system` is a note about the
+// installation itself, such as the truncation an operator records after a Postgres restore with
+// `quotacore audit note`; its `subject_id` is null.
 type AuditEntrySubjectType string
 
 const (
@@ -314,6 +318,7 @@ const (
 	AuditEntrySubjectTypePlan    AuditEntrySubjectType = "plan"
 	AuditEntrySubjectTypeFeature AuditEntrySubjectType = "feature"
 	AuditEntrySubjectTypeAPIKey  AuditEntrySubjectType = "api_key"
+	AuditEntrySubjectTypeSystem  AuditEntrySubjectType = "system"
 )
 
 // AllValues returns all AuditEntrySubjectType values.
@@ -323,6 +328,7 @@ func (AuditEntrySubjectType) AllValues() []AuditEntrySubjectType {
 		AuditEntrySubjectTypePlan,
 		AuditEntrySubjectTypeFeature,
 		AuditEntrySubjectTypeAPIKey,
+		AuditEntrySubjectTypeSystem,
 	}
 }
 
@@ -336,6 +342,8 @@ func (s AuditEntrySubjectType) MarshalText() ([]byte, error) {
 	case AuditEntrySubjectTypeFeature:
 		return []byte(s), nil
 	case AuditEntrySubjectTypeAPIKey:
+		return []byte(s), nil
+	case AuditEntrySubjectTypeSystem:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -356,6 +364,9 @@ func (s *AuditEntrySubjectType) UnmarshalText(data []byte) error {
 		return nil
 	case AuditEntrySubjectTypeAPIKey:
 		*s = AuditEntrySubjectTypeAPIKey
+		return nil
+	case AuditEntrySubjectTypeSystem:
+		*s = AuditEntrySubjectTypeSystem
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

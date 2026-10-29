@@ -262,8 +262,8 @@ func entry(feature string, out script.AdminOutcome, loc *time.Location) *contrac
 		CycleEnd:   contract.NilTimestamp{Null: true},
 	}
 	if out.End != nil {
-		e.CycleStart = contract.NewNilTimestamp(contract.Timestamp(out.Start.In(loc)))
-		e.CycleEnd = contract.NewNilTimestamp(contract.Timestamp(out.End.In(loc)))
+		e.CycleStart = contract.NewNilTimestamp(envelope.Boundary(out.Start, loc))
+		e.CycleEnd = contract.NewNilTimestamp(envelope.Boundary(*out.End, loc))
 	}
 	return e
 }

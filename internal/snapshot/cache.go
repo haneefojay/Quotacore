@@ -144,8 +144,22 @@ func (c *tenantCache) prune(latest map[string]int64) (evicted int) {
 			stale = append(stale, id)
 		}
 	}
-	for _, id := range stale {
-		e := c.byID[id]
+	evicted = c.forget(stale)
+	for id := range latest {
+		if e, ok := c.byID[id]; ok {
+			c.ll.MoveToFront(e)
+		}
+	}
+	return evicted
+}
+
+// forget removes the cached tenants among ids and reports how many it removed.
+func (c *tenantCache) forget(ids []string) (evicted int) {
+	for _, id := range ids {
+		e, ok := c.byID[id]
+		if !ok {
+			continue
+		}
 		entry := e.Value.(*cacheEntry)
 		c.ll.Remove(e)
 		delete(c.byID, id)
@@ -158,15 +172,19 @@ func (c *tenantCache) prune(latest map[string]int64) (evicted int) {
 		}
 		evicted++
 	}
-	for id := range latest {
-		if e, ok := c.byID[id]; ok {
-			c.ll.MoveToFront(e)
-		}
-	}
 	return evicted
 }
 
 func (c *tenantCache) len() int { return c.ll.Len() }
+
+// all is every cached tenant, without touching recency.
+func (c *tenantCache) all() []*Tenant {
+	out := make([]*Tenant, 0, c.ll.Len())
+	for e := c.ll.Front(); e != nil; e = e.Next() {
+		out = append(out, e.Value.(*cacheEntry).tenant)
+	}
+	return out
+}
 
 // byExternal returns the cached tenant an external_id names and touches
 // recency, or nil. The mapping lives and dies with its tenant: an external_id

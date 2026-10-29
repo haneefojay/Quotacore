@@ -252,6 +252,13 @@ restored. Runtime balances are **not** affected, because they live in the fast s
 6. Record the truncation in the audit log, so the gap in history is documented rather than
    discovered later by a customer.
 
+> **Amended 2026-10-28 (`IP-16`, Q-28).** Steps 4 and 6 are commands. Step 4 is `quotacore config
+> bump`, which records a new configuration version against every tenant and publishes the
+> invalidation, so every instance re-reads the restored configuration at once rather than holding a
+> cached tenant until its next change. Step 6 is `quotacore audit note --reason "<the backup's time
+> and the restore's>"`, an audit row with `subject_type` `system` ([cli.md](cli.md#1-commands)).
+> `TestConfigBumpReloadsEverySnapshot` and `TestAuditNoteRecordsTheTruncation` prove them.
+
 **What is guaranteed.** Enforcement resumes within NFR-A4. Balances are untouched, because they
 were never in Postgres.
 

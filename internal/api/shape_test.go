@@ -93,7 +93,18 @@ import (
 // an idempotency record costs by calling the real consume script through
 // internal/script, so the symbol rules hold for it unchanged: it decides
 // nothing, and it runs only against a scratch store it refuses to touch unless
-// empty. The name of this test is kept
+// empty.
+//
+// `tools/testreport` and `internal/worker` are here because IP-16 owns them.
+// The first reads go test's JSON stream and reports the named correctness
+// tests, and imports nothing of the product. The second is the reset worker
+// (Q-13): it reads the snapshot's cached tenants and calls the data plane's
+// Advance, which runs the request path's transition, so it computes windows
+// with internal/cycle and decides nothing a request would not; its source
+// check holds it off SQL, the store and the scripts (INV-WK2). `test/harness`,
+// `test/load` and `test/chaos` are IP-16's suites against the Compose stack,
+// as `test/reference` is: they drive the built image over HTTP, docker and the
+// stores' own clients, and hold no code the service runs. The name of this test is kept
 // for its history; what it guards now is that the package set is exactly the
 // set the phases own, and that the calendar and the script stay single.
 func TestNoProductBehaviour(t *testing.T) {
@@ -122,7 +133,12 @@ func TestNoProductBehaviour(t *testing.T) {
 		"internal/store":         true,
 		"tools/gendocs":          true,
 		"tools/idemsize":         true,
+		"tools/testreport":       true,
+		"internal/worker":        true,
 		"test/reference":         true,
+		"test/harness":           true,
+		"test/load":              true,
+		"test/chaos":             true,
 	}
 	gotPackages := map[string]bool{}
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
