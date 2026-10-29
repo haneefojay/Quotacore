@@ -72,6 +72,9 @@ type Percentiles struct {
 type MinutePercentile struct {
 	Minute int `json:"minute"`
 	Percentiles
+	// Failures counts the minute's outcomes other than a 2xx, by outcome, so
+	// a burst of errors in a long run can be placed in time.
+	Failures map[string]int64 `json:"failures,omitempty"`
 }
 
 type sample struct {
@@ -184,20 +187,26 @@ func Run(ctx context.Context, l Load) Result {
 	res := Result{Op: l.Op, Rate: l.Rate, Duration: l.Duration.String(), Sent: sent.Load(), Outcomes: map[string]int64{}}
 	var all []time.Duration
 	minutes := map[int][]time.Duration{}
+	failures := map[int]map[string]int64{}
 	for _, s := range collected {
 		res.Outcomes[s.outcome]++
+		m := int(s.due / time.Minute)
 		if strings.HasPrefix(s.outcome, "2") {
 			res.OK++
+		} else {
+			if failures[m] == nil {
+				failures[m] = map[string]int64{}
+			}
+			failures[m][s.outcome]++
 		}
 		all = append(all, s.latency)
-		m := int(s.due / time.Minute)
 		minutes[m] = append(minutes[m], s.latency)
 	}
 	res.Achieved = float64(len(collected)) / elapsed.Seconds()
 	res.Latency = percentiles(all)
 	for m := 0; m <= int(l.Duration/time.Minute); m++ {
 		if v := minutes[m]; len(v) > 0 {
-			res.PerMinute = append(res.PerMinute, MinutePercentile{Minute: m, Percentiles: percentiles(v)})
+			res.PerMinute = append(res.PerMinute, MinutePercentile{Minute: m, Percentiles: percentiles(v), Failures: failures[m]})
 		}
 	}
 	return res

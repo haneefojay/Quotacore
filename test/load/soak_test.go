@@ -44,12 +44,24 @@ func TestSoak(t *testing.T) {
 	fds := func() float64 { n, _ := s.OpenFDs("quotacore"); return float64(n) }
 	used := func() float64 { return s.StoreInfo("memory", "used_memory") }
 
+	// Every tenant cached before the clock starts, as the other load runs do:
+	// a cold start at 500 a second would otherwise meet the snapshot's miss
+	// limiter (20 a second) for the first ten seconds, which the first soak
+	// run counted as 1,958 refusals.
+	s.Prime(seeded)
 	usedBefore, keysBefore := used(), keys()
+	start := time.Now()
 	sampler := harness.Sample(30*time.Second, fds, used)
 	r := harness.Run(context.Background(), harness.Load{URL: s.Direct(), Keys: seeded.Keys, Tenants: seeded.Tenants,
 		Features: seeded.Features, Rate: 500, Duration: length, Concurrency: 256, RunID: "soak"})
 	points := sampler.Stop()
 	usedAfter, keysAfter := used(), keys()
+	// What a failure needs to be placed and attributed: the service's 5xx by
+	// minute and cause, every counter it exposes, and Postgres's own account
+	// of its vacuums and checkpoints, which share the two CPUs.
+	serverErrors := s.ServerErrors(start)
+	final, _ := harness.Scrape()
+	postgres := s.LogLines("postgres", start, "automatic vacuum", "automatic analyze", "checkpoint complete")
 
 	second := points[len(points)/2:]
 	span := 0.0
@@ -85,7 +97,8 @@ func TestSoak(t *testing.T) {
 		"goroutine_growth_second_half": goGrowth, "goroutine_mean": goMean,
 		"fd_growth_second_half": fdGrowth, "fd_mean": fdMean, "worst_clock_skew_seconds": worstSkew,
 		"ledger_rows": ledgerRows, "ledger_sum": ledgerSum, "balance_sum": balances,
-		"store_bytes_per_record": perRecord})
+		"store_bytes_per_record": perRecord, "server_errors": serverErrors, "metrics": final,
+		"postgres_maintenance": postgres})
 
 	noErrors(t, r)
 	if memGrowth > 0.10*memMean {
@@ -117,14 +130,25 @@ func settle(t *testing.T, s *harness.Stack) (rows, sum float64) {
 	t.Helper()
 	last := -1.0
 	for deadline := time.Now().Add(2 * time.Minute); time.Now().Before(deadline); time.Sleep(time.Second) {
-		rows, _ = strconv.ParseFloat(s.SQL(`SELECT count(*) FROM usage_events WHERE event_type = 'consumed'`), 64)
+		rows = number(t, s.SQL(`SELECT count(*) FROM usage_events WHERE event_type = 'consumed'`))
 		if rows == last {
 			break
 		}
 		last = rows
 	}
-	sum, _ = strconv.ParseFloat(s.SQL(`SELECT coalesce(sum(delta), 0) FROM usage_events WHERE event_type = 'consumed'`), 64)
+	// sum(bigint) is numeric, which the driver does not hand back as a
+	// number; the cast keeps it one.
+	sum = number(t, s.SQL(`SELECT coalesce(sum(delta), 0)::bigint FROM usage_events WHERE event_type = 'consumed'`))
 	return rows, sum
+}
+
+func number(t *testing.T, raw string) float64 {
+	t.Helper()
+	f, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		t.Fatalf("not a number from Postgres: %q", raw)
+	}
+	return f
 }
 
 // sumBalances adds every balance hash's balance in the store.

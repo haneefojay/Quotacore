@@ -421,23 +421,11 @@ type serverEntry struct {
 
 func (s *Stack) serverEntries(endpoint string, since time.Time) []serverEntry {
 	s.T.Helper()
-	cmd := exec.Command("docker", "logs", "--since", since.UTC().Format(time.RFC3339Nano), s.Container("quotacore"))
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		s.T.Fatal(err)
-	}
-	cmd.Stderr = io.Discard
-	if err := cmd.Start(); err != nil {
-		s.T.Fatal(err)
-	}
 	var entries []serverEntry
-	sc := bufio.NewScanner(out)
-	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	want := []byte(`"endpoint":"` + endpoint + `"`)
-	for sc.Scan() {
-		line := sc.Bytes()
+	s.scanLog("quotacore", since, func(line []byte) {
 		if !bytes.Contains(line, want) {
-			continue
+			return
 		}
 		var entry struct {
 			At       time.Time `json:"ts"`
@@ -446,9 +434,70 @@ func (s *Stack) serverEntries(endpoint string, since time.Time) []serverEntry {
 		if json.Unmarshal(line, &entry) == nil && entry.Duration > 0 {
 			entries = append(entries, serverEntry{at: entry.At, took: time.Duration(entry.Duration * float64(time.Millisecond))})
 		}
+	})
+	return entries
+}
+
+// ServerErrors counts the service's access-log lines with a 5xx status since a
+// time, by the minute since then, the endpoint, the status, the error code and
+// the cause the service logged, so a burst of failures in a long run can be
+// placed in time and attributed.
+func (s *Stack) ServerErrors(since time.Time) map[string]int64 {
+	s.T.Helper()
+	out := map[string]int64{}
+	s.scanLog("quotacore", since, func(line []byte) {
+		if !bytes.Contains(line, []byte(`"status":5`)) {
+			return
+		}
+		var entry struct {
+			At       time.Time `json:"ts"`
+			Endpoint string    `json:"endpoint"`
+			Status   int       `json:"status"`
+			Code     string    `json:"code"`
+			Error    string    `json:"error"`
+		}
+		if json.Unmarshal(line, &entry) != nil || entry.Status < 500 {
+			return
+		}
+		out[fmt.Sprintf("minute %d: %s %d %s %s", int(entry.At.Sub(since)/time.Minute), entry.Endpoint,
+			entry.Status, entry.Code, entry.Error)]++
+	})
+	return out
+}
+
+// LogLines is a service's log lines since a time that contain any of match.
+func (s *Stack) LogLines(service string, since time.Time, match ...string) []string {
+	s.T.Helper()
+	var out []string
+	s.scanLog(service, since, func(line []byte) {
+		for _, m := range match {
+			if bytes.Contains(line, []byte(m)) {
+				out = append(out, string(line))
+				return
+			}
+		}
+	})
+	return out
+}
+
+func (s *Stack) scanLog(service string, since time.Time, fn func(line []byte)) {
+	s.T.Helper()
+	cmd := exec.Command("docker", "logs", "--since", since.UTC().Format(time.RFC3339Nano), s.Container(service))
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		s.T.Fatal(err)
+	}
+	// Postgres logs to stderr; the service to stdout.
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		s.T.Fatal(err)
+	}
+	sc := bufio.NewScanner(out)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	for sc.Scan() {
+		fn(sc.Bytes())
 	}
 	_ = cmd.Wait()
-	return entries
 }
 
 // StoreRejections is how many commands the data store has answered with an

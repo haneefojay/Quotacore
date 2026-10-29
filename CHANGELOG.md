@@ -857,6 +857,15 @@ exists, because a future implementer needs to know which statements are new.
   minutes of a 23 to 27 MB sawtooth projected to 3.6 MB an hour against a 2.5 MB bound, where the
   trend moved 0.9 MB across the half. It now compares the growth across the half, as the soak does,
   and leaves the rate over hours to the soak.
+- **The soak started cold and could not read its ledger sum** (`IP-16`, first soak). It sent 500 a
+  second before any tenant was cached, so the snapshot's miss limiter refused 1,958 requests in the
+  first ten seconds (the same count reproduces locally, all in minute 0), and it read `sum(delta)`,
+  which Postgres returns as `numeric`, through a parse that turned it into 0. It now primes every
+  tenant first and casts the sum; a value that does not parse fails the test. Every other check of
+  that 5 h 30 m run held: the balances fell by exactly the consumes that succeeded, one ledger row
+  each, with memory, goroutines and descriptors flat over the second half. The soak now also records
+  the service's 5xx by minute and cause, its counters, and Postgres's vacuums and checkpoints
+  (logged by `compose.perf.yml`), and every load result counts its failures per minute.
 - **A deleted tenant was still served by the instance that deleted it** (`IP-16`, found by `T-15`,
   DR-047). A tenant in the snapshot stayed there until the invalidation came back over pub/sub, so a
   consume sent after the delete's `200`, to the same instance, could complete. The admin routes now
