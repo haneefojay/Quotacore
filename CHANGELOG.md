@@ -849,6 +849,8 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Fixed
 
+- **The README's status still said "implementation started"** (the `v0.1.0` release,
+  2026-10-29). It now says v0.1 is complete, and points to the roadmap and the v0.1 evidence.
 - **The reference job could not build the previous image for the first release into `main`** (the
   `v0.1.0` release, 2026-10-29). The merge base of `dev` and `main` is the specification commit, which
   has no `go.mod`, so the upgrade test had nothing to start from. A base with no code now falls back
