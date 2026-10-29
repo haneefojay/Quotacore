@@ -363,3 +363,53 @@ func TestLastUsedIsBatchedAndAtMostOncePerMinute(t *testing.T) {
 		t.Errorf("after a failed flush and a retry, last_used_at = %v, want %v", got, later)
 	}
 }
+
+// racingLoader runs during a key read, so a test can revoke the key while the
+// read is in flight.
+type racingLoader struct {
+	*fakeLoader
+	during func()
+}
+
+func (r *racingLoader) LoadKey(ctx context.Context, prefix string) (Key, error) {
+	k, err := r.fakeLoader.LoadKey(ctx, prefix)
+	if r.during != nil {
+		r.during()
+		r.during = nil
+	}
+	return k, err
+}
+
+// TestARevokeDuringAMissIsNotUndoneByTheCache (K-2): a miss that read the key
+// before a revoke and finished after the revoke's Forget must not cache the
+// key as active, or the revoked key would be accepted until the next
+// reconcile.
+func TestARevokeDuringAMissIsNotUndoneByTheCache(t *testing.T) {
+	loader := &racingLoader{fakeLoader: newFakeLoader()}
+	a := New(Options{Loader: loader, CacheEntries: 10, MissRate: 1000})
+	tok, k := loader.issue(t, Runtime)
+	loader.during = func() {
+		k.State = "revoked"
+		loader.set(k)
+		a.Forget(k.Prefix)
+	}
+	if _, err := a.Authenticate("Bearer "+tok, accepted); err != nil {
+		t.Fatalf("the read in flight answered before the revoke: %v", err)
+	}
+	if _, err := a.Authenticate("Bearer "+tok, accepted); err == nil {
+		t.Fatal("a key revoked during a miss was accepted from the cache")
+	}
+}
+
+// TestAReconcileDoesNotOverwriteANewerEntry: a reconcile whose read began
+// before an invalidation must not overwrite an entry put after it.
+func TestAReconcileDoesNotOverwriteANewerEntry(t *testing.T) {
+	c := newKeyCache(10)
+	since := c.now()
+	c.bump()
+	c.put("p", entry{key: Key{Prefix: "p", State: "revoked"}, known: true}, c.now())
+	c.apply([]string{"p"}, map[string]Key{"p": {Prefix: "p", State: "active"}}, since)
+	if en, _ := c.get("p"); en.key.State != "revoked" {
+		t.Fatalf("state = %q, want the newer entry's revoked", en.key.State)
+	}
+}

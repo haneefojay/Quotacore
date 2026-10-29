@@ -99,6 +99,10 @@ type Snapshot struct {
 	mu      sync.RWMutex
 	cache   *tenantCache
 	version int64
+	// latest is the per-tenant versions the last prune applied. A miss that
+	// loaded an older version than it names raced an invalidation, and its
+	// configuration is not cached (fill).
+	latest map[string]int64
 
 	loader      Loader
 	resolver    IDResolver
@@ -436,6 +440,14 @@ func (s *Snapshot) fill(loaded *LoadedTenant) {
 	}
 	t := NewTenant(loaded)
 	s.mu.Lock()
+	// A load that began before a change and finished after its invalidation
+	// was applied carries the configuration the invalidation pruned. Caching
+	// it would serve that configuration until the next change to the tenant,
+	// so it is dropped and the caller retries (ErrStaleSnapshot).
+	if v, ok := s.latest[t.ID]; ok && v > t.Version {
+		s.mu.Unlock()
+		return
+	}
 	s.cache.add(t)
 	if s.metrics != nil {
 		s.metrics.CacheEntries.Set(float64(s.cache.len()))
@@ -525,7 +537,6 @@ func (s *Snapshot) subscriberLoop(ctx context.Context) {
 		// gap: anything published before this point is in the versions it
 		// reads, and anything published after it arrives on the channel.
 		s.reconcile()
-		received := s.now()
 		msgs := sub.Messages()
 	loop:
 		for {
@@ -537,10 +548,18 @@ func (s *Snapshot) subscriberLoop(ctx context.Context) {
 				if !ok {
 					break loop
 				}
-				if s.applyInvalidation(payload) && s.metrics != nil {
-					s.metrics.InvalidationLag.Observe(s.now().Sub(received).Seconds())
+				// The lag runs from the moment the change was published, which the
+				// message carries, so it counts the channel's delivery as well as
+				// the apply. A message without the moment is timed from its
+				// arrival. Before the fix the lag ran from the previous message,
+				// so it measured the quiet between changes.
+				from := s.now()
+				if at, ok := publishedAt(payload); ok && at.Before(from) {
+					from = at
 				}
-				received = s.now()
+				if s.applyInvalidation(payload) && s.metrics != nil {
+					s.metrics.InvalidationLag.Observe(s.now().Sub(from).Seconds())
+				}
 			}
 		}
 		sub.Close()
@@ -649,6 +668,7 @@ func (s *Snapshot) applyInvalidation(payload string) bool {
 // the control plane, records the new global version, and reports the size.
 func (s *Snapshot) pruneTo(latest map[string]int64) {
 	s.mu.Lock()
+	s.latest = latest
 	s.cache.prune(latest)
 	if s.metrics != nil {
 		s.metrics.CacheEntries.Set(float64(s.cache.len()))
@@ -686,9 +706,23 @@ func sleepOrWait(done <-chan struct{}, d time.Duration) bool {
 }
 
 // invalidationPayload mirrors the shape the control plane publishes
-// (data-model.md section 3.4): {"version":"4471"}.
+// (data-model.md section 3.4): {"version":"4471","published_at_ms":"…"}.
 type invalidationPayload struct {
-	Version string `json:"version"`
+	Version     string `json:"version"`
+	PublishedAt string `json:"published_at_ms"`
+}
+
+// publishedAt is the moment a message says it was published, if it says.
+func publishedAt(payload string) (time.Time, bool) {
+	var p invalidationPayload
+	if json.Unmarshal([]byte(payload), &p) != nil || p.PublishedAt == "" {
+		return time.Time{}, false
+	}
+	ms, err := strconv.ParseInt(p.PublishedAt, 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return time.UnixMilli(ms), true
 }
 
 func parseInvalidation(payload string) (int64, error) {

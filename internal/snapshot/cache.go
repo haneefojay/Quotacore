@@ -71,6 +71,12 @@ func (c *tenantCache) get(id string) *Tenant {
 // and retires the old plan if it is now unused.
 func (c *tenantCache) add(t *Tenant) {
 	id := t.ID
+	// Two misses for one tenant can finish out of order; the later version
+	// stands.
+	if existing, ok := c.byID[id]; ok && existing.Value.(*cacheEntry).tenant.Version > t.Version {
+		c.ll.MoveToFront(existing)
+		return
+	}
 	t.Plan = c.intern(t.Plan)
 	t.Pins, t.pinKey = c.internPins(t.Pins)
 	entry := &cacheEntry{id: id, tenant: t, bytes: tenantBytes(t)}
@@ -134,8 +140,10 @@ func (c *tenantCache) evictOldest() bool {
 // prune removes tenants whose effective version no longer matches the control
 // plane's: a tenant that disappeared, or one whose per-tenant version moved
 // away from the version the snapshot loaded. This is the incremental
-// invalidation of data-model.md section 3.4; tenants that did not change are
-// touched only to restore recency order.
+// invalidation of data-model.md section 3.4. Tenants that did not change keep
+// their place: a prune is not a use, and moving them would put the cache in
+// the map's random order, so eviction would no longer take the least recently
+// used tenant.
 func (c *tenantCache) prune(latest map[string]int64) (evicted int) {
 	var stale []string
 	for id, e := range c.byID {
@@ -144,13 +152,7 @@ func (c *tenantCache) prune(latest map[string]int64) (evicted int) {
 			stale = append(stale, id)
 		}
 	}
-	evicted = c.forget(stale)
-	for id := range latest {
-		if e, ok := c.byID[id]; ok {
-			c.ll.MoveToFront(e)
-		}
-	}
-	return evicted
+	return c.forget(stale)
 }
 
 // forget removes the cached tenants among ids and reports how many it removed.

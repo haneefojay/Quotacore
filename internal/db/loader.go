@@ -83,6 +83,12 @@ func (l *Loader) Load(ctx context.Context, tenantID string) (*snapshot.LoadedTen
 	}
 	version, err := l.versions.TenantVersion(ctx, tenantID)
 	if err != nil {
+		// The caller's deadline is the control plane's, and a first sight has
+		// already spent part of it on Postgres. A read that ran out of the
+		// caller's time is that budget running out, not the store failing.
+		if ctx.Err() != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%w: %v", snapshot.ErrStoreUnavailable, err)
 	}
 	t, err := loadTenantRow(ctx, l.db, tenantID, "")

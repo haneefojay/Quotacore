@@ -95,7 +95,10 @@ func (w *Worker) Run(ctx context.Context) {
 	defer t.Stop()
 	for {
 		now := w.o.Now()
-		if !w.o.Paused() {
+		// Read once, so a pause that begins mid-scan cannot advance the span
+		// past boundaries the scan never ran for, or skip one it did.
+		paused := w.o.Paused()
+		if !paused {
 			began := time.Now()
 			sc := w.Sweep(ctx, prev, now)
 			level := slog.LevelDebug
@@ -107,7 +110,7 @@ func (w *Worker) Run(ctx context.Context) {
 		}
 		// A paused scan keeps its span, so the boundaries it skipped are
 		// covered when it resumes.
-		if !w.o.Paused() {
+		if !paused {
 			prev = now
 		}
 		select {
