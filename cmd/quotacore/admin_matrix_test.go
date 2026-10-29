@@ -652,3 +652,28 @@ func requestFieldNames(t *testing.T) map[string]bool {
 
 func asMap(v any) map[string]any { m, _ := v.(map[string]any); return m }
 func asSlice(v any) []any        { s, _ := v.([]any); return s }
+
+// TestAPlanHoldsAtMostAHundredFeatures (NFR-T5): a plan of 100 entitlements is
+// created, and one of 101 is a 400 validation_failed that writes nothing.
+func TestAPlanHoldsAtMostAHundredFeatures(t *testing.T) {
+	s := newStack(t)
+	var ents []string
+	for i := 0; i < 101; i++ {
+		f := uniq("cap")
+		s.createFeature(f)
+		ents = append(ents, `{"feature_key":"`+f+`","limit":10,"reset_interval":"monthly"}`)
+	}
+	plan := func(key string, n int) response {
+		return s.adminDo(http.MethodPost, "/v1/admin/plans",
+			`{"plan_key":"`+key+`","name":"P","entitlements":[`+strings.Join(ents[:n], ",")+`]}`)
+	}
+	mustStatus(t, plan(uniq("hundred"), 100), http.StatusCreated)
+	over := uniq("over")
+	if r := plan(over, 101); r.Status != http.StatusBadRequest || r.code(t) != "validation_failed" {
+		t.Fatalf("a plan of 101 features = %d %s, want 400 validation_failed", r.Status, r.Body)
+	}
+	var n int
+	if err := s.seedDB.QueryRow(`SELECT count(*) FROM plans WHERE key = $1`, over).Scan(&n); err != nil || n != 0 {
+		t.Errorf("the refused plan was written: %d rows, %v", n, err)
+	}
+}

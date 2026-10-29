@@ -271,6 +271,6 @@ func render(start time.Time, end *time.Time, loc *time.Location) (contract.NilTi
 	if end == nil {
 		return contract.NilTimestamp{Null: true}, contract.NilTimestamp{Null: true}
 	}
-	return contract.NewNilTimestamp(contract.Timestamp(start.In(loc))),
-		contract.NewNilTimestamp(contract.Timestamp(end.In(loc)))
+	return contract.NewNilTimestamp(envelope.Boundary(start, loc)),
+		contract.NewNilTimestamp(envelope.Boundary(*end, loc))
 }

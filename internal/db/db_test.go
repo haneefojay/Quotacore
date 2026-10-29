@@ -15,8 +15,8 @@ func TestEmbeddedVersionReadsTheFileSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EmbeddedVersion: %v", err)
 	}
-	if v != 11 {
-		t.Errorf("EmbeddedVersion = %d, want 11", v)
+	if v != 12 {
+		t.Errorf("EmbeddedVersion = %d, want 12", v)
 	}
 }
 

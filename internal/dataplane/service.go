@@ -152,6 +152,9 @@ func (s *Service) tenant(externalID string) (*snapshot.Tenant, time.Duration, *e
 
 // location returns the tenant's zone, loading each name once. The zone was
 // validated when the tenant was written, so a failure is a defect.
+// Location is a tenant's zone, loaded once, for the reset worker.
+func (s *Service) Location(name string) (*time.Location, error) { return s.location(name) }
+
 func (s *Service) location(name string) (*time.Location, error) {
 	if loc, ok := s.zones.Load(name); ok {
 		return loc.(*time.Location), nil

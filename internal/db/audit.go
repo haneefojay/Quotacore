@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"time"
 
 	"github.com/quotacore/quotacore/internal/admin"
 )
@@ -48,4 +49,45 @@ func nullable(s string) any {
 		return nil
 	}
 	return s
+}
+
+// Note is an audit row about the installation rather than one resource
+// (IP-16, Q-28): `quotacore audit note` records with it the truncation a
+// Postgres restore leaves in the history (consistency-and-recovery.md section
+// 4.2, step 6), so the gap is documented rather than discovered later.
+type Note struct {
+	ID        string    `json:"id"`
+	Actor     string    `json:"actor"`
+	Action    string    `json:"action"`
+	Reason    string    `json:"reason"`
+	RequestID string    `json:"request_id"`
+	At        time.Time `json:"occurred_at"`
+}
+
+// WriteNote appends one system audit row with the reason given.
+func WriteNote(ctx context.Context, db *sql.DB, actor, requestID, reason string) (Note, error) {
+	n := Note{Actor: actor, Action: "system.note", Reason: reason, RequestID: requestID}
+	err := db.QueryRowContext(ctx, `
+INSERT INTO audit_log (actor, action, subject_type, reason, request_id)
+VALUES ($1, $2, 'system', $3, $4) RETURNING id::text, created_at`, actor, n.Action, reason, requestID).Scan(&n.ID, &n.At)
+	return n, Classify(OpWrite, err)
+}
+
+// TenantIDs is every tenant's id, deleted ones included, for a configuration
+// bump that must reach every snapshot entry.
+func TenantIDs(ctx context.Context, db *sql.DB) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT id::text FROM tenants ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

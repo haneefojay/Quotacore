@@ -27,6 +27,7 @@ import (
 	"github.com/quotacore/quotacore/internal/script"
 	"github.com/quotacore/quotacore/internal/snapshot"
 	"github.com/quotacore/quotacore/internal/store"
+	"github.com/quotacore/quotacore/internal/worker"
 )
 
 // enforcement is the assembled request path: the snapshot, the key cache, the
@@ -56,6 +57,8 @@ type enforcement struct {
 	Data *store.Store
 	// Service is the data plane, whose Reverse a test's own pass calls.
 	Service *dataplane.Service
+	// Worker is the reset worker, running when QUOTACORE_WORKER_ENABLED is.
+	Worker *worker.Worker
 	// Registry is every collector the process serves, and MetricsHandler
 	// serves it on the metrics listener (IP-13 D8, D14). Dependencies,
 	// Cycles and HTTP are the sets IP-13 added, for the tests that read
@@ -324,6 +327,21 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		MetadataMax: cfg.MetadataMaxBytes,
 		StoreBudget: cfg.DataScriptTimeout,
 	})
+	// The reset worker (Q-13): the request path's transition, applied at the
+	// boundary to the tenants this instance serves. Every instance may run it,
+	// because a second one only finds the boundary already rolled (INV-WK1).
+	resetWorker := worker.New(worker.Options{
+		Tenants:  snap,
+		Plane:    service,
+		Interval: cfg.ResetScanInterval,
+		Batch:    cfg.ResetBatchSize,
+		Logger:   log.With("job", "worker"),
+		Paused:   readOnly,
+		Zone:     service.Location,
+	})
+	if cfg.WorkerEnabled {
+		go resetWorker.Run(ctx)
+	}
 	var limiter, adminLimit *dataplane.RateLimiter
 	if cfg.RateLimitEnabled {
 		limiter = dataplane.NewRateLimiter(cfg.RateLimitRuntimeRPS, cfg.RateLimitBurst, cfg.RateLimiterMaxKeys)
@@ -342,6 +360,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		Logger:         log,
 		MetadataMax:    cfg.MetadataMaxBytes,
 		PublishTimeout: cfg.ControlPlaneTimeout,
+		Forget:         snap.Forget,
 		Scripts:        runner,
 		Events:         events,
 		// The confirmation threshold and the token's lifetime (DR-046).
@@ -446,6 +465,7 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		Fence:          fence,
 		Data:           data,
 		Service:        service,
+		Worker:         resetWorker,
 		Close: func() {
 			cancel()
 			snap.Close()

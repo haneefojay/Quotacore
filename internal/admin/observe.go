@@ -9,6 +9,7 @@ import (
 
 	contract "github.com/quotacore/quotacore/api"
 	"github.com/quotacore/quotacore/internal/cycle"
+	"github.com/quotacore/quotacore/internal/envelope"
 )
 
 var (
@@ -114,14 +115,14 @@ func window(anchor time.Time, loc *time.Location, e Event) (contract.NilTimestam
 		if !e.Start.IsZero() && e.Start.UnixMilli() != anchor.UnixMilli() {
 			return none, none
 		}
-		return contract.NewNilTimestamp(contract.Timestamp(anchor.In(loc))), none
+		return contract.NewNilTimestamp(envelope.Boundary(anchor, loc)), none
 	}
 	start := cycle.Add(anchor, iv, loc, e.Index)
 	if !e.Start.IsZero() && e.Start.UnixMilli() != start.UnixMilli() {
 		return none, none
 	}
 	end := cycle.Add(anchor, iv, loc, e.Index+1)
-	return contract.NewNilTimestamp(contract.Timestamp(start.In(loc))), contract.NewNilTimestamp(contract.Timestamp(end.In(loc)))
+	return contract.NewNilTimestamp(envelope.Boundary(start, loc)), contract.NewNilTimestamp(envelope.Boundary(end, loc))
 }
 
 // serveStatus reports each dependency as data at 200 (S9): a probe that fails

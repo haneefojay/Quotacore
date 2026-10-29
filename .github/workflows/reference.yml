@@ -49,7 +49,10 @@ jobs:
       - name: The README's quickstart, verbatim, on this runner
         run: tools/quickstart.sh
       - name: The reference suite
-        run: go test -count=1 -timeout 50m -v ./test/reference/
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -count=1 -timeout 50m -json ./test/reference/ | tee reference.json | go run ./tools/testreport -suite reference
         env:
           QUOTACORE_REFERENCE: '1'
           QUOTACORE_REQUIRE_REFERENCE: '1'

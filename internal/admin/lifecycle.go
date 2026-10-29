@@ -98,7 +98,7 @@ func (i impact) end() contract.NilTimestamp {
 	if i.earliest == nil {
 		return contract.NilTimestamp{Null: true}
 	}
-	return contract.NewNilTimestamp(contract.Timestamp(*i.earliest))
+	return contract.NewNilTimestamp(envelope.Boundary(*i.earliest, i.earliest.Location()))
 }
 
 // planImpact answers UC-19: how many tenants an apply-now would re-anchor and
@@ -238,7 +238,7 @@ func (s *Service) confirm(w http.ResponseWriter, r *http.Request, p contract.Pla
 	}
 	var earliest any
 	if im.earliest != nil {
-		earliest = im.earliest.Format(time.RFC3339)
+		earliest = time.Time(envelope.Boundary(*im.earliest, im.earliest.Location())).Format(time.RFC3339)
 	}
 	envelope.Write(w, r, envelope.Error(contract.ErrorCodeConfirmationRequired,
 		fmt.Sprintf("this apply would re-anchor %d tenants", im.tenants)).

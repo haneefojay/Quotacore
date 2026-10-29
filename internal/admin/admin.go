@@ -339,7 +339,11 @@ type Options struct {
 	// PublishTimeout bounds the propagation after a commit, which is
 	// best-effort: the refresh tick converges a missed publish.
 	PublishTimeout time.Duration
-	Status         StatusInfo
+	// Forget drops tenants from this instance's snapshot, so the request
+	// after a committed write reads them afresh here rather than when the
+	// invalidation arrives (DR-047, IP-16).
+	Forget func(tenantIDs []string)
+	Status StatusInfo
 	// Scripts and Events serve the routes that move a balance (IP-10): the
 	// control-plane scripts, and the ledger's sink, which is the no-op sink
 	// until IP-12.
@@ -397,6 +401,7 @@ type Service struct {
 	now         func() time.Time
 	readOnly    func() bool
 	drained     func(ctx context.Context)
+	forget      func(tenantIDs []string)
 }
 
 func New(opts Options) *Service {
@@ -407,6 +412,7 @@ func New(opts Options) *Service {
 		log:         opts.Logger,
 		metadataMax: opts.MetadataMax,
 		pubTimeout:  opts.PublishTimeout,
+		forget:      opts.Forget,
 		status:      opts.Status,
 		scripts:     opts.Scripts,
 		events:      opts.Events,
@@ -507,8 +513,15 @@ func (s *Service) writable(h http.HandlerFunc) http.HandlerFunc {
 
 // publish propagates a committed write. It is best-effort and never fails the
 // request: the write is committed, and the refresh tick converges a missed
-// message within its interval (request-lifecycle.md section 4).
+// message within its interval (request-lifecycle.md section 4). This
+// instance's snapshot forgets the tenants first, so the next request it
+// serves reads them as committed: a delete takes effect for every request
+// that reads the tenant after it commits (DR-047), here at once and elsewhere
+// within the propagation bound.
 func (s *Service) publish(r *http.Request, tenants []string) {
+	if s.forget != nil && len(tenants) > 0 {
+		s.forget(tenants)
+	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), s.pubTimeout)
 	defer cancel()
 	if _, err := s.data.Publish(ctx, tenants); err != nil {

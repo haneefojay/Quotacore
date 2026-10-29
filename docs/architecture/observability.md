@@ -50,7 +50,9 @@ values is deliberate: a customer asking "why is my quota going up?" is answered 
 > contract's six. A force-rollover and a re-anchor are rewrites, not transitions, and are not
 > counted. v0.1 has no reset worker (`Q-13`), so every transition is the lazy one a request applies,
 > and the counter rises when traffic crosses a boundary rather than at the boundary; whichever phase
-> answers `Q-13` counts its worker's transitions here. `rollover_stale_total` counts a `stale`
+> answers `Q-13` counts its worker's transitions here. Amended 2026-10-28 (`IP-16`): the worker
+> exists and its transitions are counted here by the same runner, so for a cached tenant the counter
+> rises at the boundary. `rollover_stale_total` counts a `stale`
 > verdict whose stored index is ahead of the caller's target, except the one benign case: the store
 > one cycle ahead, opened less than the clock-skew threshold (`Q-26`) after the caller's reading,
 > which is two synchronised instances meeting at a boundary. A `stale` because the caller's snapshot

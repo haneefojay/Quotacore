@@ -259,7 +259,7 @@ The generator is not a fuzzer over bytes; it is a generator over **valid operati
 | The same key never applies twice | Random sequences with deliberate repeats | One deduction per key, always |
 | `balance == opening + Σ(delta)` per cycle | Random sequences crossing boundaries | The DR-042 identity holds for every cycle |
 | The projected window equals the computed window | Random anchors, intervals, zones and times | The transition's view and the engine's pure function always agree |
-| Rounding and formatting round-trip | Random instants and zones | A rendered timestamp parses back to the same instant at the same offset |
+| Rounding and formatting round-trip | Random instants and zones | A rendered timestamp parses back to the same instant at the same offset. Amended 2026-10-28 (`IP-16`): for a boundary, the same instant rounded up to its second ([api-conventions.md](api-conventions.md#3-time) §3) |
 
 **Shrinking is mandatory.** A property test that reports a violation with a 4,000-step sequence
 and no minimal example will be ignored, and therefore will not be fixed. The generator shrinks to
@@ -304,6 +304,28 @@ The ledger-saturation test asserts a negative: that enforcement latency is *unch
 ledger pressure. That is the property that justifies dropping events rather than blocking, and it
 needs a test, because the intuitive alternative is to block.
 
+> **Amended 2026-10-28 (`IP-16`) — how the table is run.** The suite is `test/load`, against the
+> built image on the stack of `test/harness/compose.perf.yml`: the service and both stores pinned to
+> two CPUs, the reference host of NFR §0, with the generator on the runner's other two. The
+> generator is open loop, so a stall is counted rather than omitted.
+>
+> - **Latency rows.** NFR-L1 to L3 and L5 are gated on the service's own time for each request,
+>   read from its access log, and the client's figure is recorded beside it. A hosted runner's
+>   network hop costs a few hundred microseconds of idle wake-up that the service does not cause.
+>   NFR-L3's "10× expected peak" is [Q-30](../product/assumptions-and-open-questions.md#2-open-questions);
+>   the burst run's p99.9 is recorded as information.
+> - **Idempotency scale.** Not re-run for 24 h: `IP-15` measured the bytes per record
+>   (deployment §5). The sustained run checks that the store grows by that figure per record
+>   within 10%, and that it refuses nothing.
+> - **Soak.** 5 h 30 m at 500 consumes a second, weekly and before a release. A hosted runner's
+>   job ends at 6 h. Every 30 s the run samples memory, goroutines, open descriptors, the store's
+>   memory and the clock skew. Over the second half, a least-squares slope projected across that
+>   half must stay within noise. Counter drift is checked at the end: one ledger row per success,
+>   and the balances sum to what was granted less what was consumed. `QUOTACORE_SOAK_DURATION`
+>   runs it for 24 h on a self-hosted runner, with nothing else changed.
+> - **Boundary-crossing.** The rollover overhead (NFR-L7) is measured by
+>   `TestNFRL7RolloverOverhead` in `internal/script`, the difference of two medians against the real store, per commit.
+
 ## 6. Chaos tests
 
 Run nightly, against a real stack, with fault injection at named points.
@@ -325,6 +347,23 @@ Run nightly, against a real stack, with fault injection at named points.
 | Slow drain of the ledger writer | Fill the queue, then stop the writer | Drops are counted; enforcement is unaffected |
 | SIGTERM under load | Graceful shutdown | In-flight requests complete; no partial state; 30 s bound (NFR-A5) |
 | Disk full on Postgres | Fill the volume | Writes fail loudly; the service does not silently accept and drop administrative mutations |
+
+> **Amended 2026-10-28 (`IP-16`) — where each row runs.**
+>
+> - **In process, under `-race` on every pull request** (`cmd/quotacore/chaos_test.go`), for the
+>   rows a proxy or a store command can inject: one balance hash deleted, latency at 400 ms and
+>   2 s, and pub/sub muted. The first two data-store rows are `IP-07`'s
+>   `TestADeadDataStoreIs503WithinTheBound`. "Postgres unreachable" is `IP-04`'s
+>   `TestPostgresOutageSparesCachedTenants`, and under load it is `test/load`'s
+>   `TestPostgresOutageUnderLoad`. The slow drain is `IP-12`'s `TestLedgerSaturationLeavesEnforcementAlone`.
+> - **Against the reference stack.** The flush and the restore are `test/reference`'s drill and
+>   `T-14`. `SIGTERM` under load is `TestAStopDrainsWithinTheGrace`. Refusing to start without
+>   Postgres is a CI step.
+> - **`test/chaos`** runs disk full, on a tmpfs Postgres it fills, and the clock pair. The clock
+>   pair moves the runner's clock with `date` in a job of its own and puts it back.
+>
+> A host jump moves the data store's clock with the service's, so it fires the stale-rollover
+> alert but cannot fire the skew alert. The skew alert is proved by `IP-13`'s alert-rule cases.
 
 The clock-jump tests are the ones most likely to be removed because they are inconvenient. They
 are also the only proof that a monotonic guard behaves correctly when the world is inconsistent,

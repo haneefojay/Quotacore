@@ -465,3 +465,37 @@ func TestTheRebuildFlagsAreRead(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadReadsTheWorkerKeys: the reset worker's three keys of deployment.md
+// section 4.3, on by default at 60 s and 500 (Q-13), and a refusal naming
+// the key for a value it cannot run with.
+func TestLoadReadsTheWorkerKeys(t *testing.T) {
+	c, err := Load(env(baseEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !c.WorkerEnabled || c.ResetScanInterval != time.Minute || c.ResetBatchSize != 500 {
+		t.Errorf("defaults: %v %v %d", c.WorkerEnabled, c.ResetScanInterval, c.ResetBatchSize)
+	}
+	e := baseEnv()
+	e["QUOTACORE_WORKER_ENABLED"] = "false"
+	e["QUOTACORE_RESET_SCAN_INTERVAL"] = "5s"
+	e["QUOTACORE_RESET_BATCH_SIZE"] = "50"
+	if c, err = Load(env(e)); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.WorkerEnabled || c.ResetScanInterval != 5*time.Second || c.ResetBatchSize != 50 {
+		t.Errorf("overrides: %v %v %d", c.WorkerEnabled, c.ResetScanInterval, c.ResetBatchSize)
+	}
+	for key, bad := range map[string]string{
+		"QUOTACORE_WORKER_ENABLED":      "sometimes",
+		"QUOTACORE_RESET_SCAN_INTERVAL": "500ms",
+		"QUOTACORE_RESET_BATCH_SIZE":    "0",
+	} {
+		e := baseEnv()
+		e[key] = bad
+		if _, err := Load(env(e)); err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("%s=%q: err = %v, want a refusal naming the key", key, bad, err)
+		}
+	}
+}
