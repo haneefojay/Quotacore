@@ -41,6 +41,13 @@ quotacore set $TENANT_ID --feature FEATURE --value 0 --reason reconciliation
 
 `quotacore verify-tenant $TENANT_ID` reports no finding.
 
+> **Amended 2026-10-29 (`IP-16`, the v0.1 runbook review on the reference stack).** A `set` changes the balance
+> going forward. It cannot rewrite history, so a `chain` or `identity` finding stays listed for its
+> cycle after the balance is put right. A `set` to the value the hash already holds writes no event
+> (Q-22). For those findings, Verify means the decided balance is in place and no **new** finding
+> appears. When the cause is a recorded Postgres truncation, the runtime balance is authoritative and
+> no `set` is needed. Use a real value in `--value`; the `0` above is a placeholder.
+
 ## Escalate
 
 A mismatch nobody can explain: escalate to the service owner.

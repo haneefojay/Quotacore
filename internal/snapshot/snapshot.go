@@ -316,6 +316,9 @@ func (s *Snapshot) firstSightOf(externalID string) (*Tenant, error) {
 		return nil, ErrTenantUnknown
 	}
 	s.countMiss(observability.MissError)
+	if errors.Is(err, ErrStoreUnavailable) {
+		return nil, err
+	}
 	return nil, fmt.Errorf("%w: %v", ErrRefreshFailed, err)
 }
 
@@ -404,6 +407,9 @@ func (s *Snapshot) resolveMiss(tenantID, featureKey string) (Resolution, error) 
 			return Resolution{}, ErrTenantUnknown
 		}
 		s.countMiss(observability.MissError)
+		if errors.Is(err, ErrStoreUnavailable) {
+			return Resolution{}, err
+		}
 		return Resolution{}, fmt.Errorf("%w: %v", ErrRefreshFailed, err)
 	}
 	s.countMiss(observability.MissLoaded)

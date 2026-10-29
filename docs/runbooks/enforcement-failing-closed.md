@@ -49,6 +49,13 @@ quotacore status
 
 `quotacore_datastore_up` is `1`, `/readyz` answers `200`, and the share of `rejected` outcomes in `quotacore_consume_total` has fallen back. Then confirm no partial deduction: a retry with the customer's same `Idempotency-Key` replays or applies once (DR-027).
 
+> **Amended 2026-10-29 (`IP-16`, the v0.1 runbook review on the reference stack).** Restarting the data store
+> on the reference stack loses every balance, because Valkey runs without persistence. That is the
+> [Data store lost](data-store-lost.md) case, and it shows as `balance_key_missing_total` rising once
+> `datastore_up` is back at `1`. Check that counter in Verify too. A tenant first seen during the
+> outage gets `503 service_unavailable` within the data-store budget. Before this review, the
+> answer for such a tenant was `control_plane_unavailable`, and it took the control plane's 3 s.
+
 ## Escalate
 
 If the data store does not come back within the outage the customer tolerates, or balances are missing when it does, escalate to the owner of the data store and follow [Data store lost](data-store-lost.md).

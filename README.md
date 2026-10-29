@@ -38,7 +38,7 @@ daylight-saving change.
 Docker with Compose v2, and nothing else: no account, no signup, no egress.
 
 ```bash
-git clone https://github.com/quotacore/quotacore.git
+git clone https://github.com/haneefojay/Quotacore.git quotacore
 cd quotacore
 export QUOTACORE_BOOTSTRAP_ADMIN_KEY="$(docker compose run --rm --no-deps quotacore key mint)"
 export QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK=yes

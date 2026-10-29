@@ -42,6 +42,13 @@ Fix the cause in Postgres, then retry the administrative write with its original
 
 The retried write answers `2xx` and its audit row is listed by `GET /v1/admin/audit`.
 
+> **Amended 2026-10-29 (`IP-16`, the v0.1 runbook review on the reference stack).** A grant, `set` or
+> `force-rollover` whose audit insert fails has **already changed the balance**, and the request
+> answers `500`. The `error` line says so: "a balance change was applied and its audit row did not
+> commit". In that case **do not retry**, because a retried grant is a second grant. Record the change
+> with a `set` to the balance the store now holds, with a reason that names the failed request's id.
+> Retry only in the second Decide case, where nothing changed.
+
 ## Escalate
 
 A balance change without an audit row: escalate to the service owner.

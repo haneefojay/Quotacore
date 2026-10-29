@@ -140,6 +140,9 @@ func (s *Service) tenant(externalID string) (*snapshot.Tenant, time.Duration, *e
 	case errors.Is(err, snapshot.ErrTenantUnknown):
 		p = envelope.Error(contract.ErrorCodeTenantNotFound, "no tenant has that tenant_external_id").
 			With("tenant_external_id", externalID)
+	case errors.Is(err, snapshot.ErrStoreUnavailable):
+		p = envelope.Error(contract.ErrorCodeServiceUnavailable,
+			"the tenant is not cached and the data store did not answer").Retry(retryShortly)
 	case errors.Is(err, snapshot.ErrRefreshFailed):
 		p = envelope.Error(contract.ErrorCodeControlPlaneUnavailable,
 			"the tenant is not cached and the control plane did not answer").Retry(retryShortly)

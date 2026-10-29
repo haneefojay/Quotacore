@@ -50,6 +50,12 @@ Without one, halt and follow [A leaked key](leaked-key.md) for the runtime keys.
 
 Each duplicate has exactly one reversal with a matching `event_id`, and a second pass issues nothing further.
 
+> **Amended 2026-10-29 (`IP-16`, the v0.1 runbook review on the reference stack).** `reconcile-report` lists
+> reconciliation findings, not duplicates. A detected duplicate and its reversal show in the
+> metrics above and in `quotacore events $TENANT_ID`, as a `refunded` row carrying the duplicate's
+> `Idempotency-Key`. Verify with those. The background pass issues the reversal, and
+> `verify-tenant` only checks it.
+
 ## Escalate
 
 A duplicate with no store loss: escalate at once to the service owner.

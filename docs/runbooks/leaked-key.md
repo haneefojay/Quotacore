@@ -49,6 +49,13 @@ Issue a replacement with `POST /v1/admin/keys`, and redeploy the client that use
 
 A request with the revoked key answers `401 api_key_invalid`, and `quotacore_rate_limited_total` shows no further traffic under its prefix.
 
+> **Amended 2026-10-29 (`IP-16`, the v0.1 runbook review on the reference stack).** Issue the replacement with
+> `quotacore key create --name $KEY_NAME --scope runtime` (or `--scope admin`). For the Verify step, note that
+> `quotacore_rate_limited_total{key_prefix}` counts only rate-limited requests, so it cannot show
+> whether a revoked key is still being tried. Use `quotacore_errors_total{code="api_key_invalid"}`
+> instead: it rises with every attempt, across all keys. The access log line for a refused key
+> carries no prefix.
+
 ## Escalate
 
 Signs of use you cannot explain in the audit log or the events: escalate as a security incident per [security-model.md section 9](../architecture/security-model.md#9-incident-response).
