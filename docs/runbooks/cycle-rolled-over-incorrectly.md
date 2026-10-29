@@ -43,7 +43,7 @@ The balance route shows the current window, and the audit log holds the force-ro
 
 > **Amended 2026-10-29 (`IP-16`, the v0.1 runbook review on the reference stack).** `GET /v1/balance` returns
 > `cycle_start` and `cycle_end` but not `cycle_index`. Compare the window with the boundary table,
-> and read the index from `quotacore events <tenant>`, where every row carries it. `quotacore
+> and read the index from `quotacore events $TENANT_ID`, where every row carries it. `quotacore
 > rollover` takes a tenant id or external id.
 
 ## Escalate

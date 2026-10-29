@@ -52,7 +52,7 @@ Each duplicate has exactly one reversal with a matching `event_id`, and a second
 
 > **Amended 2026-10-29 (`IP-16`, the v0.1 runbook review on the reference stack).** `reconcile-report` lists
 > reconciliation findings, not duplicates. A detected duplicate and its reversal show in the
-> metrics above and in `quotacore events <tenant>`, as a `refunded` row carrying the duplicate's
+> metrics above and in `quotacore events $TENANT_ID`, as a `refunded` row carrying the duplicate's
 > `Idempotency-Key`. Verify with those. The background pass issues the reversal, and
 > `verify-tenant` only checks it.
 
