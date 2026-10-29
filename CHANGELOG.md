@@ -864,6 +864,9 @@ exists, because a future implementer needs to know which statements are new.
 
   Deployment §11's "no command yet" for restore steps 4 and 6 is amended. The review row in
   `docs/runbooks/README.md` is filled in.
+- **The quickstart cloned a repository that does not exist** (the v0.1 runbook review). The README
+  and deployment §2 now clone `https://github.com/haneefojay/Quotacore.git` into `quotacore`.
+  `tools/quickstart.sh` still clones the local checkout in its place, which is why CI never noticed.
 - **A cycle boundary was rendered up to a second early** (`IP-16`, found by the formatting property).
   An anchor keeps milliseconds and the wire carries seconds, so a `cycle_end` was rounded down to a
   second at which the old cycle was still open, and a client that waited until it was refused again.

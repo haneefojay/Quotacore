@@ -38,7 +38,7 @@ if [ "$readme" != "$guide" ]; then
   diff <(echo "$readme") <(echo "$guide") >&2 || true
   exit 1
 fi
-for line in 'git clone https://github.com/quotacore/quotacore.git' 'docker compose exec quotacore quotacore init'; do
+for line in 'git clone https://github.com/haneefojay/Quotacore.git quotacore' 'docker compose exec quotacore quotacore init'; do
   if ! grep -qxF "$line" <<<"$readme"; then
     echo "quickstart: the block has no line '$line', so this script cannot run it as written" >&2
     exit 1
@@ -61,7 +61,7 @@ cleanup() {
 trap cleanup EXIT
 
 script="$(sed \
-  -e "s#^git clone https://github.com/quotacore/quotacore.git\$#git clone --quiet file://$repo quotacore#" \
+  -e "s#^git clone https://github.com/haneefojay/Quotacore.git quotacore\$#git clone --quiet file://$repo quotacore#" \
   -e 's#^docker compose exec quotacore quotacore init$#docker compose exec quotacore quotacore init --yes --limit 5#' \
   <<<"$readme")"
 
