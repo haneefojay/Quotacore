@@ -49,6 +49,13 @@ func (s *Service) fail(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	var down errDataStore
+	if errors.As(err, &down) && down.uncertain {
+		s.log.Error("the data store did not answer a balance script; the change may have been applied with no audit row",
+			"request_id", envelope.From(r.Context()).RequestID, "error", down.err)
+		envelope.Write(w, r, envelope.Error(contract.ErrorCodeServiceUnavailable,
+			"the data store did not answer, so the change may have been applied; read the balance before retrying"))
+		return
+	}
 	if errors.As(err, &down) {
 		s.log.Warn("the data store did not answer an admin write; nothing was committed",
 			"request_id", envelope.From(r.Context()).RequestID, "error", down.err)
@@ -155,8 +162,14 @@ func invalidField(field, problem string) error {
 }
 
 // errDataStore is the fast store failing inside a write, which rolls the
-// write back and is answered 503 service_unavailable.
-type errDataStore struct{ err error }
+// write back and is answered 503 service_unavailable. uncertain is a balance
+// script whose answer was lost: the transaction rolled back, but the script
+// may have run, so the answer does not say nothing changed and carries no
+// retry hint.
+type errDataStore struct {
+	err       error
+	uncertain bool
+}
 
 func (e errDataStore) Error() string { return "data store: " + e.err.Error() }
 func (e errDataStore) Unwrap() error { return e.err }

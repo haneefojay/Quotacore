@@ -222,3 +222,36 @@ func TestReloadingATenantKeepsOnePlanReference(t *testing.T) {
 		t.Errorf("evicting the only tenant left the plan cached (%d bytes)", c.planMem)
 	}
 }
+
+// TestAPruneKeepsRecencyOrder (found by the v0.1 code review): a prune that
+// removes nothing is not a use, so the least recently used tenant is still the
+// one evicted next. Before the fix every surviving tenant was moved to the
+// front in map order, which made eviction random.
+func TestAPruneKeepsRecencyOrder(t *testing.T) {
+	for run := 0; run < 20; run++ {
+		const n = 8
+		c := newTenantCache(n, 1<<30)
+		latest := map[string]int64{}
+		for i := 0; i < n; i++ {
+			id := fmt.Sprintf("t%d", i)
+			c.add(&Tenant{ID: id, ExternalID: id, Version: 1, Plan: &Plan{ID: "p", Key: "k"}})
+			latest[id] = 1
+		}
+		// t0 is the least recently used; touch every other tenant in order.
+		for i := 1; i < n; i++ {
+			c.get(fmt.Sprintf("t%d", i))
+		}
+		if evicted := c.prune(latest); evicted != 0 {
+			t.Fatalf("a prune with no change evicted %d", evicted)
+		}
+		c.add(&Tenant{ID: "new", ExternalID: "new", Version: 1, Plan: &Plan{ID: "p", Key: "k"}})
+		if c.get("t0") != nil {
+			t.Fatal("the least recently used tenant survived a prune and the next add; recency was reordered")
+		}
+		for i := 1; i < n; i++ {
+			if c.get(fmt.Sprintf("t%d", i)) == nil {
+				t.Fatalf("t%d, used more recently than t0, was evicted", i)
+			}
+		}
+	}
+}

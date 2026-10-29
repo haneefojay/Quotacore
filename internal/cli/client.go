@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -79,7 +80,8 @@ func (c *client) call(op, path string, q url.Values, b body, token string) resul
 		return result{err: fmt.Errorf("operation %s is not in the contract", op)}
 	}
 	u := *c.base
-	u.RawPath = c.base.EscapedPath() + path
+	// A base URL written with a trailing slash would otherwise make //v1.
+	u.RawPath = strings.TrimSuffix(c.base.EscapedPath(), "/") + path
 	u.Path, _ = url.PathUnescape(u.RawPath)
 	if enc := q.Encode(); enc != "" {
 		u.RawQuery = enc

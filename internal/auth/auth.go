@@ -170,17 +170,20 @@ func (a *Authenticator) miss(prefix string) (entry, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), a.timeout)
 	defer cancel()
+	// A revoke that lands while the read is in flight moves the epoch, and the
+	// read's answer is then used once and not cached (K-2).
+	since := a.cache.now()
 	k, err := a.loader.LoadKey(ctx, prefix)
 	switch {
 	case errors.Is(err, ErrKeyUnknown):
 		en := entry{}
-		a.cache.put(prefix, en)
+		a.cache.put(prefix, en, since)
 		return en, nil
 	case err != nil:
 		return entry{}, ErrUnavailable
 	}
 	en := entry{key: k, known: true}
-	a.cache.put(prefix, en)
+	a.cache.put(prefix, en, since)
 	return en, nil
 }
 
@@ -200,6 +203,7 @@ func (a *Authenticator) noteUse(id string, at time.Time) {
 // Calls coalesce: one reconcile in flight and one queued is the most there
 // will ever be, so an invalidation storm costs at most two reads.
 func (a *Authenticator) Invalidate() {
+	a.cache.bump()
 	select {
 	case a.kick <- struct{}{}:
 	default:
@@ -211,6 +215,7 @@ func (a *Authenticator) Invalidate() {
 // request, and a prefix that has since been issued is accepted. A failure
 // keeps the cache as it was, the same rule the snapshot follows.
 func (a *Authenticator) Reconcile(ctx context.Context) error {
+	since := a.cache.now()
 	asked := a.cache.prefixes()
 	if len(asked) == 0 {
 		return nil
@@ -221,7 +226,7 @@ func (a *Authenticator) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	a.cache.apply(asked, rows)
+	a.cache.apply(asked, rows, since)
 	return nil
 }
 

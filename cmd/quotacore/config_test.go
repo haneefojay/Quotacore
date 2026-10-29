@@ -253,6 +253,28 @@ func TestLoadRejectsUnreadableValues(t *testing.T) {
 	}
 }
 
+// TestLoadRefusesValuesThatAreNotPositive (found by the v0.1 code review): a
+// zero miss rate was read as the default 20/s, and a zero or negative timeout
+// was a deadline that had already passed.
+func TestLoadRefusesValuesThatAreNotPositive(t *testing.T) {
+	for _, c := range [][2]string{
+		{"QUOTACORE_CONFIG_REFRESH_MISS_RATE_LIMIT", "0"},
+		{"QUOTACORE_CONFIG_REFRESH_MISS_RATE_LIMIT", "-1"},
+		{"QUOTACORE_CONFIG_REFRESH_INTERVAL", "0s"},
+		{"QUOTACORE_DATASCRIPT_TIMEOUT", "0s"},
+		{"QUOTACORE_DATASCRIPT_TIMEOUT", "-250ms"},
+		{"QUOTACORE_CONTROLPLANE_TIMEOUT", "0s"},
+		{"QUOTACORE_SHUTDOWN_GRACE", "-1s"},
+		{"QUOTACORE_REQUEST_TIMEOUT", "0s"},
+	} {
+		e := baseEnv()
+		e[c[0]] = c[1]
+		if _, err := Load(env(e)); err == nil {
+			t.Errorf("Load accepted %s=%q, want a refusal", c[0], c[1])
+		}
+	}
+}
+
 func TestReadinessReportsEveryUnsatisfiedTerm(t *testing.T) {
 	s := newReadinessState(termDataStore, termMigrations, termDraining)
 	normal := false

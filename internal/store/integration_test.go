@@ -4,6 +4,7 @@ import (
 	"context"
 	neturl "net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -87,13 +88,13 @@ func TestConfigNamespaceAndInvalidationRoundTrip(t *testing.T) {
 	if err := s.PublishInvalidation(ctx, 987654321); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	want := "{\"version\":\"987654321\"}"
+	want := "{\"version\":\"987654321\","
 	var seen []string
 	deadline := time.After(3 * time.Second)
 	for {
 		select {
 		case payload := <-sub.Messages():
-			if payload == want {
+			if strings.HasPrefix(payload, want) && strings.Contains(payload, "\"published_at_ms\":\"") {
 				return
 			}
 			seen = append(seen, payload)
