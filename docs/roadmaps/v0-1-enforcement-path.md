@@ -1567,7 +1567,9 @@ happened.
 
 ## IP-13 — Observability
 
-**Status** `IN PROGRESS`, opened 2026-10-21. `IP-07` closed on 2026-10-19 and nothing else gates
+**Status** `COMPLETE`, opened 2026-10-21 and closed 2026-10-29, when item 7's review row was filled
+in: Claude followed every runbook on the reference stack with each fault injected, and the owner
+approved the report. Before that: `IP-07` closed on 2026-10-19 and nothing else gates
 this phase. Items 1 to 6 and 8 are met, each closed by a test in the evidence table below; item 7
 waits on its review by a person who did not write the runbooks, recorded in
 [the runbooks' review table](../runbooks/README.md#review), and the phase closes when that row is
@@ -1779,8 +1781,9 @@ environment variable.
 
 ## IP-15 — Reference deployment and restore rehearsal
 
-**Status** `IN PROGRESS` — opened 2026-10-27, before any file it owns was written; `IP-14` closed
-the same day.
+**Status** `COMPLETE` — opened 2026-10-27, before any file it owns was written; `IP-14` closed
+the same day. Closed 2026-10-29, when the runbook and restore review it carried for `IP-13` was
+recorded in [the runbooks' review table](../runbooks/README.md#review).
 
 > **Amended 2026-10-27 — the dependency on `IP-13`.** `IP-13` has met seven of its eight items and
 > waits only on item 7, a person following the runbooks against a running instance. That review and
@@ -1909,8 +1912,9 @@ following a document rather than by someone who remembered the commands.
 
 ## IP-16 — Full suite, the three claims, v0.1 exit
 
-**Status** `IN PROGRESS` — opened 2026-10-28, before any file it owns was written; `IP-15`'s code
-merged the same day. On 2026-10-29, 9 of 10 DoD items are met, each with its proof in
+**Status** `COMPLETE` — closed 2026-10-29, when the runbook and restore review was recorded, so
+item 9's "complete pending the review" became done. It was opened 2026-10-28, before any file it
+owns was written; `IP-15`'s code merged the same day. On 2026-10-29, 9 of 10 DoD items were met, each with its proof in
 [v0-1-evidence.md](../release/v0-1-evidence.md). Item 9 says v0.1 is complete pending the runbook
 and restore review, and becomes "done" when [the runbooks' review table](../runbooks/README.md#review)
 records that session.

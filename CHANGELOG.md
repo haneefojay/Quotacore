@@ -844,6 +844,33 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Fixed
 
+- **Nine defects found by the v0.1 code review** (2026-10-29, before the `v0.1.0` tag). Each has a
+  test that fails without the fix.
+  - The tenant cache's prune moved every surviving tenant to the front in map order, so eviction no
+    longer took the least recently used tenant (`TestAPruneKeepsRecencyOrder`).
+  - `quotacore_invalidation_lag_seconds` was timed from the previous message's arrival, so it
+    measured the quiet between changes. The invalidation message now carries `published_at_ms`
+    and the lag runs from it; data-model §3.4 is amended (`TestTheLagIsTimedFromThePublish`).
+  - A snapshot miss that read a tenant before a change and finished after the change's
+    invalidation cached the old configuration until the tenant's next change, and an older load
+    could replace a newer entry. Both are refused, and the request retries
+    (`TestALoadThatRacedAnInvalidationIsNotCached`, `TestAnOlderLoadDoesNotReplaceANewerEntry`).
+  - A key revoked while a miss or a reconcile read it in flight could be cached as active again
+    until the next reconcile (K-2). The key cache now carries an epoch that a forget or an
+    invalidation moves (`TestARevokeDuringAMissIsNotUndoneByTheCache`).
+  - An admin grant, set or forced rollover whose script reply was lost answered "nothing was
+    changed" with a retry hint, and a retried grant would grant twice. It now answers that the
+    change may have been applied, with no hint, and logs at error
+    (`TestAGrantWhoseAnswerIsLostSaysItMayHaveApplied`).
+  - `QUOTACORE_CONFIG_REFRESH_MISS_RATE_LIMIT=0` was read as the default 20/s, and a zero or
+    negative duration was accepted for every duration key. Both now refuse to start
+    (`TestLoadRefusesValuesThatAreNotPositive`).
+  - The CLI made `//v1/...` from a `QUOTACORE_URL` with a trailing slash
+    (`TestABaseURLWithATrailingSlashIsOneSlash`).
+  - A first sight whose Postgres read used up the control plane's deadline was answered as the
+    data store failing (`TestAVersionReadOutOfTheCallersTimeIsNotTheStoreFailing`).
+  - The reset worker read its pause twice per scan, so a pause that began between the reads could
+    move the scan's span past boundaries it never scanned.
 - **A tenant first seen during a data-store outage waited 3 s and was blamed on Postgres** (found by
   the v0.1 runbook review, 2026-10-29). A snapshot miss reads the tenant's version from the data
   store, and that read ran under the control plane's 3 s budget and failed as

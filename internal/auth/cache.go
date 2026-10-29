@@ -22,11 +22,17 @@ type keyCache struct {
 	limit int
 	ll    *list.List
 	byKey map[string]*list.Element
+	// epoch moves on every forget and every invalidation. A read that began
+	// before it moved may carry a key as it was before a revoke, so a miss
+	// does not cache what it read, and a reconcile does not overwrite an
+	// entry put after it began.
+	epoch uint64
 }
 
 type cacheItem struct {
 	prefix string
 	entry  entry
+	born   uint64 // the epoch the entry was put at
 }
 
 func newKeyCache(limit int) *keyCache {
@@ -47,15 +53,37 @@ func (c *keyCache) get(prefix string) (entry, bool) {
 	return e.Value.(*cacheItem).entry, true
 }
 
-func (c *keyCache) put(prefix string, en entry) {
+// now is the current epoch, taken before a read whose answer will be put or
+// applied.
+func (c *keyCache) now() uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.epoch
+}
+
+// bump moves the epoch, for an invalidation: whatever is being read now may
+// predate it.
+func (c *keyCache) bump() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.epoch++
+}
+
+// put caches what a read that began at since found, unless the epoch moved
+// while it was in flight.
+func (c *keyCache) put(prefix string, en entry, since uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.epoch != since {
+		return
+	}
 	if e, ok := c.byKey[prefix]; ok {
 		e.Value.(*cacheItem).entry = en
+		e.Value.(*cacheItem).born = c.epoch
 		c.ll.MoveToFront(e)
 		return
 	}
-	c.byKey[prefix] = c.ll.PushFront(&cacheItem{prefix: prefix, entry: en})
+	c.byKey[prefix] = c.ll.PushFront(&cacheItem{prefix: prefix, entry: en, born: c.epoch})
 	for c.ll.Len() > c.limit {
 		back := c.ll.Back()
 		c.ll.Remove(back)
@@ -77,13 +105,14 @@ func (c *keyCache) prefixes() []string {
 // apply replaces every listed prefix with what the database now says: a row
 // that came back is the new truth, and a prefix that did not is unknown.
 // Recency is untouched, because a reconcile is not a use. A prefix evicted
-// while the read was in flight is not re-added.
-func (c *keyCache) apply(asked []string, rows map[string]Key) {
+// while the read was in flight is not re-added, and one put after the epoch
+// moved past since is newer than the read and is kept.
+func (c *keyCache) apply(asked []string, rows map[string]Key, since uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, p := range asked {
 		e, ok := c.byKey[p]
-		if !ok {
+		if !ok || e.Value.(*cacheItem).born > since {
 			continue
 		}
 		if k, found := rows[p]; found {
@@ -98,6 +127,7 @@ func (c *keyCache) apply(asked []string, rows map[string]Key) {
 func (c *keyCache) forget(prefix string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.epoch++
 	if e, ok := c.byKey[prefix]; ok {
 		c.ll.Remove(e)
 		delete(c.byKey, prefix)

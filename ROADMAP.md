@@ -64,10 +64,9 @@ and each now points at the document that answers it.
 One job, done correctly: **metered enforcement on the request path, with a calendar reset.** Nothing
 else ships.
 
-**Status (2026-10-29): complete, pending the runbook review row.** The items are built and the exit
-criteria are met. The proof is in [the v0.1 evidence](docs/release/v0-1-evidence.md), whose §5 names
-what is left: one maintainer session that reviews the runbook and the restore drill, and the release
-acts.
+**Status (2026-10-29): complete.** The items are built, the exit criteria are met, and the runbook
+and restore review was held and approved on 2026-10-29. The proof is in
+[the v0.1 evidence](docs/release/v0-1-evidence.md), whose §5 names what is left: the release acts.
 
 - [x] `api/openapi.yaml`, spec-first, with validation generated from it
 - [x] Cycle engine and its boundary test matrix — the component most likely to hide a silent,

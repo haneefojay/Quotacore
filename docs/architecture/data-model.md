@@ -726,6 +726,13 @@ If pub/sub is unavailable, the periodic refresh interval is the fallback, and th
 propagation delay widens to the interval. That is a documented degradation (NFR-D3), and it is why
 the interval is a tuned value with a metric rather than a constant.
 
+> **Amended 2026-10-29 (`IP-16`, the v0.1 code review).** The message also carries the moment it
+> was published, `{"version":"4471","published_at_ms":"1761700000000"}`, which is still no tenant
+> data. A subscriber measures `quotacore_invalidation_lag_seconds` from it, so the metric
+> is the time from publish to applied that observability.md defines. Before the amendment the lag
+> was timed from the previous message's arrival and measured the quiet between changes. A message
+> without the field, from an older publisher, is timed from its arrival.
+
 ---
 
 ## 4. Invariants spanning both stores
