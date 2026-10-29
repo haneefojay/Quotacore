@@ -6,7 +6,8 @@
 # and the harness raises QUOTACORE_VALKEY_MAXMEMORY to match. The load generator runs on the
 # runner's other CPUs (taskset in the workflow), so it does not take the stack's. The metrics
 # listener and both stores are published on loopback, because the suites read the service's metrics
-# and the stores' own figures. Nothing else differs from the reference file.
+# and the stores' own figures, and Postgres logs its vacuums and checkpoints. Nothing else differs
+# from the reference file.
 services:
   quotacore:
     cpuset: ${QUOTACORE_PERF_CPUS:-0,1}
@@ -24,6 +25,8 @@ services:
   postgres:
     cpuset: ${QUOTACORE_PERF_CPUS:-0,1}
     mem_limit: ${QUOTACORE_PERF_POSTGRES_MEMORY:-1g}
+    # Logging only: the soak reads its vacuums and checkpoints back, to place them beside the service.
+    command: ["postgres", "-c", "log_autovacuum_min_duration=0", "-c", "log_checkpoints=on"]
     ports:
       - "127.0.0.1:15432:5432"
     networks: [internal, published]
