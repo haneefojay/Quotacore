@@ -41,6 +41,13 @@ jobs:
           else
             base="$(git rev-parse HEAD~1)"
           fi
+          # The first release into main has a merge base with no code at all, the specification
+          # commit, so there is no build to upgrade from there. The previous build is then the
+          # head branch's own parent.
+          if ! git cat-file -e "$base:go.mod" 2>/dev/null; then
+            base="$(git rev-parse HEAD^2~1 2>/dev/null || git rev-parse HEAD~1)"
+          fi
+          echo "previous build: $base"
           git worktree add --detach /tmp/previous "$base"
           for f in Dockerfile .dockerignore; do
             test -e "/tmp/previous/$f" || cp "$f" "/tmp/previous/$f"
