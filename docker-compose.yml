@@ -1,0 +1,146 @@
+# The reference deployment of Quotacore (IP-15, deployment.md sections 1 to 7).
+#
+# One `docker compose up`, three containers, no account, no signup and no egress. The quickstart
+# is in the README and in deployment.md section 2; CI runs it on a clean runner, so this file and
+# that block cannot drift apart.
+#
+#   export QUOTACORE_BOOTSTRAP_ADMIN_KEY="$(docker compose run --rm --no-deps quotacore key mint)"
+#   export QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK=yes
+#   docker compose up -d --wait
+#   docker compose exec quotacore quotacore init
+#
+# The admin key is minted by the operator and acknowledged by the operator (NFR-S9, J-1 step 2):
+# it lives in the shell's environment, never in this file or on disk, and the service installs it
+# only while no key exists.
+#
+# Development uses the same file: `docker compose up -d valkey postgres` starts the two stores
+# alone, and `.github/compose.ci.yml` publishes them on loopback for the integration suite.
+#
+# Every value below that an operator might change is `${VARIABLE:-default}`, so it is changed in
+# the shell or a git-ignored `.env` rather than by editing this file. Each one is listed in
+# deployment.md section 4. The two Postgres passwords default to development placeholders, which
+# are low-entropy on purpose and must be replaced for anything but a laptop.
+
+name: quotacore
+
+services:
+  quotacore:
+    build:
+      context: .
+      args:
+        VERSION: ${QUOTACORE_VERSION:-0.1.0-dev}
+        REVISION: ${QUOTACORE_REVISION:-}
+    image: ${QUOTACORE_IMAGE:-quotacore:local}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    environment:
+      QUOTACORE_DATABASE_URL: ${QUOTACORE_DATABASE_URL:-postgresql://quotacore:${QUOTACORE_POSTGRES_PASSWORD:-quotacore_dev_only}@postgres:5432/quotacore?sslmode=disable}
+      QUOTACORE_REDIS_URL: ${QUOTACORE_REDIS_URL:-redis://valkey:6379/0}
+      QUOTACORE_STARTUP_MODE: ${QUOTACORE_STARTUP_MODE:-normal}
+      QUOTACORE_BOOTSTRAP_ADMIN_KEY: ${QUOTACORE_BOOTSTRAP_ADMIN_KEY:-}
+      QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK: ${QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK:-}
+      QUOTACORE_LOG_LEVEL: ${QUOTACORE_LOG_LEVEL:-info}
+      QUOTACORE_LOG_FORMAT: ${QUOTACORE_LOG_FORMAT:-json}
+      QUOTACORE_METRICS_ADDR: ${QUOTACORE_METRICS_ADDR:-127.0.0.1:9090}
+      QUOTACORE_SHUTDOWN_GRACE: ${QUOTACORE_SHUTDOWN_GRACE:-30s}
+      QUOTACORE_RECONCILE_INTERVAL: ${QUOTACORE_RECONCILE_INTERVAL:-5m}
+      QUOTACORE_RATELIMIT_ADMIN_RPM: ${QUOTACORE_RATELIMIT_ADMIN_RPM:-60}
+      QUOTACORE_EVENT_RETENTION_DAYS: ${QUOTACORE_EVENT_RETENTION_DAYS:-90}
+      QUOTACORE_AUDIT_RETENTION_DAYS: ${QUOTACORE_AUDIT_RETENTION_DAYS:-400}
+    # Host loopback only: the API is reachable from this machine and from nowhere else until the
+    # operator decides otherwise. The metrics listener is not published; the override in
+    # docker-compose.metrics.yml publishes it for a scraper outside the container (IP-13 item 8).
+    ports:
+      - "127.0.0.1:8080:8080"
+    # NFR-S6: unprivileged (the image's uid 65532), a read-only root, no capability, and no way
+    # to gain one. /tmp is the one writable path, in memory, and the service writes nothing to it.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Docker kills 10 s after SIGTERM by default. The drain is QUOTACORE_SHUTDOWN_GRACE, 30 s
+    # (NFR-A5), and the ledger has its own short budget after it, so the kill waits longer than
+    # both. Keep QUOTACORE_SHUTDOWN_GRACE under 35 s, or raise this with it.
+    stop_grace_period: 40s
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/quotacore", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 30s
+    networks:
+      - internal
+      - published
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16@sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97
+    environment:
+      # The superuser exists for the init script alone; the service connects as the
+      # non-superuser `quotacore` role, which owns its database and nothing else (section 7).
+      POSTGRES_PASSWORD: ${QUOTACORE_POSTGRES_SUPERUSER_PASSWORD:-quotacore_dev_only}
+      QUOTACORE_POSTGRES_PASSWORD: ${QUOTACORE_POSTGRES_PASSWORD:-quotacore_dev_only}
+      # scram-sha-256 on every line, local and host, and no `trust` anywhere (section 7).
+      POSTGRES_INITDB_ARGS: --auth=scram-sha-256
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quotacore -d quotacore"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    networks:
+      - internal
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:8@sha256:8f836008e0986c36adf50da714c7060cf689dbb335f61fe077939d90fa650809
+    command:
+      # DR-048: a write that does not fit is refused with a 503, never made room for. The service
+      # refuses to start against any other policy.
+      - --maxmemory-policy
+      - noeviction
+      # A bound, so the policy acts: without one, the store grows until the kernel kills it, which
+      # is a total store loss rather than a 503. 1 GiB holds a laptop's quickstart; a production
+      # store is sized by deployment.md section 5's measured figure, not by this default.
+      - --maxmemory
+      - ${QUOTACORE_VALKEY_MAXMEMORY:-1gb}
+      # No persistence (deployment.md section 6). A snapshot reloaded after a crash puts every
+      # balance back to that moment and hands back every consume since, which is the over-grant
+      # DR-045 exists to prevent. Without persistence a restart is a clean total loss, answered
+      # fail-closed and by the rebuild runbook (data-store-lost.md).
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    networks:
+      - internal
+    restart: unless-stopped
+
+networks:
+  # The stores and the service talk here, and nothing on it has a route out.
+  internal:
+    internal: true
+  # Joined only by the service, because Docker publishes a port only from a network with a
+  # gateway. That gateway is a route out, so "makes no outbound connection" (NFR-S3) is not a
+  # property of this file: it is proved by a packet capture of the service's namespace, and by the
+  # whole reference suite passing with this network removed (test/reference).
+  published: {}
+
+volumes:
+  pgdata:

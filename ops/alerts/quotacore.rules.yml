@@ -1,0 +1,172 @@
+# The alerts of docs/architecture/observability.md section 5, one rule per row
+# (IP-13 D9). The table is the source: each rule's name is its row's, run
+# together; its severity label is the row's Sev; a P0 or P1 rule names its
+# runbook in docs/runbooks/. TestEveryAlertIsTheDocumentsAndNamesARunbook holds
+# this file to the table, and CI runs promtool check and test against it.
+groups:
+  - name: quotacore
+    rules:
+      - alert: CeilingViolated
+        expr: quotacore_ceiling_violation_total > 0
+        labels: {severity: P0}
+        annotations:
+          summary: A balance was read above limit plus bonus (DR-019).
+          runbook: docs/runbooks/ceiling-violated.md#check
+
+      - alert: DoubleChargeDetected
+        expr: quotacore_event_duplicate_detected_total > 0
+        labels: {severity: P0}
+        annotations:
+          summary: The ledger refused a second deduction under one idempotency key (DR-030).
+          runbook: docs/runbooks/double-charge.md#check
+
+      - alert: DuplicateReversalIssued
+        expr: quotacore_duplicate_reversal_total > 0
+        labels: {severity: P1}
+        annotations:
+          summary: Reconciliation reversed a duplicate deduction (DR-049).
+          runbook: docs/runbooks/double-charge.md#check
+
+      - alert: DataStoreMemoryApproachingMaxmemory
+        expr: quotacore_datastore_memory_used_ratio > 0.8
+        for: 10m
+        labels: {severity: P2}
+        annotations:
+          summary: The data store is above 80% of maxmemory; at 100% every tenant is a 503 (DR-048).
+
+      - alert: BalanceHashMissing
+        expr: quotacore_balance_key_missing_total > 0
+        labels: {severity: P0}
+        annotations:
+          summary: A provisioned balance hash is absent from the data store (DR-045).
+          runbook: docs/runbooks/data-store-lost.md#check
+
+      - alert: EnforcementFailingClosed
+        expr: |
+          (
+            (sum(rate(quotacore_consume_total{outcome="rejected"}[2m])) or vector(0))
+            + (sum(rate(quotacore_refund_total{outcome="rejected"}[2m])) or vector(0))
+          ) / (
+            (sum(rate(quotacore_consume_total[2m])) or vector(0)) + (sum(rate(quotacore_refund_total[2m])) or vector(0))
+          ) > 0.01
+        for: 2m
+        labels: {severity: P0}
+        annotations:
+          summary: More than 1% of consumes and refunds are rejected.
+          runbook: docs/runbooks/enforcement-failing-closed.md#check
+
+      - alert: ReconciliationMismatch
+        expr: quotacore_event_reconcile_mismatch_total > 0
+        labels: {severity: P1}
+        annotations:
+          summary: Reconciliation found a balance its ledger does not explain.
+          runbook: docs/runbooks/reconciliation-mismatch.md#check
+
+      - alert: StaleRolloverRefusal
+        expr: increase(quotacore_rollover_stale_total[5m]) > 0
+        labels: {severity: P1}
+        annotations:
+          summary: A stored cycle index was ahead of the caller's beyond the skew threshold (Q-26).
+          runbook: docs/runbooks/stale-rollover-or-clock-skew.md#check
+
+      - alert: DataStoreUnreachable
+        expr: quotacore_datastore_up == 0
+        for: 60s
+        labels: {severity: P1}
+        annotations:
+          summary: The data store has not answered the probe for a minute; enforcement fails closed.
+          runbook: docs/runbooks/enforcement-failing-closed.md#check
+
+      - alert: P99LatencyBreach
+        expr: histogram_quantile(0.99, sum by (le) (rate(quotacore_latency_seconds_bucket[5m]))) > 0.005
+        for: 5m
+        labels: {severity: P2}
+        annotations:
+          summary: Data-plane p99 is above 5 ms (NFR-L1).
+
+      - alert: ControlPlaneDown
+        expr: quotacore_controlplane_up == 0
+        for: 60s
+        labels: {severity: P2}
+        annotations:
+          summary: Postgres has not answered for a minute; cached tenants are unaffected.
+
+      - alert: DBPoolWait
+        expr: histogram_quantile(0.99, sum by (le) (rate(quotacore_dbpool_wait_seconds_bucket[5m]))) > 0.05
+        labels: {severity: P2}
+        annotations:
+          summary: The control-plane pool's p99 wait is above 50 ms.
+
+      - alert: LedgerDrops
+        expr: sum(increase(quotacore_event_sink_dropped_total[2m])) > 0
+        for: 1m
+        labels: {severity: P2}
+        annotations:
+          summary: Ledger events are being dropped; history has gaps (FS-10).
+
+      - alert: LedgerQueueDepth
+        # 80% of QUOTACORE_EVENT_QUEUE_SIZE's default, 10000; change it with the setting.
+        expr: quotacore_event_queue_depth > 8000
+        for: 5m
+        labels: {severity: P2}
+        annotations:
+          summary: The ledger queue has been above 80% of its cap for five minutes.
+
+      - alert: LedgerDeadLetterDuplicate
+        expr: quotacore_event_dead_letters{reason="duplicate_idempotency_key"} > 0
+        labels: {severity: P0}
+        annotations:
+          summary: A second deduction under one idempotency key is in the dead-letter table (DR-049).
+          runbook: docs/runbooks/double-charge.md#check
+
+      - alert: LedgerDeadLetterRejected
+        expr: quotacore_event_dead_letters{reason="rejected"} > 0
+        for: 1h
+        labels: {severity: P2}
+        annotations:
+          summary: An event the ledger refuses has failed its hourly replay for an hour.
+
+      - alert: ConfigInvalidationLag
+        expr: histogram_quantile(0.99, sum by (le) (rate(quotacore_invalidation_lag_seconds_bucket[5m]))) > 1
+        for: 5m
+        labels: {severity: P2}
+        annotations:
+          summary: Configuration changes take more than a second to reach the snapshot (NFR-D3).
+
+      - alert: CacheEviction
+        expr: increase(quotacore_config_cache_evictions_total[10m]) > 0
+        labels: {severity: P2}
+        annotations:
+          summary: The snapshot is evicting tenants; its bound is undersized (NFR-T7).
+
+      - alert: ClockSkew
+        expr: abs(quotacore_clock_skew_seconds) > 1
+        for: 5m
+        labels: {severity: P1}
+        annotations:
+          summary: This instance's clock is more than a second from the data store's (Q-26).
+          runbook: docs/runbooks/stale-rollover-or-clock-skew.md#check
+
+      - alert: AuditWriteFailure
+        # An audit row commits in its mutation's transaction, so a failed audit insert is an
+        # admin write answered internal_error (IP-13 D9).
+        expr: sum(increase(quotacore_errors_total{code="internal_error",endpoint=~"[A-Z]+ /v1/admin/.*"}[5m])) > 0
+        labels: {severity: P1}
+        annotations:
+          summary: An admin write failed with internal_error, which is how a failed audit insert surfaces (NFR-D4).
+          runbook: docs/runbooks/audit-write-failure.md#check
+
+      - alert: NoTraffic
+        expr: sum(rate(quotacore_http_requests_total{endpoint=~"[A-Z]+ /v1/.*"}[15m])) == 0
+        for: 15m
+        labels: {severity: P3}
+        annotations:
+          summary: No API request for fifteen minutes.
+
+      - alert: ReAnchorsPending
+        expr: quotacore_reanchors_pending > 0
+        for: 10m
+        labels: {severity: P2}
+        annotations:
+          summary: A committed re-anchor has not reached the data store for ten minutes.
+          runbook: docs/runbooks/long-outage.md#check

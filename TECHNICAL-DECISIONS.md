@@ -29,12 +29,13 @@ specification and the decisions disagree and one of them is wrong.
 | 0009 | Speak the Redis protocol, ship Valkey by default | Accepted | 2026-09-27 | [record](docs/decisions/0009-redis-protocol-valkey-default.md) |
 | 0010 | Go, `net/http` with chi, and a spec-first OpenAPI contract | Accepted | 2026-09-27 | [record](docs/decisions/0010-go-chi-spec-first-openapi.md) |
 | 0011 | The control plane is PostgreSQL only, with embedded up-only migrations | Accepted | 2026-09-27 | [record](docs/decisions/0011-postgres-only-control-plane.md) |
-| 0012 | Hashed, scoped, rotatable API keys in PostgreSQL, with an environment bootstrap key | Accepted | 2026-09-27 | [record](docs/decisions/0012-hashed-scoped-api-keys.md) |
+| 0012 | Hashed, scoped, rotatable API keys in PostgreSQL, with an environment bootstrap key | Superseded by ADR-0018 | 2026-09-27 | [record](docs/decisions/0012-hashed-scoped-api-keys.md) |
 | 0013 | Single-tenant instance, flat tenants, opaque identifiers, no PII | Accepted | 2026-09-27 | [record](docs/decisions/0013-single-tenant-flat-model-no-pii.md) |
 | 0014 | Apache License 2.0 | Accepted | 2026-09-27 | [record](docs/decisions/0014-apache-2-0-license.md) |
 | 0015 | A hard MVP boundary, with the remaining capability sequenced behind it | Accepted | 2026-09-27 | [record](docs/decisions/0015-release-slicing.md) |
 | 0016 | The usage event log is a signed-delta ledger, and it is the recovery source | Accepted | 2026-09-27 | [record](docs/decisions/0016-usage-event-ledger.md) |
 | 0017 | No eviction inside the window, and reversal for what eviction cannot prevent | Accepted | 2026-09-27 | [record](docs/decisions/0017-noeviction-and-duplicate-reversal.md) |
+| 0018 | API keys: the contract's token format, and a SHA-256 verifier on every request | Accepted | 2026-10-19 | [record](docs/decisions/0018-api-key-format-and-verifier.md) |
 
 ## The three load-bearing decisions
 
@@ -73,7 +74,7 @@ different product and a different store.
 | Money safety | [0004](docs/decisions/0004-idempotency-prevention-and-detection.md), [0005](docs/decisions/0005-refund-as-first-class-operation.md), [0016](docs/decisions/0016-usage-event-ledger.md), [0017](docs/decisions/0017-noeviction-and-duplicate-reversal.md) |
 | Capacity and durability of the fast store | [0009](docs/decisions/0009-redis-protocol-valkey-default.md), [0017](docs/decisions/0017-noeviction-and-duplicate-reversal.md) |
 | Platform and supply chain | [0009](docs/decisions/0009-redis-protocol-valkey-default.md), [0010](docs/decisions/0010-go-chi-spec-first-openapi.md), [0011](docs/decisions/0011-postgres-only-control-plane.md), [0014](docs/decisions/0014-apache-2-0-license.md) |
-| Security and tenancy | [0012](docs/decisions/0012-hashed-scoped-api-keys.md), [0013](docs/decisions/0013-single-tenant-flat-model-no-pii.md) |
+| Security and tenancy | [0012](docs/decisions/0012-hashed-scoped-api-keys.md), [0018](docs/decisions/0018-api-key-format-and-verifier.md), [0013](docs/decisions/0013-single-tenant-flat-model-no-pii.md) |
 | Scope | [0015](docs/decisions/0015-release-slicing.md) |
 
 ## Conventions

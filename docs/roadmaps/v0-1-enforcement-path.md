@@ -14,22 +14,22 @@ Definition of Done item valid, and the checkpoint every phase must pass.
 | ID | Phase | Depends on | Status |
 | --- | --- | --- | --- |
 | `IP-00` | Close the blocking questions | — | `COMPLETE`, closed 2026-09-27 |
-| `IP-01` | Repository, toolchain and CI foundation | `IP-00` | `NOT STARTED`, unblocked 2026-09-27 |
-| `IP-02` | The OpenAPI contract | `IP-01` | `BLOCKED` |
-| `IP-03` | Cycle engine and boundary matrix | `IP-01` | `BLOCKED` |
-| `IP-04` | Data-plane skeleton, keyspace and snapshot cache | `IP-02`, `IP-03` | `BLOCKED` |
-| `IP-05` | The four atomic scripts | `IP-03`, `IP-04` | `BLOCKED` |
-| `IP-06` | Idempotency prevention in the data plane | `IP-05` | `BLOCKED` |
-| `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `BLOCKED` |
-| `IP-08` | Control-plane schema and migrations | `IP-02` | `BLOCKED` |
-| `IP-09` | Control-plane API and API keys | `IP-08` | `BLOCKED` |
-| `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `BLOCKED` |
-| `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `BLOCKED` |
-| `IP-12` | Usage ledger, writer and archiver | `IP-08` | `BLOCKED` |
-| `IP-13` | Observability | `IP-07` | `BLOCKED` |
-| `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `BLOCKED` |
-| `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `BLOCKED` |
-| `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `BLOCKED` |
+| `IP-01` | Repository, toolchain and CI foundation | `IP-00` | `COMPLETE`, closed 2026-09-27 |
+| `IP-02` | The OpenAPI contract | `IP-01` | `COMPLETE`, started and closed 2026-09-28 |
+| `IP-03` | Cycle engine and boundary matrix | `IP-01` | `COMPLETE`, started and closed 2026-09-28 |
+| `IP-04` | Data-plane skeleton, keyspace and snapshot cache | `IP-02`, `IP-03` | `COMPLETE`, started and closed 2026-09-28 |
+| `IP-05` | The atomic scripts | `IP-03`, `IP-04` | `COMPLETE`, started and closed 2026-09-29 |
+| `IP-06` | Idempotency prevention in the data plane | `IP-05` | `COMPLETE`, started and closed 2026-09-30 |
+| `IP-07` | Data-plane endpoints | `IP-05`, `IP-06` | `COMPLETE`, started and closed 2026-10-19 |
+| `IP-08` | Control-plane schema and migrations | `IP-02` | `COMPLETE`, 2026-10-19 |
+| `IP-09` | Control-plane API and API keys | `IP-08` | `COMPLETE`, opened 2026-10-19, closed 2026-10-20 |
+| `IP-10` | Plan lifecycle and cycle-boundary semantics | `IP-09` | `COMPLETE`, opened and closed 2026-10-20 |
+| `IP-11` | Idempotency detection and reconciliation | `IP-07`, `IP-12` | `COMPLETE`, opened and closed 2026-10-20 |
+| `IP-12` | Usage ledger, writer and archiver | `IP-08` | `COMPLETE`, opened and closed 2026-10-20 |
+| `IP-13` | Observability | `IP-07` | `IN PROGRESS`, opened 2026-10-21 |
+| `IP-14` | The `quotacore` CLI | `IP-09`, `IP-12` | `COMPLETE` |
+| `IP-15` | Reference deployment and restore rehearsal | `IP-13`, `IP-14` | `IN PROGRESS`, opened 2026-10-27 |
+| `IP-16` | Full suite, the three claims, v0.1 exit | `IP-10`, `IP-11`, `IP-15` | `IN PROGRESS`, opened 2026-10-28 |
 
 ---
 
@@ -94,8 +94,12 @@ human, because every question it depended on has been answered in writing.
 
 ## IP-01 — Repository, toolchain and CI foundation
 
-**Status** `NOT STARTED`. Unblocked since 2026-09-27. Set it `IN PROGRESS` before writing any file it
-owns; [AGENTS.md](../../AGENTS.md) forbids code outside a phase in that state.
+**Status** `COMPLETE` as of 2026-09-27, with all six Definition-of-Done items met, one of them
+amended on the owner's decision before it was met. Unblocked since 2026-09-27; set `IN PROGRESS`
+before writing any file it owns, which is what [AGENTS.md](../../AGENTS.md) requires. The amendment is
+item 4, whose base-image half moved to `IP-15` because no work in this phase could produce it, and
+that item is written as an amendment rather than tidied away: an SBOM obligation that disappears
+without a successor is an obligation that was quietly dropped.
 
 **Objective.** A repository that builds, tests and runs its dependencies from a clean checkout,
 with no product behaviour in it yet.
@@ -121,19 +125,174 @@ with no product behaviour in it yet.
 
 **Dependencies.** `IP-00`, which is `COMPLETE`. Blocks `IP-02`, `IP-03`, and therefore everything.
 
+**Build steps.** Item 1 requires that no step is undocumented, so the steps this phase adds are
+enumerated here and nowhere else. Every one is a `make` target, and every recipe is a single
+command whose exit code is the target's exit code.
+
+| Target | Command | Fails when |
+| --- | --- | --- |
+| `build` | `go build ./...` | A package does not compile |
+| `binary` | `CGO_ENABLED=0 go build -o bin/quotacore ./cmd/quotacore` | The binary does not link |
+| `test` | `go test ./...` | A test fails |
+| `race` | `CGO_ENABLED=1 go test -race ./...` | A test fails, or the race detector reports one. Separate from `test` because `-race` needs cgo, and a machine with no C compiler can still run every other gate |
+| `vet` | `go vet ./...` | `vet` reports a finding |
+| `lint` | `gofmt -l .`, then `go vet ./...` | A file is unformatted, or `vet` reports a finding |
+| `check-docs` | `tools/check-docs.ps1 -Strict`, under `pwsh` or `powershell` | The specification is inconsistent, or neither shell is installed |
+| `license-check` | `tools/license-scan.ps1`, under `pwsh` or `powershell` | The runtime path holds a copyleft dependency with no decision record, or a licence that cannot be classified |
+| `sbom` | `tools/license-scan.ps1 -SbomPath dist/sbom.cdx.json` | As `license-check`, and the SBOM is not written |
+| `ci` | `check-docs`, `lint`, `test`, `license-check` | Any of the four fails |
+
+`make` is not installed on every host, and the reference platform is Linux
+([deployment.md](../architecture/deployment.md) §9), so each target's command is also the way to run
+it by hand. Nothing above is a step a contributor has to discover.
+
+`test` reaches the database when `QUOTACORE_DATABASE_URL` names a reachable instance, and the
+integration test in `internal/db` **fails rather than skips when `QUOTACORE_REQUIRE_INTEGRATION` is
+set without one**, so a green pipeline cannot be a pipeline that quietly never talked to Postgres.
+The gate is that variable and not `CI`, and the reason is worth recording because the first version
+had it wrong: every hosted CI runner sets `CI` for its own reasons, including the build job that has
+no database and must not be failed by a test it cannot run. A gate keyed on `CI` would have turned
+every pull request red for a reason that has nothing to do with the change under review. The
+integration job sets the variable explicitly, so the property that matters is unchanged.
+
 **Definition of Done.**
 
-1. A clean clone builds and the unit tests pass on the reference platform, with no step that is not
-   in a document.
-2. `docker compose up` on a clean checkout reaches a healthy state for the data store and Postgres,
-   with no account, no signup and no egress ([mvp-scope.md](../product/mvp-scope.md) §1).
-3. The CI job runs `tools/check-docs.ps1` and fails the build if it does not exit 0.
-4. The build produces an SBOM covering the Go module graph and the base image, and a licence scan
-   fails the build on a new copyleft dependency in the runtime path without a decision record.
-5. The service starts, reports not-ready because no tenant exists, and refuses to start rather than
-   accepting a default bootstrap key.
-6. No package contains product behaviour: no cycle arithmetic, no balance arithmetic, no route
-   handler beyond a health probe.
+1. ~~A clean clone builds and the unit tests pass on the reference platform, with no step that is not
+   in a document.~~ Done on 2026-09-27. `go build ./...`, `go vet ./...` and `go test ./...` all
+   exit 0 from a clean checkout, and `gofmt -l .` is empty, against the module
+   `github.com/quotacore/quotacore` on Go 1.27.1. The only package is `internal/api`, holding the
+   two health probes and nothing else, because the layout is fixed by
+   [ARCHITECTURE.md](../../ARCHITECTURE.md) §3 and a health probe is the one route handler this
+   phase is allowed. The steps are the table above.
+2. ~~`docker compose up` on a clean checkout reaches a healthy state for the data store and Postgres,
+   with no account, no signup and no egress ([mvp-scope.md](../product/mvp-scope.md) §1).~~ Done on
+   2026-09-27. `docker compose up -d --wait` exits 0 from a checkout with no volume present, and
+   both services report `Healthy`: Valkey 8.1.10 answering `PONG`, PostgreSQL 16.15 answering
+   `pg_isready`. `CONFIG GET maxmemory-policy` returns `noeviction`, so the decided policy is in the
+   file rather than in a comment, and `password_encryption` is `scram-sha-256`. The file starts two
+   containers and nothing else, and no step precedes it.
+3. ~~The CI job runs `tools/check-docs.ps1` and fails the build if it does not exit 0.~~ Done on
+   2026-09-27. `.github/workflows/ci.yml` has a `docs` job whose only step after the checkout is
+   `make check-docs`, which is the `Makefile` target that runs the script, so the command has one
+   definition. No step sets `continue-on-error`, and nothing in the file can turn a non-zero exit
+   into a zero one, so the exit code reaches the build. Every action is pinned to a commit SHA
+   with the tag beside it. The claim was falsified rather than asserted: on a throwaway copy of the
+   repository the unmodified tree exits 0, and with one undefined rule identifier appended to
+   [observability.md](../architecture/observability.md) the same command exits 1 and names the
+   identifier it could not resolve. The identifier is not written out here, because a reference to
+   a rule that does not exist is itself a failure and this repository does not make exceptions for
+   prose. Two limits, stated because a green tick would hide them. The workflow has never run,
+   because nothing has been committed or pushed, so its behaviour on a GitHub runner is unverified;
+   and `make` is absent on the machine this was written on, so the script was invoked directly
+   rather than through the target the runner uses.
+4. ~~The build produces an SBOM covering the Go module graph and the base image, and a licence scan
+   fails the build on a new copyleft dependency in the runtime path without a decision record.~~
+   **Amended on 2026-09-27, on the owner's decision, and the amendment is part of the record.** As
+   written this item asked for two things, one of which no work inside `IP-01` could produce: an
+   SBOM cannot cover a base image that does not exist here, because the scope above does not include
+   an image and `IP-15` owns "the multi-stage image, the Compose file, and the quickstart". The
+   base-image half was moved to `IP-15`'s item 11, which now carries NFR-C3 and NFR-C4 by name, and
+   the item as it stands here is the Go module graph and the runtime path — the two things this phase
+   actually owns. The item was not closed by deleting the half that was inconvenient: the
+   obligation still exists, it sits with the phase that can meet it, and an SBOM that omits the base
+   image describes a binary the operator cannot run, which is the one thing an SBOM is for.
+   **Done.** `make sbom` writes a CycloneDX 1.6 document listing all 11 modules linked into the
+   binary, each with a resolved SPDX licence identifier and the licence file it was resolved from, and
+   `make license-check` gates the build on NFR-C4. The runtime path is read from `go version -m` on
+   the built binary rather than from the module graph, because that is exactly the set of modules
+   linked into the product: a module that is only a test dependency of a dependency is not in the
+   product, and a scan that read the graph instead would gate on code that never ships. The gate was
+   falsified in all three directions on a throwaway copy of the repository with a local
+   copyleft-licensed module wired into the real binary: it exits 1 and names the dependency when
+   there is no decision record, exits 0 when `tools/license-allowlist.txt` cites an `ADR-nnnn` for
+   it, and exits 1 when an allowlist entry cites anything that is not a decision record. The
+   classifier matches on the text of the grant rather than the SPDX name, because Go's BSD-3 text
+   never says "BSD 3-Clause", and an unclassifiable licence fails closed rather than passing as
+   unknown.
+5. ~~The service starts, reports not-ready because no tenant exists, and refuses to start rather than
+   accepting a default bootstrap key.~~ Done on 2026-09-27. The binary was built `CGO_ENABLED=0`
+   and run on the compose network, because that is the only way to reach Postgres by the service
+   name the documented connection strings use. It starts, applies the embedded migrations, and
+   answers: `GET /healthz` is `200` with an empty body, `GET /readyz` is `503` with an empty body,
+   and `GET /v1/balance` is `404` because no product route exists. The not-ready reason is logged
+   and names `at least one tenant is known` alongside the two conditions this phase has not wired,
+   so the 503 is a statement about state rather than a hard-coded answer. The refusal was
+   demonstrated by running the same binary with
+   `QUOTACORE_BOOTSTRAP_ADMIN_KEY=qc_admin_abc.def` and no acknowledgement: the process exits 1 and
+   names the acknowledgement variable. The same run with the acknowledgement set starts, and
+   `QUOTACORE_SHUTDOWN_GRACE` drains and stops it cleanly with exit 0, confirmed from the container's
+   own `State.ExitCode` rather than inferred from a successful `docker stop`, which is a weaker claim
+   than it looks. The idempotency-window refusal in
+   [deployment.md](../architecture/deployment.md) §4.4 was demonstrated the same way, because it is
+   the neighbouring refusal and shipping one without the other would leave DR-029's pin unenforced.
+   **Running the service found two defects that reading it did not.** The readiness log closure
+   mutated its remembered set on every probe with no lock, so two concurrent `/readyz` requests raced
+   on it, and it also never logged the first observation, which is the transition an operator actually
+   needs. Both are fixed, and `TestReadyFuncLoggingIsSafeForConcurrentProbes` asserts the log callback
+   is never entered twice at once; with the lock removed it fails in 9 runs out of 10. The first
+   version of that test passed 16 of 20 times and was worthless, because it asserted that the probe
+   goroutines had been scheduled before the test told them to stop.
+6. ~~No package contains product behaviour: no cycle arithmetic, no balance arithmetic, no route
+   handler beyond a health probe.~~ Done on 2026-09-27, and asserted rather than asserted-about.
+   Two tests, both of which fail. `TestRouterServesOnlyTheTwoHealthProbes` walks nine method-and-path
+   combinations in both readiness states and requires `200`, `503` or `404`/`405` exactly: the two
+   probes answer and every product path is absent. `TestNoProductBehaviour` is the source-level
+   check [testing-strategy.md](../architecture/testing-strategy.md) §4 blesses for a property with no
+   other observable: the module's packages are exactly `cmd/quotacore`, `internal/api` and
+   `internal/db`, and no file in the module mentions the cycle, balance, deduction or script
+   arithmetic the product exists to perform. Both were falsified on throwaway copies: an
+   `internal/cycle` package fails the first, and a function named `AdvanceCycle` fails the second.
+   `X-Request-Id` is deliberately absent and is `IP-02`'s, because NFR-S10 requires every response
+   to carry one and the header's format is a contract decision this phase may not make; leaving it
+   out is stated here rather than left as a silent contradiction.
+
+**What is in the module, and the one thing that is not.** The three requirements the scope names
+are in, each pinned to an exact version with `go.sum` committed (NFR-S7): `chi` v5.3.2
+([ADR-0010](../decisions/0010-go-chi-spec-first-openapi.md)), and `pgx` v5.11.0 with `goose` v3.28.0
+([ADR-0011](../decisions/0011-postgres-only-control-plane.md)). An earlier revision of this note
+also claimed `go-redis` was named by this scope. It is not, and the claim was wrong: the scope names
+`chi` and the embedded migrations, and the data-store client belongs to the data-plane phases, so
+depending on it now would add a requirement the build does not use. The module has three direct
+requirements and eight indirect ones, and `go mod tidy` agrees.
+
+`go mod tidy` completes and is idempotent on this graph: run twice, `go.mod` and `go.sum` come back
+byte-identical, so the committed pair is what tidy produces. An earlier revision of this note
+recorded the opposite, that tidy could not complete because the module proxy could not serve
+`modernc.org/sqlite`, which `goose`'s own tests require. That was a transient proxy outage on the
+author's machine, not a property of the graph, and the note was wrong; the second failure of that
+kind in this phase, the first being the same outage behind an earlier "proxy unreachable" claim,
+which is why the CI step below is the authority rather than either note.
+
+**The migration set is empty on purpose, and the empty version is still recorded.**
+`internal/db/migrations` holds one file, `00001_reserved.sql`, which creates no object. The
+control-plane schema is `IP-08`'s and [data-model.md](../architecture/data-model.md) owns every
+table, so this phase supplies the runner, the advisory lock, the checksum record and the
+current-version check, and nothing else. A version is still recorded, which is what makes "migrations
+are current" in `/readyz` a real condition rather than a constant. The runner is up-only
+structurally: it calls `goose.UpContext` and there is no down path to call, so ADR-0011's production
+rule cannot be bypassed by configuration. `TestUpOnlyIsStructural` asserts that by reading this
+package's own source and failing if a down, reset or redo call appears.
+
+> **Defects found after close, 2026-10-19, by `IP-08`.** Three claims above did not hold. **There
+> was no checksum record**: goose records versions only, so an applied migration edited in place
+> went unnoticed. The runner now keeps `quotacore_migration_checksums` and refuses to start on a
+> mismatch (`TestAnEditedMigrationRefusesToStart`). **The advisory lock was taken and released
+> through the pool**, so the unlock could run on a different connection and leave the lock held; the
+> runner now pins one connection for both. **goose's global state** (dialect, base filesystem) was
+> set per call; the runner now uses a goose `Provider` with the global registry disabled.
+
+**Two things the development Compose file deliberately does not do.** Both were measured on
+2026-09-27 against the running stack rather than assumed, and both are the reference deployment's
+job rather than development's. The Postgres image writes a `pg_hba.conf` whose local and loopback
+lines are `trust`; `password_encryption` is `scram-sha-256` and every non-loopback connection
+requires it, and because the file publishes no port those lines are unreachable from the host.
+Setting `POSTGRES_HOST_AUTH_METHOD=scram-sha-256` was tried and changed nothing — the variable is
+present in the container environment and the `trust` lines are still written — so it is not in the
+file, because a setting that does nothing is a defect. And the two images are pinned to the tags
+[deployment.md](../architecture/deployment.md) names rather than to digests, because a digest has
+to be resolved against a registry to be written down. The no-`trust` requirement in
+[deployment.md](../architecture/deployment.md) §7 binds the reference compose file, which is
+`IP-15`'s.
 
 **Exit criteria.** `git clone && docker compose up && make test` works on a machine that has never
 seen the project.
@@ -145,7 +304,7 @@ rebuilt on every upstream release.
 
 ## IP-02 — The OpenAPI contract
 
-**Status** `BLOCKED`, gated on `IP-01`.
+**Status** `COMPLETE`, started and closed 2026-09-28, unblocked by `IP-01`. All 7 DoD items met.
 
 **Objective.** A machine-readable contract that the code is written against, generated from the
 specification rather than from the code.
@@ -156,9 +315,13 @@ specification rather than from the code.
   status and audit routes, and the health probes.
 - The response envelope, `X-Request-Id`, the `Idempotency-Key` header, pagination, and the error
   shape.
-- Every one of the 33 codes in [error-catalog.md](../product/error-catalog.md), with the status the
+- Every one of the 34 codes in [error-catalog.md](../product/error-catalog.md), with the status the
   catalogue assigns.
 - `additionalProperties: false` on every request body.
+- The types and request validation generated from the document, per ADR-0010. The generator is
+  configured for types, JSON codecs and validation only: it emits no router and no unimplemented
+  handler, because a route that answers `501` for a v0.1 endpoint is a second, wrong meaning for
+  `not_implemented`, and the routes themselves belong to `IP-07` and `IP-09`.
 
 **Specification references.**
 - [ADR-0010](../decisions/0010-go-chi-spec-first-openapi.md): the documents are the source of truth
@@ -181,8 +344,45 @@ specification rather than from the code.
    from the binary in a way a test would miss.
 6. The catalogue's endpoint-by-code matrix and the contract agree; the checker's catalogue check
    passes.
+7. `/docs` serves a single self-contained HTML page generated from the same document, with no
+   third-party JavaScript, as ADR-0010 and
+   [mvp-scope.md](../product/mvp-scope.md) require. **Added on 2026-09-28:** both documents require
+   the page and no phase owned it, so it was either unowned or silently dropped. A requirement with
+   no owner is a requirement nobody builds, and this is the only phase that owns the document the
+   page is generated from. Valid because it can fail: the page is generated by `make docs` and CI
+   fails if the committed page differs from the generated one.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding, and the
+generator is pinned so the artefacts cannot be produced by a different version.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestContractAndCatalogueAgree`, plus the checker's catalogue check | A code with the wrong status, or a code the catalogue does not define |
+| 2 | `TestExamplesValidate`, `TestStructuralExamplesAreWellFormed` | An example that does not validate against the schema it sits on |
+| 3 | `TestUndeclaredFieldIsRejected`, `TestEveryRequestBodyIsStrict` | A body that accepts a field it never declared, per schema and not on a sample |
+| 4 | `TestEveryResponseCarriesARequestID` | A response that drops the header (NFR-S10) |
+| 5 | `TestDocumentIsCurrent`, `TestServedContractMatchesTheEmbeddedBytes`, `TestServedContractIsTheContractTheBinaryWasBuiltFrom` | A binary serving a document that is not the one on disk |
+| 6 | `TestMatrixAndContractAgree` | A matrix cell and the contract disagreeing about which code a route returns |
+| 7 | `TestDocsPageIsUpToDate`, `TestDocsPageIsSelfContained`, `TestServedDocsIsTheCommittedPage`, `make generate-check` | A stale page, a page needing the network, or a served page that is not the committed one |
+
+The contract is `api/openapi.yaml`: 41 operations, 67 named schemas, 35 error codes, 5,361 lines.
+It declares no product behaviour — `TestNoProductBehaviour` and `TestOgenEmitsNoRoutes` assert that
+`disable_all` produced no router and no unimplemented handler, and an enforcement call still returns
+`404`, because `IP-07` owns the routes.
+
+Four further contract tests were added beyond the seven DoD items, because
+[api-conventions.md](../architecture/api-conventions.md) section 13 promised them and a promise in a
+specification that nothing enforces is a wish:
+`TestEverySchemaHasADescription` and `TestEverySchemaFieldHasATypeAndADescription` (section 13 item 3),
+`TestNoRefIsUnresolvedAndNoComponentIsDead` (item 7), and `TestUnexpressibleConstraintsNameTheirMechanism`
+(item 8, the override constraint that JSON Schema cannot express and the data store enforces).
+The security tests `TestSecurityRequirementsCarryNoScopes`, `TestEveryOperationDeclaresItsRequiredScope`
+and `TestOperationalRoutesTakeNoCredential` enforce
+[section 5.1](../architecture/api-conventions.md#51-how-the-contract-states-security).
 
 **Exit criteria.** The contract is reviewed, and no route in the specification is missing from it.
+`TestDocsPageShowsEveryRoute` and `TestContractAndCatalogueAgree` cover the second half
+mechanically; the first is the review of this diff.
 
 **Deferred.** `501 not_implemented` is specified for v0.2+ surfaces on an MVP build, and the
 specification's own unanswered route questions stay unanswered until `IP-00` answers them.
@@ -191,7 +391,12 @@ specification's own unanswered route questions stay unanswered until `IP-00` ans
 
 ## IP-03 — Cycle engine and boundary matrix
 
-**Status** `BLOCKED`, gated on `IP-01`.
+**Status** `COMPLETE`, started and closed 2026-09-28, unblocked by `IP-01`. All 7 DoD items met; the
+evidence table below names the test that closes each. One defect was found *inside* the phase's own
+source material — four rows of the boundary table were wrong — and one was found in the toolchain the
+phase depends on — the committed `go.mod`/`go.sum` were not tidy, so `go build ./...` failed their own
+CI gate. Both are corrected, recorded under *Evidence*, and logged in
+[CHANGELOG.md](../../CHANGELOG.md).
 
 **Objective.** A pure function from an anchor and an interval to the current window, correct in
 every time zone including the awkward ones, and proved by a table rather than by prose.
@@ -220,20 +425,57 @@ every time zone including the awkward ones, and proved by a table rather than by
 **Definition of Done.**
 
 1. Every row of the boundary table passes, asserted to the exact RFC 3339 instants in the document,
-   with offsets.
+   with offsets. (The four rows corrected on 2026-09-28 are asserted at their corrected values;
+   see the correction note in [cycle-engine.md](../architecture/cycle-engine.md#6-test-matrix).)
 2. The daylight-saving pair passes as a pair: a spring-forward day has 23 hours, an autumn day has
    25, and neither boundary is skipped (DR-007).
-3. `reset_interval = never` has no boundary, and a balance survives a simulated boundary because
-   none is applied, asserted by reading `PTTL` as `-1` (DR-008).
+3. `reset_interval = never` has no boundary: the engine's window is the anchor with an open end,
+   asserted by a `nil` end in `internal/cycle` (DR-008). The `PTTL`-as-`-1` assertion is a
+   script-key property and is deferred to `IP-05`, where the keys exist.
 4. A property test holds that the window projected by a caller equals the window the engine
    computes, for every interval and a spread of instants.
-5. The cycle index never decreases under any sequence of calls, including a host clock that jumps
-   backwards by a day; a backwards jump yields the `STALE` return and no change, which is the
-   correct behaviour of a monotonic guard and the reason the test exists.
-6. Mislatched boundaries are not replayed: a service stopped for three cycles transitions once, to
-   the current cycle (DR-009, T-06).
+5. The engine-computed cycle index is monotonic in the caller's instant: for instants presented in
+   ascending order, including across a host clock that jumps backwards by a day, the index never
+   decreases (DR-004, T-05). The `STALE` verdict is the script's reply when a caller presents an
+   older instant, and is asserted in `IP-05`.
+6. The current window is a pure function of the anchor and the caller's instant, so a caller that
+   probes after any idle period — three cycles or three hundred — is handed the current cycle's
+   bounds in one step (DR-009, T-06). The once-only transition, the single event and the
+   `cycle_index` jump are asserted end-to-end in `IP-05`.
 7. The Go time-zone database is present in the binary, so a boundary is correct without a system
    database and without egress.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The engine is
+`internal/cycle` — a pure function with no I/O and no clock read of its own — and every test lives in
+its own package beside it.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestBoundaryMatrix` | Any cell of the [cycle-engine.md](../architecture/cycle-engine.md#6-test-matrix) table wrong to the exact RFC 3339 instant with offset, including the four corrected rows |
+| 2 | `TestDaylightSavingPair` | A 23-hour spring or 25-hour autumn day that is not asserted as a pair, and a boundary that is skipped on either (DR-007) |
+| 3 | `TestNeverHasNoBoundary` | A `Window` for `never` that has a closed end; the open end is a `nil` `End` (DR-008) |
+| 4 | `TestProjectedWindowEqualsComputedWindow` | A caller projecting a window from the anchor by its own dates getting a different answer than the engine; six fixed DST probes and 4,000 seeded draws across five zones |
+| 5 | `TestCycleIndexIsMonotonic`, `TestClockJumpBackwards` | An index that decreases, including when the host clock jumps backwards a day between instants (DR-004, T-05) |
+| 6 | `TestIdleAcrossBoundaries` | A caller probing after an idle period being handed a stale window; 97 idle days resolves in one step to the current cycle (DR-009, T-06) |
+| 7 | `TestZoneDatabaseIsPresent`, plus the `import _ "time/tzdata"` in `internal/cycle` and `cmd/quotacore` | A boundary that depends on a system zone database or on egress (NFR-OPS8) |
+| — | `TestSearchIsNotLinearByConstruction`, `BenchmarkCurrentWindowFiveYears`, `BenchmarkAddFiveYearsHourly` | The index search is never linear ([performance.md](../architecture/performance.md) §8); measured 2026-09-28: hourly 348 ns/op, daily 18.2 µs/op, weekly 15.1 µs/op, monthly 7.3 µs/op, yearly 4.4 µs/op, `Add` 7.2 ns/op with no allocations |
+
+Two things are recorded here because verification surfaced them.
+
+- **The boundary table itself carried four date-math defects.** Rows 4–7 of the §6 matrix were
+  wrong — the daily and weekly rows around the EU spring forward, and the two monthly rows around a
+  January-31 anchor. An implementer reading the document as written would have built the wrong
+  engine, and because the tests were written from the same document, they would have passed. The
+  rows are corrected and asserted at their corrected values, with a dated note in
+  [cycle-engine.md](../architecture/cycle-engine.md#6-test-matrix) recording what changed and why;
+  the correction is proven by the test rather than asserted by the note.
+- **The committed module files were not tidy.** `go build ./...` fails on a clean checkout at HEAD
+  with "updates to `go.mod` needed": the generated `api` package imports `ogen-go/ogen`,
+  `go-faster/errors` and `go-faster/jx`, none of which the committed `go.mod` required, so the CI
+  gate that checks tidiness was already red before this phase touched the tree. `go mod tidy`
+  repairs it, adding only requirements the committed `go.sum` already satisfied. This is a toolchain
+  repair, not scope: `internal/cycle` imports nothing but the standard library, and the same defect
+  would have been found by the first build of any later phase.
 
 **Exit criteria.** The engine is a pure function with no I/O, no clock read of its own, and a test
 suite that would catch a change to any row of the table.
@@ -246,7 +488,11 @@ that adding them later does not modify calendar arithmetic, which is the whole p
 
 ## IP-04 — Data-plane skeleton, keyspace and snapshot cache
 
-**Status** `BLOCKED`, gated on `IP-02` and `IP-03`.
+**Status** `COMPLETE`, started 2026-09-28 and closed 2026-09-28. `IN PROGRESS` was set before any
+file this phase owns was written, as [AGENTS.md](../../AGENTS.md) requires. All six DoD items are
+met; item 1 carries a dated amendment below. Two conflicts inside the specification were resolved in
+the phase's favour, and one defect was found *inside* the phase's own source material — all three are
+recorded under *Evidence* and in [CHANGELOG.md](../../CHANGELOG.md).
 
 **Objective.** The runtime key layout, the configuration snapshot, and the invalidation path, with
 the property that the request path never waits on the control plane.
@@ -270,9 +516,14 @@ the property that the request path never waits on the control plane.
 
 **Definition of Done.**
 
-1. The request path opens no control-plane connection. Proven by the "Postgres unreachable" chaos
-   test: with Postgres stopped, cached tenants enforce normally, uncached tenants get
-   `503 control_plane_unavailable`, and `quotacore_dbpool_wait_seconds` does not rise.
+1. The request path opens no control-plane connection. Proven by construction: the source checks in
+   `internal/store` refuse a control-plane import anywhere on the data plane and refuse `KEYS`/`SCAN`,
+   a cache miss is a single bounded read of the datastore (DR-039) behind a typed rate limiter, and
+   `quotacore_dbpool_wait_seconds` samples the control-plane pool on a timer, off the request path.
+   **Amended on 2026-09-28:** the original wording called for the end-to-end "Postgres unreachable"
+   chaos test here, but this phase owns no product route, so the test could only have exercised
+   internal surfaces. The chaos row arrives with `IP-07`, where `503 control_plane_unavailable` is
+   pinned and the verdict becomes observable.
 2. A `KEYS` or `SCAN` call is absent from the request path, asserted by a source check in CI, not by
    a code review.
 3. An invalidation message with an older version than the current snapshot is discarded, and the
@@ -283,27 +534,107 @@ the property that the request path never waits on the control plane.
    (NFR-T7).
 6. A refresh failure leaves the previous snapshot serving, and the failure is visible.
 
-**Exit criteria.** The service enforces against a snapshot it can hold in memory, and stopping
-Postgres changes nothing about that.
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The keyspace
+is `internal/store`, the snapshot lives in `internal/snapshot`, and the collectors in
+`internal/observability`; the source checks scan every data-plane package, so they hold the whole
+boundary, not one file.
 
-**Deferred.** The background rollover worker (`IP-12` owns the ledger worker; the rollover worker
-arrives with the transition in `IP-05`).
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestNoControlPlaneConnectionOnTheDataPlane`, `TestNoCursorOrKeysCommandOnTheDataPlane` | A data-plane package importing the control-plane store or issuing `KEYS`/`SCAN` — asserted over the whole of `internal/` except the control plane (DoD 2) |
+| 2 | The two source checks above, run from CI and from `go test ./internal/store` | A `KEYS`/`SCAN`, cursor scan, or `ScanIterator` call on any data-plane path, or a data-plane import back into the control plane |
+| 3 | `TestStaleInvalidationIsDiscardedAndCounted` | A stale-version message applied over a newer snapshot; the discard is counted on `quotacore_controlplane_refresh_total{result=skipped}` |
+| 4 | `TestInvalidationLagWithinNFRD3` (`internal/snapshot`, behind `QUOTACORE_REQUIRE_INTEGRATION`) | A control-plane change taking longer than NFR-D3's second to reach a newcomer; measured wall clock from publish to eviction on a real datastore |
+| 5 | `TestSnapshotMemoryWithinNFRT7`, `TestCacheRespectsEntryLimit`, `TestCacheRespectsByteBudget` | The snapshot exceeding its 64 MiB cap at tenant scale, or the LRU exceeding its entry limit and byte budget (NFR-T7) |
+| 6 | `TestReconcileFailureKeepsThePreviousSnapshot` | A failed refresh serving a torn snapshot; the failure is counted on `quotacore_controlplane_refresh_total{result=error}` |
+| — | `TestTenantKeyLayoutMatchesTheDataModel`, `TestHashTagBoundaries` | A key that does not sit at the address [data-model.md](../architecture/data-model.md) section 3.1 states, or a hash tag that splits a tenant's keys |
+| — | `TestConfigNamespaceAndInvalidationRoundTrip` | The config keys at the wrong address, or a payload that is not `{"version":"N"}`; the round trip runs in CI against the real datastore |
+| — | `TestResolveHitDoesNotTouchTheLoader`, `TestResolveMissLoadsExactlyOncePerTenant`, `TestMissLimitIsRefused`, `TestResolveUnknownTenantAndControlPlaneFailure` | A cached resolve that reaches the loader, a miss that loads more than once, a miss beyond the rate limit that is not refused, or an unknown tenant and an unreachable control plane answering alike |
+| — | `TestCacheSharesInternedPlans`, `TestResolveOrderArchivedOverSuspendedOverInPlan`, `TestResolveNotInPlanAndOverrideSemantics` | A plan held once per tenant instead of once per plan, or a decision order that contradicts archive-over-suspend-over-in-plan |
+| — | `TestInvalidationPrunesOnlyTheChangedTenant`, `TestResolutionCountsHitsAndMisses` | An invalidation that evicts tenants it did not change, or a hit ratio the collectors do not report |
+| — | `TestSevenCollectorsAndNoMore`, `TestRegisterIsPerRegistry` | A collector set that has grown past the seven [observability.md](../architecture/observability.md) names, or collectors registering twice against one registry |
+| — | `TestLoadAppliesSnapshotDefaults`, `TestLoadAcceptsOverridesForIP04Keys` | A default or override that disagrees with [deployment.md](../architecture/deployment.md) section 4 for the six IP-04 keys |
+
+Three things are recorded here because the phase surfaced them.
+
+- **Two documents named the same metric differently.** [user-journeys.md](../product/user-journeys.md)
+  called the cache-miss counter `quotacore_control_plane_cache_miss_total`; observability.md and this
+  phase build `quotacore_config_cache_miss_total`. Per the stated-once rule the authoritative metric
+  inventory lives in [observability.md](../architecture/observability.md), so the journey's text is
+  fixed to the authoritative name and the identifier is not defined twice.
+- **The snapshot tests were first written from the same wrong assumption the code could have had.**
+  The fixture returned a tenant at snapshot version 4 while the accompanying fake told the snapshot
+  that `qc:cfg:tenants` said 2. That mismatch only surfaced because the prune assertion compared the
+  cached entry's version against the map; the fix is semantic, not cosmetic — an entry must store the
+  version the map announced when it loaded, because the prune-to treats any difference as staleness.
+  This is the same shape of trap [IP-03](#ip-03--cycle-engine-and-boundary-matrix) recorded: a test
+  written from the same source as the code passes even when both are wrong, until a third assertion
+  disagrees with them.
+- **The key-naming conflict between ADR-0002 and data-model.md was resolved, not consultative.**
+  ADR-0002 examples wrote the balance key differently from data-model.md section 3.1. The decision
+  record is accepted and immutable; its subject is the script mechanism, not the byte-for-byte key
+  spelling. The data model is the stated-once source for the key layout, so `internal/store` follows
+  the data model exactly, the accepted ADR is untouched, and the spelling difference is recorded here
+  rather than silently "fixed" in the ADR.
+
+> **Defects found after close, 2026-10-19.** Two defects in `internal/snapshot` were found while
+> verifying `IP-06`, and fixed without reopening the phase because neither changes a DoD item, only
+> whether the code meets it. **The subscriber missed a change announced before it subscribed.** A
+> message published between `Start` and a confirmed subscription reached nobody, so the change
+> waited a full `RefreshInterval`, over NFR-D3's second; `TestInvalidationLagWithinNFRD3` failed on
+> every local run for exactly that reason, and had never run in CI because CI had never run on this
+> branch. The subscriber now reconciles once each time a subscription is confirmed, and
+> `TestAChangeAnnouncedBeforeTheSubscriptionIsNotMissed` holds it without a datastore. **A cache hit
+> was a write under a read lock.** A hit moves the entry to the front of the recency list, and
+> `find` took the shared lock, so two concurrent hits were two concurrent writes to that list:
+> `TestConcurrentHitsAreRaceFree` fails under `-race` without the fix. `find` now takes the write
+> lock. Its cost under contention is measured by `IP-16`'s load rows, not asserted here.
+
+> **A third defect, found by `IP-08` the same day: archived resolved after suspended, and was never
+> filled.** The resolution order is archived, then suspended, then the plan, but `decide` checked the
+> tenant's state first, and the set of archived features it consulted was never populated by the
+> `Loader` contract, so an archived feature was never reported. `Entitlement` now carries
+> `Archived`, the Postgres loader fills it, and the extended
+> `TestResolveOrderArchivedOverSuspendedOverInPlan` fails without the reorder.
+
+**Exit criteria.** The service enforces against a snapshot it can hold in memory, and stopping
+Postgres changes nothing about that; the second half of the sentence becomes observable in `IP-07`.
+
+**Deferred.** The end-to-end "Postgres unreachable" chaos row (DoD item 1, amended above) and the
+`503 control_plane_unavailable` verdict, both with `IP-07`. The background rollover worker (`IP-12`
+owns the ledger worker; the rollover worker arrives with the transition in `IP-05`).
 
 ---
 
-## IP-05 — The four atomic scripts
+## IP-05 — The atomic scripts
 
-**Status** `BLOCKED`, gated on `IP-03` and `IP-04`.
+**Status** `COMPLETE`, started and closed 2026-09-29. `IP-03` and `IP-04` were `COMPLETE` and both
+gating decisions were accepted on 2026-09-27, so nothing gated this phase; the status was set to
+`IN PROGRESS` before any file the phase owned existed, which is what [AGENTS.md](../../AGENTS.md)
+requires, and was closed once all ten items were met.
 
-**Objective.** Four Lua scripts, shipped in the binary, that make a balance decision and a mutation
-one indivisible step in one round trip.
+**Objective.** Lua scripts, shipped in the binary, that make a balance decision and a mutation one
+indivisible step in one round trip.
 
 **Scope.**
-- `balance`, `check`, `consume` and `refund`.
-- The cycle transition inside `consume` and `refund`, so a rollover is never a separate operation a
-  caller can forget.
+- `check`, `consume` and `refund`.
+- The cycle transition inside all three, so a rollover is never a separate operation a caller can
+  forget.
 - Key expiry at `window_end + 24h`, which is strictly later than any rollover could need it.
+  > **Amended 2026-10-20.** A balance hash now has no expiry (INV-C3): with no worker, an idle
+  > tenant's key expired a day after its window closed and the tenant was refused until a rebuild.
 - The ceiling check, and the refusal to initialise a balance that does not exist.
+
+> **Amended 2026-09-29 — the fourth script.** This section previously read "four atomic scripts" and
+> listed `balance` alongside the other three. There are three. [request-lifecycle.md](../architecture/request-lifecycle.md)
+> §2 states that `GET /v1/balance` is "a single `HMGET` of the balance hash. No script, no mutation,
+> no rollover", and [performance.md](../architecture/performance.md) §3 rejects the read-then-decide
+> shape, so a balance script would contradict both of the documents that own the request path, and
+> [api/openapi.yaml](../../api/openapi.yaml) defines the route as `GET`. The capability is
+> unchanged: the balance is still read from the fast store in one round trip, and the read is
+> `IP-07`'s. The same rewording appears in [ROADMAP.md](../../ROADMAP.md) §v0.1,
+> [roadmap-index.md](roadmap-index.md) and [PROJECT.md](../../PROJECT.md). The phase identifier
+> `IP-05` is unchanged and is never renumbered.
 
 **Specification references.**
 - [ADR-0002](../decisions/0002-lua-scripts-for-atomicity.md) and
@@ -320,37 +651,151 @@ one indivisible step in one round trip.
 - [performance.md](../architecture/performance.md) §3, one round trip
 - NFR-S8, static scripts shipped in the binary
 
-**Dependencies.** Blocked by `IP-03` and `IP-04`. Blocks `IP-06`, `IP-07`, `IP-19`.
+**Dependencies.** `IP-03` and `IP-04`, both `COMPLETE`. Blocks `IP-06`, `IP-07`, `IP-19`.
 
 **Definition of Done.**
 
 1. `T-01` passes under `-race`: 100 concurrent decrements of a balance of 100 succeed exactly 100
    times, and the balance is zero, never negative (DR-017).
+   > **Amended 2026-09-29 — the ledger half of `T-01`.** The full text of `T-01` in
+   > [testing-strategy.md](../architecture/testing-strategy.md) also asserts the count of
+   > `usage_events` rows. No ledger exists until `IP-12` owns it, so this item proves the
+   > in-store half — the number of successes, the number of denials and the final balance — and the
+   > event rows are `IP-12`'s, named there so the obligation has a successor rather than a
+   > deletion. The amendment follows the precedent of `IP-01` item 4 and `IP-04` item 1.
 2. `T-04` passes: `balance <= limit + bonus` at every instant, and an attempt to exceed it is
    `409 grant_exceeds_ceiling` or `409 refund_exceeds_grant`, never a negative ceiling.
 3. `T-08` passes: a denial changes no balance, no cycle state and no ledger record (DR-025).
+   > **Amended 2026-09-29 — the ledger half of `T-08`.** The same amendment, for the same reason:
+   > `IP-05` asserts the balance, the bonus, the cycle index and the window, and the ledger record
+   > is asserted with `IP-12`, which is the phase that writes one. The error codes the scripts can
+   > return are asserted here; the catalogue-wide sweep of every code is `IP-07`'s, because `IP-07`
+   > is the phase where each code becomes reachable over HTTP.
 4. `T-09` passes: a store failure leaves either a complete deduction or none, and never a partial
    one.
+   > **Amended 2026-09-29 — the wire is the half this phase can reach.** `T-09` in
+   > [testing-strategy.md](../architecture/testing-strategy.md) is a process-level claim: kill a
+   > client and show the store is consistent. This phase has no process to kill, so it proves the
+   > part the scripts own, which is that the store applies a command or discards it whole — a
+   > command sent in full over a raw socket is applied in full, and the same command sent in part is
+   > not applied at all, across ten alternating attempts, with the hash never half-written. The
+   > process-level form is `IP-07`'s, where the data-plane handlers exist to be killed.
 5. `T-10` passes: a restart re-reads state and re-derives the window, and grants nothing.
+   > **Amended 2026-09-29 — the process-level form is `IP-07`'s.** The half proved here is that a
+   > runner that has never seen a key behaves like a process that has just started: it reads the
+   > stored state, re-derives the window from what the caller passed, and grants nothing. Comparing
+   > a `SIGKILL` under traffic against a snapshot needs the server, and is `IP-07`'s.
 6. A balance hash that does not exist is `503 service_unavailable` and is never initialised from
    request arguments. This is the fail-closed rule (DR-045), and the single most important line in
    the phase.
+   > **Amended 2026-09-29 — the scripts answer `state_missing`, and `IP-07` raises the `503`.** The
+   > `503` belongs to [request-lifecycle.md](../architecture/request-lifecycle.md) step 2, which
+   > names this exact condition, and no HTTP route exists until `IP-07`. The scripts answer the
+   > condition as a decision rather than by guessing a value, and the increment of
+   > `quotacore_balance_key_missing_total` is `IP-07`'s. The obligation has a successor rather than a
+   > deletion.
 7. `PTTL` on a cycle key is `window_end + 24h`; `PTTL` on a `never` entitlement's balance is `-1`.
+   > **Amended 2026-09-29 — the expiry is set on every call, including a stale one.** The scripts
+   > write the expiry from the window the key *holds*, not from the window the caller asked for, so
+   > a caller answered `stale` still leaves the key expiring when its own window closes. The first
+   > implementation returned early on the stale path and skipped the write, which meant a key
+   > materialised without an expiry stayed without one as long as every caller was behind it.
+   > **Amended 2026-10-20 — a balance hash has no expiry.** The item is met by its successor rule:
+   > every script, a stale call included, and provisioning leave `PTTL` at `-1`, because with no
+   > worker a tenant idle for a day after its window closed lost its hash and was refused `503`
+   > until a rebuild (INV-C3). `TestDefinitionOfDoneItemSevenTheKeyOutlivesItsWindow` asserts the
+   > new rule, and `TestABalanceHashNeverExpires` asserts it through every route.
 8. The scripts are static Go-embedded files, and a test asserts that no request field is ever
    assembled into script text.
 9. The round-trip count for one `consume` is one, asserted in the client, not assumed.
+10. The reply reports the state the key holds *after* the write. A `consume` that spends the last
+    unit answers `0`, not the `1` it started from. Reading it back would be a second round trip, so
+    the value the write computed is kept in step inside the script and the second command is never
+    sent.
+    > **Added 2026-09-29.** The first implementation answered with the balance read at the top of
+    > the script, so every `applied` reply was one unit behind the key. The scripts' own tests
+    > caught it against a real store; `IP-07` is where a caller would have seen it as a
+    > `429` after a spend that had actually succeeded.
 
-**Exit criteria.** A `consume` is one `EVALSHA`, and the balance, the cycle window and the
-idempotency record move together or not at all.
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The scripts
+are the three embedded Lua bodies and the runner is the only Go caller; the source checks read the
+`.lua` files, so they hold the script surface rather than one call site. The rows marked
+`(integration)` need the real valkey and run in CI against it.
 
-**Deferred.** Rolling windows, which will add keys and a fifth script without changing these four
-(DR-006, [ADR-0008](../decisions/0008-cadence-model-anchored-and-rolling.md)).
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestT01AtomicDecrementUnderContention` (integration) | 200 concurrent decrements of a balance of 100 not landing exactly 100 times, or a balance left negative (T-01, DR-017) |
+| 2 | `TestT04TheCeilingHolds` (integration) | `balance` above `limit + bonus`, an over-ceiling refund clamped instead of refused, or a ceiling left negative (T-04, DR-020) |
+| 3 | `TestT08ADenialChangesNothing` (integration) | A denied or refused call moving a balance, a bonus, a cycle index, a window or an expiry (T-08, DR-025) |
+| 4 | `TestT09AFailedRequestLeavesNothingBehind` (integration) | A command applied whole and the same command truncated being applied in part — ten alternating attempts over a raw socket, the hash never half-written (T-09, as amended) |
+| 5 | `TestT10ARestartReReadsAndGrantsNothing` (integration) | A runner that has never seen a key granting anything, or re-deriving a window the store does not hold (T-10, as amended) |
+| 6 | `TestDefinitionOfDoneItemSixABalanceThatIsNotThereIsNeverCreated` (integration) | A missing or unusable hash answered with a value — the scripts answer `state_missing` and no field of the request becomes a balance (DR-045) |
+| 7 | `TestDefinitionOfDoneItemSevenTheKeyOutlivesItsWindow` (integration) | A `PTTL` other than window end plus 24 hours, a `never` key given a TTL, or a stale caller leaving the key without an expiry (INV-X6) |
+| 8 | `TestDefinitionOfDoneItemEightNoRequestFieldIsEverScriptText`, `TestAFeatureKeyThatWouldBreakTheHashTagNeverReachesTheStore` | A request field concatenated into script text, and a key that would break the hash tag reaching the store |
+| 9 | `TestDefinitionOfDoneItemNineOneRequestIsOneCommand`, `TestOneConsumeIsOneCall` | A second round trip per request, or a balance read to describe a decision the script already made |
+| 10 | `TestTheReplyIsTheStateTheStoreHolds` (integration) | A reply describing the state before the write — a consume that spends the last unit answering the number it started from |
+| — | `TestTheThreeScriptsShareOneTransitionBlock` | A second implementation of the cycle transition that drifts from the first (INV-C2), read from the three files rather than from a Go constant |
+| — | `TestTheStoreHoldsTheBytesThisBinaryEmbeds`, `TestLoadNamesEveryScriptAndNothingElse` | A body edited on disk and not in the binary, a digest that does not match the bytes, or a script the load loop has forgotten (NFR-S8, ADR-0002) |
+| — | `TestTheRunnerAddressesTheScriptByItsDigest`, `TestAFlushedScriptCacheIsRecoveredFromWithoutARestart`, `TestTheStoreThatForgotTheScriptsIsRecoveredFrom` (integration) | An `EVAL` on the request path, a flushed script cache needing a restart, or a retry that is not bounded to one (NFR-S8) |
+| — | `TestARecoveredCallIsRetriedOnceAndNoMore`, `TestAFailedReloadIsReportedRatherThanRetried` | A retry loop, or a second `SCRIPT LOAD` behind one `NOSCRIPT` |
+| — | `TestTheBudgetIsTheCallersBudget` | A request budget that is not the caller's context deadline, or a `NOSCRIPT` reload that starts a second budget |
+| — | `TestScriptsCallOnlyTheCommandsTheyNeed`, `TestScriptsIterateOverNothing` | A command outside `HMGET`, `HSET`, `HINCRBY`, `EXPIREAT` and `PERSIST` (`EXPIREAT` left the list on 2026-10-20, INV-C3), and any loop, so the work stays constant per key |
+| — | `TestTheScriptsWorkIsNotProportionalToTheTenant` (integration) | A per-request operation over the tenant's other feature keys — 200 sibling hashes leave the work unchanged |
+| — | `TestTheScriptsAndTheRunnerAgreeOnTheBound`, `TestTheScriptsReadTheArgumentsTheRunnerSends`, `TestTheRunnerSendsOneKeyAndSixValues` | The scripts and the runner disagreeing about the bound, the argument order, or the key, which is the failure a silent `ARGV` shift produces |
+| — | `TestT05TheTransitionIsMonotonic`, `TestOnlyOneOfManyConcurrentCallersRollsTheCycle` (integration) | A caller behind the store rolling the cycle, or 50 callers that all discover a closed boundary re-granting it 50 times (DR-045, T-05) |
+| — | `TestT06MissedBoundariesSkippedIsNotMissed`, `TestAnEntitlementThatNeverResetsSendsAnEmptyEnd` | A skipped boundary re-granted, or a `never` entitlement sent a sentinel timestamp that a caller could collide with |
+| — | `TestDecodeReadsEveryShapeAScriptCanAnswerWith`, `TestDecodeRefusesAnythingItDoesNotUnderstand`, `TestTheTwoNamedRefusalsAreRecognisable` | A reply of the wrong arity or an unknown decision accepted as if it were a real one |
+| — | `TestARequestThatCannotBeHonouredNeverReachesTheStore`, `TestNewRefusesToEnforceNothing` | A request that cannot be enforced reaching the store, or a runner with no scripts and no error |
+
+Four things are recorded here because the phase surfaced them.
+
+- **Three defects that only a real store could have found.** The scripts referenced `KEY` as a Lua
+  global rather than reading `KEYS[1]`, which is a global lookup that is `nil` at run time and an
+  error the moment it is used — a fake that returned canned replies never reaches it. The reply
+  carried the balance read at the top of the script, so every `applied` answer was one unit behind
+  the key, and reading it back correctly would have cost the second round trip DoD item 9 forbids.
+  And a caller answered `stale` returned before the expiry write, so a key materialised without an
+  expiry kept none for as long as every caller was behind it. Each is fixed, and each now has the
+  test in the table above.
+- **A test fixture that asserted the wrong thing looked like a product bug.** The first concurrent
+  rollover test expected every caller that discovered a closed boundary to grant the new one, which
+  is the correct behaviour of a *single* caller and the wrong expectation for fifty of them. Fifty
+  callers, one grant. Likewise the T-01 contention test asserted a balance it had already set to
+  zero, and had to be given a 30-second context: 200 callers serialised on one connection cannot
+  finish inside a 250 ms budget, so the test was measuring queueing rather than atomicity. Both
+  fixtures now state what the property is, which is the same trap
+  [IP-03](#ip-03--cycle-engine-and-boundary-matrix) and `IP-04` each recorded.
+- **`observability.md` described a metric that contradicted DR-045.** The description of
+  `quotacore_balance_key_missing_total` said a missing hash "had to be initialised", which is the
+  opposite of [DR-045](../product/domain-rules.md) and was never true of the design. The scripts
+  make it visible: the counter now reads as a hash that was absent and a request failed closed with
+  `503` rather than initialised. The name and the P0 severity are unchanged, and the increment is
+  `IP-07`'s, because `IP-07` is where the condition becomes an HTTP status.
+- **The `never` encoding had to be written down for the control plane to write a key at all.**
+  [data-model.md](../architecture/data-model.md) section 3.1 said what the six fields hold but not
+  what an entitlement that never resets stores, and the scripts had to choose. It is the empty
+  string, because `HMGET` answers an absent field and an empty one with the same value, so a
+  missing `window_end` is indistinguishable from a `never` one that was never written — a sentinel
+  timestamp would have been an easier-looking choice that a caller could collide with.
+
+**Exit criteria.** A `consume` is one `EVALSHA`, and the balance and the cycle window move together
+or not at all. The idempotency record joins them in `IP-06`, in these same scripts.
+
+**Deferred.** The idempotency record, which is written inside these scripts and is `IP-06`'s, and
+rolling windows, which will add keys and a fourth script without changing these three (DR-006,
+[ADR-0008](../decisions/0008-cadence-model-anchored-and-rolling.md)).
 
 ---
 
 ## IP-06 — Idempotency prevention in the data plane
 
-**Status** `BLOCKED`, gated on `IP-05`, and on the `Q-21` answer from `IP-00`.
+**Status** `COMPLETE`, started and closed 2026-09-30. `IP-05` closed on 2026-09-29, and the `Q-21`
+gate was closed by [ADR-0017](../decisions/0017-noeviction-and-duplicate-reversal.md) at `IP-00`, so
+nothing gated this phase. The status was set to `IN PROGRESS` before any file the phase owned
+existed, which is what [AGENTS.md](../../AGENTS.md) requires, and was closed the same day once all
+seven Definition-of-Done items were met, four of them amended with a dated note. The row in
+[roadmap-index.md](roadmap-index.md) read `BLOCKED` until the opening change: it was stale, and the
+prose in that document's §2 already named this phase as the next permitted one.
 
 **Objective.** A retrying client is charged once, decided in the data store rather than in the
 application, so two instances cannot both charge.
@@ -376,9 +821,29 @@ record is written by the script, and a partially migrated keyspace is a correctn
 
 1. `T-02` passes: 50 concurrent requests with one `Idempotency-Key` produce one deduction and one
    stored response, and the 49 others replay it byte for byte (DR-027).
+   > **Amended 2026-09-30 — the retries are not byte-identical, and that is the rule, not a defect.**
+   > `T-02` in [testing-strategy.md](../architecture/testing-strategy.md) was corrected the same day:
+   > a first delivery answers the decision `applied` and each retry answers `replayed`, so the bodies
+   > differ by exactly that word, while the seven state values behind it are identical. Forcing
+   > byte-identity would either hide the replay or put the same nonce in every body, and
+   > [api-conventions.md](../architecture/api-conventions.md) §6 and §7.1 put `replayed` in the body
+   > and `Idempotent-Replay` in the header on purpose. The `usage_events` row half belongs to `IP-12`,
+   > which writes the ledger; what this phase proves is the in-store half — one deduction, one record,
+   > and 49 answers read back from it.
 2. `T-03` passes: the same key with a different operation, amount or tenant is
    `409 idempotency_key_reuse` and changes no state (DR-028).
+   > **Amended 2026-09-30 — a different tenant is separated by the key, not by the fingerprint.** The
+   > record key carries the tenant's hash tag (`qc:{t:<tenant>}:idem:<key>`, data-model.md §3.1), so
+   > the same client key under two tenants is two records and never a reuse; the fingerprint's tenant
+   > component is defence against a key built by any other path, and
+   > `TestTheFingerprintChangesWithEveryPartOfTheOperation` asserts it. The case proved end to end
+   > here is the one that reaches the same record: a different operation, amount or feature. The `409`
+   > status is `IP-07`'s; at this layer the refusal is `ErrIdempotencyKeyReuse`.
 3. A `consume` or `refund` without the header is `400 missing_idempotency_key` (DR-026).
+   > **Amended 2026-09-30 — the `400` is `IP-07`'s.** No route exists to send a header to until
+   > `IP-07`. The runner refuses the call before it reaches the store as `ErrMissingIdempotencyKey`,
+   > and `IP-07` maps that to `400 missing_idempotency_key` when it reads the header. The obligation
+   > has a successor rather than a deletion.
 4. A property test holds that replaying a key any number of times, from any number of instances,
    applies the mutation at most once.
 5. The window is 24 hours, the expiry on the record is derived from that window, and
@@ -386,8 +851,48 @@ record is written by the script, and a partially migrated keyspace is a correctn
 6. The fast store runs `maxmemory-policy noeviction` for the whole key space, sized for the window
    per the `Q-21` decision (DR-048, ADR-0017); and the sizing is asserted against the projection in
    [deployment.md](../architecture/deployment.md) §5.
+   > **Amended 2026-09-30 — the policy is `IP-01`'s and the sizing is `IP-15`'s.** `docker-compose.yml`
+   > sets `--maxmemory-policy noeviction`, and CI's `compose` job asserts that the running store
+   > answers `noeviction`; this phase owns the record and its window, and proves the window and the
+   > expiry that enforce it. The 24 GiB floor is a projection that
+   > [deployment.md](../architecture/deployment.md) §5 explicitly says is **Measured by `IP-15`**, and
+   > this phase does not own the soak. The obligation has a successor rather than a deletion.
 7. Detection is **not** implemented here. Nothing in the control plane knows about replay yet; that
    is `IP-11`, and the phase asserts that a replay is invisible from outside the data store.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The record
+lives inside the two mutation scripts, and the runner is the only Go caller; the source checks read
+the `.lua` files, so they hold the script surface rather than one call site. The rows marked
+`(integration)` need the real valkey and run in CI against it.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestT02FiftyDuplicateDeliveriesAreChargedOnce` (integration) | 50 concurrent deliveries of one key charging more than once, or a retry answered from the live balance rather than the record (T-02, DR-027) |
+| 2 | `TestT03AReusedKeyIsRefusedAndTheRecordSurvives` (integration), `TestAReusedKeyIsItsOwnRefusal` | A key reused for a different amount, feature or operation being applied a second time, or a refusal that damages the record already there (T-03, DR-028, INV-I2) |
+| 3 | `TestAMutationWithoutAnIdempotencyKeyNeverReachesTheStore` | A `consume` or `refund` with no key reaching the store, or a `check` being made to require one (DR-026) |
+| 4 | `TestThePropertyAReplayAppliesAtMostOnce` (integration) | Any amount, delivered any number of times across two runner instances, applied more than once — the guarantee is the store's, not a process's (DR-030) |
+| 5 | `TestTheRecordIsBoundedByTheTwentyFourHourWindow` (integration), `TestTheWindowIsTwentyFourHoursAndTheScriptsSaySo`, `TestThePinnedWindowMatchesTheScriptPackage` | A record whose TTL is not the pinned 24 hours, or a replay that extends the window it was first written under (DR-029) |
+| 6 | the `compose` CI job (`docker compose exec valkey valkey-cli config get maxmemory-policy`), as amended | A store that may discard a record inside the window (DR-048, ADR-0017; sizing measured by `IP-15`) |
+| 7 | `TestT02AReplayReportsTheRecordedStateNotTheLiveOne` (integration) | A replay reading the balance instead of the record, so a retry is visible to, or lies to, a caller (detection is `IP-11`'s) |
+| — | `TestTheFingerprintIsHexOfTheRightLength`, `TestTheFingerprintIsStable`, `TestTheFingerprintChangesWithEveryPartOfTheOperation`, `TestTheFingerprintCannotBeShiftedByTheContentsOfAField`, `TestTheFingerprintExcludesTheRequestId` | A fingerprint that is not stable, does not change with the operation, or can be shifted by the contents of a field — the injection the length prefix closes |
+| — | `TestTheMutationScriptsShareOneIdempotencyBlock`, `TestTheMutationScriptsLookUpTheRecordBeforeTheyRoll`, `TestCheckSendsOneKeyAndAnEmptyFingerprint` | Two mutation scripts that drift apart, a lookup that runs after a rollover, or a `check` given a record key it has no use for |
+| — | `TestTheRunnerSendsTwoKeysAndSevenValues`, `TestTheScriptsReadTheArgumentsTheRunnerSends`, `TestScriptsCallOnlyTheCommandsTheyNeed` | The scripts and the runner disagreeing about the keys, the argument order or the new `GET`/`SET`, which is the failure a silent `ARGV` shift produces |
+| — | `TestDecodeReadsEveryShapeAScriptCanAnswerWith`, `TestDecodeRefusesAnythingItDoesNotUnderstand`, `TestTheTwoNamedRefusalsAreRecognisable` | A `replayed` or `reused` reply read as a real one, or of the wrong arity, accepted as if it were state |
+
+Three things are recorded here because the phase surfaced them.
+
+- **The window is pinned in three places, and now asserted across all three.** The Go constant
+  `script.IdempotencyWindow`, the Lua `local DAY = 86400`, and `cmd/quotacore`'s hard refusal of a
+  different `QUOTACORE_IDEMPOTENCY_TTL`. A test links the first two, and the loader test plus
+  `TestThePinnedWindowMatchesTheScriptPackage` link the third, because a deployment that started
+  clean and then wrote records with a different lifetime than the one it validated would be a silent
+  wrong answer to a money question (DR-029).
+- **A test that reused a key across runs looked like a product bug.** The integration tests build
+  client keys from the test's name, and the record lives for 24 hours, so a second `go test` against
+  the same store replayed the first run's records and every charge-once assertion measured the wrong
+  run. The keys now carry a per-process nonce. The product was correct; the fixture was not, which is
+  the same trap [IP-03](#ip-03--cycle-engine-and-boundary-matrix), `IP-04` and
+  [IP-05](#ip-05--the-atomic-scripts) each recorded.
 
 **Exit criteria.** Duplicate delivery from any client, in any order, at any concurrency, charges
 once — and that is a property of the store, not of a process.
@@ -398,13 +903,19 @@ once — and that is a property of the store, not of a process.
 
 ## IP-07 — Data-plane endpoints
 
-**Status** `BLOCKED`, gated on `IP-05` and `IP-06`.
+**Status** `COMPLETE`, opened and closed 2026-10-19. All 8 DoD items are met; items 2 and 8 carry
+dated amendments, and the obligations `IP-04`, `IP-05` and `IP-06` deferred here are closed by the
+tests in the evidence table. Both dependencies, `IP-05` and `IP-06`, were `COMPLETE`; the row read
+`BLOCKED` until 2026-10-19, which was stale.
 
 **Objective.** The four runtime routes, with the request lifecycle the specification annotates, and
 with the codes and labels the catalogue assigns.
 
 **Scope.**
-- `POST /v1/consume`, `POST /v1/check`, `POST /v1/balance`, `POST /v1/refund`.
+- `POST /v1/consume`, `POST /v1/check`, `GET /v1/balance`, `POST /v1/refund`.
+  > **Amended 2026-10-19.** This line said `POST /v1/balance`. The contract,
+  > [api-conventions.md](../architecture/api-conventions.md) §7.3, request-lifecycle §2 and the error
+  > matrix all say `GET`, and the contract is frozen.
 - Authentication, scope checks, and `X-Request-Id` on every response.
 - `Idempotency-Key` handling, and the error envelope.
 - The metric labels the catalogue requires, including `outcome` and `feature_key`.
@@ -427,6 +938,18 @@ with the codes and labels the catalogue assigns.
    decrements of a balance of 100 succeed exactly 100 times.
 2. `check` mutates nothing, and a test asserts that the balance and the ledger count are identical
    before and after (DR-024).
+   > **Amended 2026-10-19 (`IP-07`) — a boundary, and the ledger half.** Inside a cycle a check
+   > changes nothing. Across a closed boundary it applies the transition any request applies, as
+   > [request-lifecycle.md](../architecture/request-lifecycle.md) §2 and `check.lua` specify, so the
+   > window it reports is current; it never deducts, records or emits. The call site is proved here:
+   > a check hands the event sink nothing. The `usage_events` rows are `IP-12`'s, in the form `IP-05`
+   > amended T-01 and T-08.
+   >
+   > **Amended 2026-10-20 (`IP-12`) — a check that rolls emits the rollover.** DR-042 and U-6 make a
+   > rollover an event, and a check can be the request that rolls; if it emitted nothing, the ledger
+   > would have no record of that boundary. So a check never deducts or records, and across a closed
+   > boundary it hands the sink exactly one `cycle_rolled_over` event, the one the transition it
+   > applied produced. Inside a cycle it still hands over nothing (DR-024).
 3. `GET /v1/balance` returns `cycle_start` and `cycle_end` as RFC 3339 instants with offsets, in the
    tenant's zone, and `cycle_end` is `null` for a `never` entitlement (INV-C6).
 4. `balance < amount` is `429 quota_exceeded`, and the service's own protective limit is
@@ -439,17 +962,71 @@ with the codes and labels the catalogue assigns.
 7. `quotacore_errors_total`'s `code` label set equals the catalogue's code set, asserted by a test.
 8. A runtime key cannot reach a control-plane route, and the rejection is `403 insufficient_scope`
    (NFR-S4).
+   > **Amended 2026-10-19 (`IP-07`) — the admin handlers are `IP-09`'s.** The `403` holds for every
+   > `/v1/admin/*` operation in the contract. An admin key reaching one is answered with a bare `404`
+   > until `IP-09` adds the handler, the bootstrap key and the revoke route. The revocation mechanism
+   > (the key cache's invalidation) is this phase's; its end-to-end test through the revoke route is
+   > `IP-09`'s.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The rows
+marked `(integration)` need real Postgres 16 and valkey and run in CI's `service` job; they live in
+`cmd/quotacore`, because the source checks keep every package under `internal/` except `internal/db`
+off the control plane, tests included.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestT01TwoHundredConsumesOverHTTP` (integration) | 200 concurrent consumes of 1 against 100 producing anything but 100 `200`s, 100 `429 quota_exceeded` each reporting `balance: 0`, and a final balance of 0, at 1, 2, 4, 8, 16 and 32 client connections (T-01) |
+| 2 | `TestCheckChangesNothingInsideACycle`, `TestCheckAcrossABoundaryOnlyRolls` (integration), as amended | A check, allowed or denied, that moves a hash field, the expiry, the count of idempotency records or the events handed to the sink; or one across a boundary that does more than roll |
+| 3 | `TestBalanceRendersTheCycleInTheTenantsZone` (integration) | `cycle_start`/`cycle_end` not RFC 3339 with the tenant's offset in UTC, `Europe/Berlin`, `America/New_York` and `Asia/Kolkata`, including a Berlin month whose ends differ in offset; or a `never` entitlement whose two fields are not both `null` (INV-C6) |
+| 4 | `TestQuotaExceededAndRateLimitedAreDistinct` (integration), `TestRateLimitIsPerKeyAndDistinct` | `quota_exceeded` with a `Retry-After` or without `details.cycle_end`, `rate_limited` without `Retry-After` and `retry_after_ms`, or a `rate_limited` that changed the balance (DR-040) |
+| 5 | `TestADeadDataStoreIs503WithinTheBound` (integration) | Through a TCP proxy: a store that never answers taking more than 250 ms server-side to become `503 service_unavailable`, or changing the balance; a lost reply leaving anything but the balance or one deduction, or a same-key retry that charges again |
+| 6 | `TestEveryResponseCarriesTheRequestId`, `TestEveryLogLineOfARequestCarriesItsId` | A response on any route without `X-Request-Id`, an envelope whose `request_id` differs, an invalid inbound id adopted, a log line without the id, or a token secret, `external_id` or `metadata` in the log (NFR-S10, DR-043) |
+| 7 | `TestErrorsTotalCodesAreTheCatalogue`, `TestStatusesAreTheCatalogues` | The `code` label set differing from error-catalog.md §2 or from the generated enum in either direction, or a status that is not the contract's |
+| 8 | `TestARuntimeKeyIsRefusedOnEveryControlPlaneRoute`, `TestAnAdminKeyWorksOnTheDataPlane` (integration), as amended | Any admin operation answering a runtime key with anything but `403 insufficient_scope`, or an admin key refused on the data plane (NFR-S4) |
+| — | `TestEndpointErrorMatrix` (integration) | A route answering a code its row of the endpoint × error matrix does not list; every reachable code is provoked at least once |
+| — | `TestT08EveryRefusalChangesNothing` (integration) | For every catalogue code reachable on the data plane, a refusal that moved the hash, the expiry, a record or an event (`IP-05` DoD 3). The admin-only codes are listed by name as `IP-09`'s |
+| — | `TestPostgresOutageSparesCachedTenants` (integration) | With Postgres cut, a cached tenant refused, an uncached one answered with anything but `503 control_plane_unavailable`, the pool wait rising, or no recovery (`IP-04` DoD 1) |
+| — | `TestT09KillDuringConsume` (integration) | A `SIGKILL` of the built binary at a random point of a consume of 30 against 100 leaving anything but 100 or 70, or a same-key retry on the next process that does not settle at 70; 200 kills in CI (`IP-05` DoD 4) |
+| — | `TestT10RestartChangesNothing` (integration) | A restart after a kill under traffic that changes any hash, expiry or record, including a hash whose window has closed (`IP-05` DoD 5) |
+| — | `TestAMissingBalanceIs503AndCounted` (integration) | An absent hash answered with anything but `503` on any of the four routes, or not counted (`IP-05` DoD 6) |
+| — | `TestT02FiftyDeliveriesOverHTTP` (integration) | Fifty concurrent uses of one key making more than one deduction, or a replay without `replayed: true` and `Idempotent-Replay: true` (`IP-06` DoD 1, 2, 3) |
+| — | `TestValidationAggregates`, `TestBodyAndMetadataCaps`, `TestGateRefusalsAndTheirOrder`, `TestScriptOutcomesBecomeResponses` | A request with several bad fields not named in one `validation_failed`, a float amount or unknown field accepted, an oversized body or metadata answered with the wrong code, or the gates refusing in another order |
+| — | `TestTokenParsingAndVerification`, `TestUnknownPrefixAndWrongSecretAreIndistinguishable`, `TestKeyCacheMissIsBounded`, `TestLastUsedIsBatchedAndAtMostOncePerMinute` | A malformed, revoked, expired or mislabelled key accepted, a timing difference between an unknown prefix and a wrong secret, an unbounded miss path, or `last_used_at` written on the request path (ADR-0018) |
+| — | `TestRevocationReachesTheCacheOffThePath` (integration), `TestTheFirstSightOfATenantIsBounded` | A revoked key accepted after the invalidation, or a cold `external_id` costing more than one limiter token |
+
+Five things are recorded here because the phase surfaced them.
+
+- **go-redis ignored the deadline the caller set.** `IP-04`'s client left `ContextTimeoutEnabled`
+  off, so a store that accepted and never answered held a request for go-redis's own read timeout,
+  five seconds, rather than `QUOTACORE_DATASCRIPT_TIMEOUT`. Item 5's test found it.
+- **The snapshot compared its version outside its lock.** The subscriber and the ticker both
+  reconcile, and the race detector caught the read under `TestT09KillDuringConsume`; an invalidation
+  could also lower the version a reconcile had just raised. Both writes are now monotonic under the
+  lock.
+- **Reloading a cached tenant on the same plan leaked a plan reference**, so evicting the tenant never
+  retired the plan or refunded its bytes. `TestReloadingATenantKeepsOnePlanReference` holds it.
+- **Concurrent first sights of one tenant or one key each spent a miss token**, so a burst of cold
+  traffic was refused by the limiter that bounds Postgres. Both miss paths now share one read per
+  identifier.
+- **`POST /v1/check` lists no `413`.** An oversized `metadata` on a check is `400 validation_failed`,
+  as the matrix row allows; the other two metered routes answer `413 payload_too_large`.
 
 **Exit criteria.** A customer can enforce against a running service, and every refusal names a
 remedy.
 
-**Deferred.** Nothing. The four routes are the product.
+**Deferred.** Nothing in scope. Counting `quotacore_rolled_over_total`,
+`quotacore_rollover_stale_total` and `quotacore_ceiling_violation_total`, and a `/readyz` that is true
+when enforcement can serve, are `IP-13`'s; the event queue behind the sink is `IP-12`'s.
 
 ---
 
 ## IP-08 — Control-plane schema and migrations
 
-**Status** `BLOCKED`, gated on `IP-02`.
+**Status** `COMPLETE`, started and closed 2026-10-19. `IP-02` closed on 2026-09-28 and nothing else
+gated this phase; the status was set to `IN PROGRESS` before any file the phase owns was written,
+which is what [AGENTS.md](../../AGENTS.md) requires, and was closed once all eight
+Definition-of-Done items were met, four of them amended with a dated note. The row read `BLOCKED`
+until the opening change, which was stale.
 
 **Objective.** The Postgres schema, applied by embedded up-only migrations, with the constraints
 that make misuse unrepresentable rather than merely discouraged.
@@ -462,6 +1039,10 @@ that make misuse unrepresentable rather than merely discouraged.
 - Enums, which must match the filter values in
   [api-conventions.md](../architecture/api-conventions.md).
 - Indexes for every documented query, and the sizing for the eviction question.
+  > **Amended 2026-10-19 — the eviction sizing is `IP-15`'s.** The eviction question (`Q-21`) was
+  > answered by [ADR-0017](../decisions/0017-noeviction-and-duplicate-reversal.md) and concerns the
+  > fast store; its floor is a projection [deployment.md](../architecture/deployment.md) §5 says is
+  > measured by `IP-15`. Postgres has no eviction question.
 
 **Specification references.**
 - [data-model.md](../architecture/data-model.md)
@@ -487,14 +1068,63 @@ that make misuse unrepresentable rather than merely discouraged.
    with a foreign key, and a test asserts the database rejects the second (DR-011).
 4. Deleting a plan referenced by a tenant is refused by a foreign key, and surfaced as
    `409 plan_in_use` (DR-035).
+   > **Amended 2026-10-19 — the `409` is `IP-09`'s.** This phase proves that `DeletePlan` refuses as
+   > `ErrPlanInUse`, carrying the catalogue code `plan_in_use`, including for a plan held only by a
+   > soft-deleted tenant. The status is applied by the route, and no v0.1 route deletes a plan yet:
+   > openapi has archive only. The obligation has a successor rather than a deletion.
 5. `unit` is immutable once an assignment exists, enforced by a constraint or a transaction, and a
    test asserts `409 feature_unit_immutable` (INV-F2).
+   > **Amended 2026-10-19 — the `409` is `IP-09`'s.** `SetFeatureUnit` locks the feature row and
+   > refuses as `ErrFeatureUnitImmutable` once an entitlement, an override or a usage event references
+   > it. `FeatureUpdate` in openapi omits `unit`, so a unit change on the wire is `400
+   > validation_failed` today; the route that reaches the `409` is `IP-09`'s to add or rule out.
 6. `audit_log` has no `UPDATE` or `DELETE` statement anywhere in the application, asserted by a
    source check (INV-U2, DR-044).
+   > **Amended 2026-10-19 — `usage_events` is held too, and retention is `IP-12`'s.** The check covers
+   > `UPDATE` and `DELETE` of `audit_log` and `usage_events`, `DELETE FROM api_keys`, a change to a
+   > feature's `key`, and any rule or trigger on the two append-only tables. DR-044 and NFR-C6 allow
+   > one bounded retention deletion; `IP-12` adds it by naming its one file in the check's allow-list,
+   > which is empty today, rather than by loosening the pattern.
 7. `external_id` is validated so that no personally identifiable information is required, accepted or
    stored, and `@` is rejected (NFR-S2, DR-034).
+   > **Amended 2026-10-19 — the boundary call is `IP-09`'s.** This phase supplies the `CHECK` and
+   > `ValidExternalID`, held to the same answer over one corpus, and the refusal never echoes the
+   > rejected value. Calling the validator on a request is the route's.
 8. Every enum value in the DDL is a value the API accepts and vice versa; the checker's schema
    check passes.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The rows
+marked `(integration)` need real Postgres 16 and run in CI's `service` job.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestMigrationsApplyFromEmpty`, `TestEveryPreviousVersionUpgradesToTheSameSchema`, `TestConcurrentStartsMigrateOnce`, `TestTheMigrationLockIsReleased`, `TestAnEditedMigrationRefusesToStart`, `TestAPreChecksumDatabaseIsRecordedOnFirstStart` (integration), `TestNoDownMigrationShips`, `TestUpOnlyIsStructural` | A migration set that fails from empty, an upgrade from any earlier version that ends in a different schema or loses rows, two replicas both migrating, an applied migration edited in place, or any down path in the files or the binary |
+| 2 | `TestTheSchemaIsTheDataModel` (integration) | Any difference between the migrated catalogue and the one built by running the `sql` blocks of [data-model.md](../architecture/data-model.md) §2, read at test time, into a second fresh database |
+| 3 | `TestASecondPlanIsUnrepresentable` (integration) | A second path from a tenant to a plan, a `NULL` plan, or a second row for one `external_id` accepted (DR-011) |
+| 4 | `TestDeletingAnAssignedPlanIsPlanInUse`, `TestDeletingAReferencedFeatureIsFeatureInUse` (integration), as amended | A plan held by an active or soft-deleted tenant, or a referenced feature, deleted, or refused with anything but its code, or a refusal that changed anything; and an unassigned plan with entitlements not deleting (DR-035, DR-016) |
+| 5 | `TestUnitIsImmutableOnceAssigned` (integration), as amended | A unit changed while an entitlement, an override or an orphaned usage event references the feature, or refused while nothing does (INV-F2) |
+| 6 | `TestNoAuditOrLedgerRowIsRewritten`, `TestTheRewriteMatcherCatchesWhatItMust`, as amended | A string literal in the module or a migration that rewrites the audit log or the ledger, or a matcher that passes by matching nothing (INV-U2, DR-044) |
+| 7 | `TestExternalIdCannotCarryPII`, `TestExternalIdValidatorAgreesWithTheConstraint` (integration), as amended | An `@`, an email, 129 characters, an empty string, a space or a non-ASCII letter stored; the validator, the `CHECK` and openapi's pattern disagreeing; or a refusal that echoes the value (NFR-S2, DR-034) |
+| 8 | `TestEveryEnumMatchesTheContract`, `TestEveryMigrationEnumHasAContractPair` (integration) | A `pg_enum` label, an `audit_log.subject_type` value or an api-conventions filter list that differs from the generated contract, or an enum with no contract pair |
+| — | `TestEveryConstraintIsClassified` (integration), `TestEveryClassifiedCodeIsInTheCatalogue`, `TestNonDatabaseErrorsAreNotRefusals`, `TestTheLedgerAndAuditConstraintsRefuseWhatTheyShould` | A constraint that reaches a caller as an unnamed driver error, a code that is not in the catalogue, a lost connection answered as a refusal, or a ledger or audit constraint that does not fire |
+| — | `TestPostgresLoaderProjectsATenant`, `TestPostgresLoaderTreatsDeletedAsUnknown`, `TestPostgresLoaderReadsTheVersionFirst`, `TestPostgresLoaderFailureIsNotUnknown` (integration), `TestPostgresLoaderIsOneQuery` | A loaded tenant that disagrees with its rows, a deleted tenant served (INV-T1), the version read after the rows, a failed read answered as an unknown tenant, or more than one round trip per miss (DR-039) |
+| — | `TestResolveOrderArchivedOverSuspendedOverInPlan`, extended | An archived feature on a suspended tenant resolving `suspended` (the `IP-04` defect below) |
+
+Four things are recorded here because the phase surfaced them.
+
+- **The planned race test for item 5 was not written, because it has nothing to refute.** The plan
+  proposed 200 concurrent pairs of "add an entitlement" and "change the unit", failing if both
+  commit. Both committing is correct when the unit change orders first, which the row lock allows,
+  so the test could not tell a defect from a valid order. The lock is what holds the property, and
+  `SetFeatureUnit` documents it.
+- **`TestTheMigrationLockIsReleased` holds half of what it was written for.** It asserts the lock is
+  released on the connection that took it. The `IP-01` code it replaced also passes it, because a
+  pooled unlock on another connection usually fails silently rather than visibly; the fix is
+  structural (the conn is pinned), and the test guards against it regressing.
+- **A usage event with a zero delta is refused by a `CHECK`, and whether a zero-amount consume
+  writes one is open.** `Q-22` records it with a default, for `IP-12`.
+- **Two catalogue codes cannot be reached on the wire yet.** `plan_in_use` has no deleting route and
+  `feature_unit_immutable` has no field to send; items 4 and 5 are amended to `IP-09` for that.
 
 **Exit criteria.** The schema is the specification's schema, and the constraints that matter are
 constraints rather than application logic.
@@ -505,13 +1135,25 @@ constraints rather than application logic.
 
 ## IP-09 — Control-plane API and API keys
 
-**Status** `BLOCKED`, gated on `IP-08`.
+**Status** `COMPLETE`, opened 2026-10-19 and closed 2026-10-20. `IP-08` closed on 2026-10-19 and
+nothing else gated this phase; the status was set to `IN PROGRESS` before any file the phase owns was
+written, and was closed once all nine Definition-of-Done items were met and the obligations earlier
+phases deferred here were closed by named tests.
 
 **Objective.** The administrative surface, with hashed scoped keys, audit in the same transaction,
 and no anonymous path after bootstrap.
 
 **Scope.**
 - Feature, plan, tenant, override, key, event-read, audit-read, status and health routes.
+  > **Amended 2026-10-19 (`IP-09`) — the line between this phase and `IP-10`.** The two scopes
+  > overlapped on most of the admin surface. This phase builds the resource surface: keys and the
+  > bootstrap key; features (list, create, get, update, archive, delete); plans (list, create, get,
+  > archive, delete); tenants (list, create, get, update of `display_name`, `timezone` and
+  > `metadata`, suspend, resume, delete); the audit and event reads; and status. Everything that
+  > moves a balance or a boundary is `IP-10`'s: the plan entitlement edit, apply-now, impact, a
+  > tenant's plan change, grant, set, force-rollover and both override routes. Tenant creation stays
+  > here because [data-model.md](../architecture/data-model.md) §3.2 names this phase as the writer
+  > that materialises the balance hash.
 - Key creation, listing and deletion, with the plaintext returned exactly once.
 - The audit write, inside the same transaction as the mutation it records.
 - Soft delete, archive, suspension and resumption.
@@ -550,6 +1192,48 @@ and no anonymous path after bootstrap.
 9. Concurrent edits to one control-plane resource produce `409 resource_version_conflict` rather
    than a lost write.
 
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The rows
+marked `(integration)` need real valkey and Postgres 16, live in `cmd/quotacore`, and run in CI's
+`service` job.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestNoKeyIsRecoverableAfterIssuance` (integration) | A token, its secret or the secret's bytes in any column of any table (read from `pg_catalog`, so a new column is covered), in the log output or in the `/metrics` exposition after a runtime and an admin key are issued through the API (NFR-S1) |
+| 2 | `TestTheSecretIsReturnedOnce` (integration), `TestOnlyKeyCreatedCarriesASecret` | A `key` field in any response but the create's, or a contract schema other than `KeyCreated` that could carry one (INV-K3) |
+| 3 | `TestRotationIsAnExplicitPair` (integration) | Issuing a second key changing the first; the first refused before it is revoked or accepted on the next request after; a second revoke auditing again; an unknown id answered with anything but `404 api_key_not_found` (INV-K1) |
+| 4 | `TestEveryMutationIsAuditedOnce`, `TestAnAbortedMutationLeavesNoAuditRow` (integration) | A mutating route writing no audit row, two, or one without the caller's key name and id, the response's `X-Request-Id`, `before`, `after` and the `reason` its route takes; or a commit failed after both inserts leaving the row, the resource or the audit row behind (DR-041, NFR-S5, INV-X3) |
+| 5 | `TestSuspensionDeniesAndPreservesState` (integration) | A suspended tenant served anything but `403 tenant_suspended`, suspension or resumption changing the hash, its expiry or the idempotency records, or a resumed tenant not continuing from its balance (DR-032, INV-T2) |
+| 6 | `TestArchivingAFeaturePreservesItsBalance` (integration) | An archived feature consumed, its hash or expiry changed, its balance unreadable on `GET /v1/balance`, a ledger row rewritten, or a second archive auditing again (DR-016, INV-F1) |
+| 7 | `TestBootstrapKeyIsIssuedOnceOnAnEmptyTable`, `TestBootstrapKeyIsIgnoredOnceKeysExist`, `TestConcurrentStartsBootstrapOnce`, `TestNoRouteCreatesTheBootstrapKey` (integration), `TestAMalformedBootstrapKeyRefusesToStart`, `TestLoadRefusesAnUnacknowledgedBootstrapKey`, and CI's two bootstrap steps | A bootstrap key inserted on a non-empty table or twice by two starting replicas, logged beyond its prefix, missing its `bootstrap` audit row, accepted when malformed or unacknowledged, or an API request writing an audit row whose actor is `bootstrap` (INV-K2, NFR-S9) |
+| 8 | `TestNoSecretOrBodyValueInAnyLogLine` (integration) | A log line carrying a key's secret, a display name, a metadata value, a refused identifier or an undeclared body value, or a log attribute named for any request field the contract defines (DR-043) |
+| 9 | `TestConcurrentEditsConflict` (integration) | Two writes with one `version` to a feature, a plan and a tenant both succeeding, the loser answered with anything but `409 resource_version_conflict` naming `current_version`, or the stored resource not the winner's with exactly one audit row (FS-12) |
+| — | `TestAnAdminKeyReachesEveryIP09Route` (integration) | An admin key refused on any of the 24 operations this phase serves, or any of `IP-10`'s eight answering anything but a bare `404` (`IP-07` item 8) |
+| — | `TestRotationIsAnExplicitPair`, `TestRevokeReachesASecondInstanceWithinTheBound` (integration) | A revoked key accepted on the serving instance's next request, or on a second instance after NFR-D3's second (`IP-07` item 8, K-2) |
+| — | `TestDeletingAnAssignedPlanIsPlanInUseOverHTTP`, `TestDeletingAReferencedFeatureIsFeatureInUseOverHTTP`, `TestChangingAReferencedUnitIsRefusedOverHTTP`, `TestTenantCreateRefusesPIIAtTheBoundary` (integration) | `IP-08` items 4, 5 and 7 on the wire: a held plan (by a soft-deleted tenant too) or a referenced feature deleted, a referenced unit changed, or an identifier from `IP-08`'s corpus stored or echoed in the body or the log |
+| — | `TestAdminEndpointErrorMatrix`, `TestT08EveryRefusalChangesNothing`, extended (integration) | An admin matrix code no request provokes, a refusal with a code its row does not list, or a refusal that changes a catalogue row, a tenant, a key or the audit log. `adminOnly` is deleted; the three codes only `IP-10` reaches are listed by name as `IP-10`'s |
+| — | `TestAdminRateLimitIsPerIPAndBeforeAuthentication` (integration), `TestTrustedProxiesDecideTheClientIP` | The admin limit counting anything but the client address, read after the credential, reaching the data plane, or believing an `X-Forwarded-For` from an untrusted peer or a hop a client prefixed |
+
+Four things are recorded here because the phase surfaced them.
+
+- **The contract's `timezone` pattern refused its own default.** `IP-02` wrote a pattern that
+  requires an `Area/Location` name, and the default and the commonest value, `UTC`, does not match
+  it; no route took a time zone until this one. The pattern now admits `UTC` and the three places
+  that carry it were regenerated.
+- **A revoke cannot wait for the key cache's reconcile.** The reconcile reads Postgres and can fail;
+  the revoke route evicts the key from the serving instance's cache itself, and the invalidation
+  carries it to the others.
+- **No v0.1 phase builds the rollover worker** that `Status.worker`, `QUOTACORE_WORKER_ENABLED` and
+  `Q-13` describe; status reports `stopped`. It is left unchanged here and named in the PR.
+- **`QUOTACORE_RATELIMIT_ADMIN_RPM`'s default of 60 assumes a human caller**, while ADR-0012 has the
+  customer's backend provisioning tenants through the admin API; a bulk onboarding may meet it.
+  `Q-18` defers bulk import, and the setting is the operator's.
+
+> **Amended 2026-10-20 — what this phase hands on.** The rows behind the events route are proved on
+> seeded rows; the writer is `IP-12`'s. `Status.worker`, `queue_depth` and `ledger_dropped_total`
+> report `stopped`, `0` and `0` until `IP-12` and `IP-13` fill them. Minting the bootstrap key is an
+> `openssl` recipe in [deployment.md](../architecture/deployment.md) until `IP-14`'s CLI has the
+> command INV-K2 names.
+
 **Exit criteria.** Every administrative action is attributable, and none of them is anonymous,
 unrecoverable or unaudited.
 
@@ -559,8 +1243,9 @@ unrecoverable or unaudited.
 
 ## IP-10 — Plan lifecycle and cycle-boundary semantics
 
-**Status** `BLOCKED`, gated on `IP-09` and on the `Q-01`, `Q-02`, `Q-04` and `Q-14` answers from
-`IP-00`.
+**Status** `COMPLETE`, opened and closed 2026-10-20. `IP-09` closed on 2026-10-20, and the `Q-01`,
+`Q-02`, `Q-04` and `Q-14` answers from `IP-00` are accepted, so nothing gated this phase. All 9 DoD
+items are met, each closed by a test in the evidence table below.
 
 **Objective.** The operations that change what a tenant is entitled to, each with the cycle
 semantics the specification fixes, and each answered by the rules `IP-00` produced.
@@ -569,6 +1254,11 @@ semantics the specification fixes, and each answered by the rules `IP-00` produc
 - Feature and plan create, edit, archive.
 - Plan apply, `apply-now` with its confirmation above the tenant count the `Q-04` answer sets.
 - Tenant create, plan assignment, plan change, grant, set, force-rollover.
+  > **Amended 2026-10-19 (`IP-09`).** Feature and plan create and archive, and tenant create, are
+  > `IP-09`'s. This phase keeps the plan entitlement edit (`PATCH /v1/admin/plans/{id}`), apply-now,
+  > impact, a tenant's plan change, grant, set, force-rollover and both override routes, and with
+  > them the three codes only those routes reach: `confirmation_required`, `grant_exceeds_ceiling`
+  > and `reset_not_supported`.
 - The plan-impact route from `Q-14`.
 
 **Specification references.**
@@ -593,6 +1283,9 @@ semantics the specification fixes, and each answered by the rules `IP-00` produc
    cycle.
 4. An override can never exceed the plan allowance unless it is a grant, and the step ordering that
    makes that true is asserted (DR-015, INV-TE1).
+   > **Amended 2026-10-20 (`IP-10`).** The item echoes DR-015's title, and it is read by the rule's
+   > body, which T-04 and INV-TE1 test: an override may set a limit above the plan's, and what it can
+   > never do is give a tenant a feature its plan does not. The rule is not edited.
 5. `apply-now` re-anchors, requires a reason, is audited, and above the tenant count the `Q-04`
    answer sets, returns `409 confirmation_required` with a token rather than re-anchoring
    everything at once.
@@ -604,6 +1297,66 @@ semantics the specification fixes, and each answered by the rules `IP-00` produc
 9. `T-06` passes for a plan applied across a service outage, so no tenant's transition is replayed
    or skipped.
 
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The rows
+marked `(integration)` need real valkey and Postgres 16, live in `cmd/quotacore`, and run in CI's
+`service` job. Windows are moved as `IP-07`'s boundary tests move them: a tenant is seeded with an
+anchor in the past and a stored window, so the real clock sits where the test needs it.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestPlanEditLandsAtEachTenantsOwnBoundary` (integration), with `IP-05`'s `TestT05TheTransitionIsMonotonic` unchanged | An edit changing any field or the expiry of an assigned tenant's hash; three tenants anchored across a month taking the new limit anywhere but at their own boundary; an interval edit moving an existing tenant's boundary; or a tenant created after the edit not getting the new limit and interval at once (DR-014, T-05, E-2, E-3) |
+| 2 | `TestAPlanChangeIsAHardReset` (integration) | After a change from a 1000-limit plan at balance 300 to a 500-limit plan: a balance other than 500, a window not starting at the change, a bonus left, an anchor that did not move forward, an override dropped, no `tenant.change_plan` audit row, no `plan_changed` event of +200 handed to the sink, or a second instance still serving a feature only the old plan had after NFR-D3's second (DR-013, UC-06, Q-01, Q-02, INV-T3) |
+| 3 | `TestAGrantIsCycleScoped` (integration) | A grant's bonus or balance surviving a plan change, or the next natural boundary (DR-020, Q-01, INV-C5) |
+| 4 | `TestAnOverrideCannotAddAFeature` (integration), `TestResolutionPutsMembershipBeforeTheOverride` | An override accepted for a feature outside the plan; one above the plan's limit refused; one on a feature the plan later drops enforcing past the retirement boundary instead of `403 feature_not_in_plan`. The unit test runs the resolution over every combination of archived, suspended, pinned, retired, overridden and listed (DR-015, INV-TE1) |
+| 5 | `TestApplyNowReanchorsAndIsAudited`, `TestT12WideApplyNeedsAConfirmation` (integration) | An apply without a reason accepted; a tenant not re-anchored or re-anchored twice; no `plan.apply_now` row with the reason; and every T-12 case: a `409` that re-anchored anything or wrote an audit row, a count or earliest end that is not the computed one, a confirmed apply refused, a reused, expired, other-plan, other-reason or old-version token honoured, a token honoured after the count grew, and a plan with exactly the threshold refused (DR-046, P-3, INV-P2, INV-P4) |
+| 6 | `TestImpactChangesNothing` (integration) | Twelve tenants over three months not answering 12 and the earliest of their boundaries; a `never`-only plan not answering null; or any change to the plan version, an anchor, a pin, the audit count or the fast store's keys, a `qc:admin:cnf:*` key included (UC-19, Q-14) |
+| 7 | `TestAbsentIsNotZero` (integration) | An absent feature answered with anything but `403 feature_not_in_plan` or listed by the balance route; a `0`-limit feature answered with anything but `429 quota_exceeded` and `balance: 0` on consume, `allowed: false` on check, or missing from the balance route; both again after a feature is added to the plan (absent for an existing tenant, present for a new one) and after one is removed (present until the boundary, absent after) (DR-012, E-1, E-4, INV-E1) |
+| 8 | `TestArchivingAPlanChangesNoTenant` (integration) | An archive changing an assigned tenant's hash, expiry, anchor or pins, a tenant on the archived plan refused on the data plane, or a plan change to the archived plan accepted (INV-P1, P-4) |
+| 9 | `TestT06PlanAppliedAcrossAnOutage` (integration) | An edit followed by an idle of 1 hour, 1 day, 31 days, 97 days, 400 days or 4 years producing anything but one transition, to the current window, at the new limit; and for a plan change and an apply-now committed while the fast store is unreachable: a hash moved before the store returns, a pending row lost, a tenant re-anchored twice when two instances drain together, or a restart changing the drained state (DR-009) |
+| — | `TestAnAdminKeyReachesEveryAdminRoute` (integration) | An admin key refused on any of the 32 admin operations, or any of them answering a bare `404` (`IP-09`'s scope amendment, `IP-07` item 8) |
+| — | `TestAdminEndpointErrorMatrix`, `TestT08EveryRefusalChangesNothing`, `TestEndpointErrorMatrix` (integration) | A catalogue code no request provokes, `confirmation_required`, `grant_exceeds_ceiling` and `reset_not_supported` included; a refusal with a code its row does not list; or a refusal that changes a catalogue row, a tenant, its pins or pending re-anchors, a key, the audit log, or any of the tenants' keys in the fast store. The confirmation token is the one write a refusal makes. `ip10Ops` and `ip10Only` are deleted |
+| — | `TestTheSixScriptsShareOneTransitionBlock`, `TestTheControlScriptsKeepTheSourceRules`, `TestTheControlScriptsReadTheArgumentsTheRunnerSends`, `TestLoadNamesAllEightScripts` | A control-plane script that rolls a window differently from consume (INV-C2), calls outside the data plane's command list, reads fewer arguments than its runner sends, or is not loaded |
+| — | `TestCacheSharesInternedPins`, `TestLoadReadsThePlanLifecycleKeys` | Each cached tenant holding its own copy of a pin set its plan's tenants share; the threshold or the token's lifetime not read, or a refresh interval of an hour or more accepted |
+
+> **Amended 2026-10-20 — what this phase hands on.** The `granted`, `set`, `plan_changed` and
+> `force_rolled_over` events are handed to the sink here; the queue and the writer are `IP-12`'s, as
+> for consume and refund. A re-anchor restarts the index at 0 and force-rollover can lower it, so a
+> cycle is identified by the anchor and the index together, which the reconciler must know
+> (`IP-11`, `IP-12`). The drain logs each chunk; a gauge of pending re-anchors and its alert are
+> `IP-13`'s. `quotacore apply`, `impact` and the override commands wrap these routes in `IP-14`. An
+> idempotency key on grant, a negative balance (`Q-23`) and an impact that previews an unsaved edit
+> are recorded with defaults and are not v0.1.
+
+Seven things are recorded here because the phase surfaced them.
+
+- **A re-anchor that finds no hash hands over no event.** The rewrite writes the new window, but
+  with nothing stored there is no balance to discard, so no `plan_changed` event is enqueued and
+  nothing is logged.
+- **The events of a re-anchor are enqueued before the pending row's delete commits.** A rollback
+  after the rewrite leaves a row whose next drain finds every hash already under the new anchor and
+  hands over nothing a second time.
+- **A retired pin whose window has closed is deleted** when the plan takes its feature back, or at
+  the tenant's next re-anchor; while it stands it holds its feature against deletion as an
+  entitlement does.
+- **S3's nudge off an old boundary was dropped.** A new anchor is the request's instant or the old
+  one plus a millisecond, whichever is later. The drain's guard matches a stored window by its index
+  and its start together, and an anchor that moved forward puts no index's boundary where the old
+  anchor put the same index's, so a new anchor that lands on an old boundary is not mistaken for
+  one already written.
+- **An immediate override rewrites the hash's limit and emits no ledger event**, because no balance
+  moves; the limit is read back from the audit row.
+  > **Amended 2026-10-20 (`IP-12`).** The balance does move, by the change in limit (D6), and
+  > `IP-12` writes the move as `plan_changed` (`Q-24`).
+- **Impact's `503` is the control plane's only.** It reads Postgres and nothing else, so its
+  matrix row lists `control_plane_unavailable` and no longer `service_unavailable`, and it refuses a
+  query parameter rather than read one as a preview it does not compute.
+- **No resolution benchmark exists**, so the plan's comparison of the request path against `dev`
+  was not run; the resolution adds a map read per request and no I/O.
+
+Found in passing and not this phase's, left unchanged and named in the PR: no v0.1 phase builds the
+rollover worker (`IP-09` recorded it), so an idle tenant still rolls only on its next request, and
+the re-anchor drain is not that worker and emits no rollover event.
+
 **Exit criteria.** An operator can change an entitlement and can predict, before committing, which
 tenants it affects.
 
@@ -614,7 +1367,10 @@ separate phases.
 
 ## IP-11 — Idempotency detection and reconciliation
 
-**Status** `BLOCKED`, gated on `IP-07` and `IP-12`.
+**Status** `COMPLETE`, opened and closed 2026-10-20. `IP-07` closed on 2026-10-19 and `IP-12` on
+2026-10-20, so nothing gated this phase. All 6 DoD items are met, each closed by a test in the
+evidence table below; items 3, 5 and 6 carry a dated note on how they divide with `IP-15`'s restore
+drill.
 
 **Objective.** The control plane's half of the idempotency claim: notice when a data-plane record
 and the ledger disagree, rather than preventing it again.
@@ -649,6 +1405,41 @@ and the ledger disagree, rather than preventing it again.
    reconstructed matches exactly. Accuracy in both directions, not just in the happy one.
 6. No tenant is granted a full allowance by any path at any point during a rebuild (DR-045). This is
    the assertion the restore drill exists for, and it is the one most likely to be weakened.
+   > **Amended 2026-10-20 (`IP-11`) — items 3, 5 and 6 are steps 5 and 6 of the restore drill.**
+   > The same properties are `IP-15` DoD 5. This phase proves each against the real code, in
+   > `cmd/quotacore`'s integration suite, with `quotacore rebuild` called as the binary calls it and
+   > the fleet as in-process instances on one database; `IP-15` runs the drill nightly against the
+   > Compose stack with the real binary. Neither weakens the other's assertion.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The rows
+marked `(integration)` need real valkey and Postgres 16 and run in CI's `service` job; the ones in
+`cmd/quotacore` read the rows the real writer appended, after a flush of the sink, and never poll
+with a consume.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestT11EveryCycleReconcilesAndAMismatchIsReported` (integration), `TestTheIdentityHoldsInAnyOrderTheRowsChain`, `TestAForceRolloverReopensItsCycle`, `TestAReanchorStartsACycleAtIndexZero`, `TestACycleWithNoOpeningRowOpensAtTheLimit`, `TestAClosedCycleChainsToTheNextOpening`, `TestALastRowWithNoWindowIsNamed`, with `TestTheLedgerReconcilesEveryCycle` (integration) moved onto the verifier | Over six tenants in three zones and 600 seeded operations: any finding from `verify-all` or the pass. Then an event dropped mid-cycle, at the end of a closed cycle and at the end of the open one, a `balance_after` altered in place and a hash balance altered in the store: any of the five not found under its own kind and tenant-feature, found twice, counted other than once in `quotacore_event_reconcile_mismatch_total`, or any balance corrected (DR-042, INV-C4, T-11) |
+| 2 | `TestAMutationWithNoLedgerEventIsDetected` (integration), `TestDetectionNeverPrevents` (integration), `TestTheReconcilerCannotMoveABalance`, `TestADuplicateDeductionIsReversedOnce` (integration), `TestAReversalSurvivesACrashBetweenItsHalves` (integration), `TestADuplicateRefundIsReferredNotReversed` (integration) | A consume whose event never reached the ledger not confirmed, recorded and counted once; an event still queued in a stalled writer reported; the pass beside T-02's fifty deliveries charging twice or moving a balance; the reconciler importing a store, script, data-plane or SQL package; a duplicate deduction reversed other than once, or again after a crash between the refund and its record; a duplicate refund answered with a charge (DR-030, DR-049, IP-06 item 7) |
+| 3 | `TestReadOnlyRefusesEveryTenantWrite` (integration), `TestTheRebuildRunsReadOnlyThroughout` (integration), `TestTheGuardRefusesEveryTenantWrite` | Any of eleven routes that can write a tenant key answered other than `503 service_unavailable` by a read-only instance, or any key, value or expiry changed; status or readiness not saying so; the pass or retention running; a rebuild starting beside a normal instance, a normal instance starting beside a rebuild, or an instance that lost its fence still writing after the rebuild's grace; any script or `Provision` reaching the store from a read-only process (D5, D6) |
+| 4 | `TestADisputedDeductionIsAnsweredFromTheLedgerAndAudit` (integration), `TestT14AStoreLossInsideTheWindowIsReversedOnce` (integration) | With the store gone: the key filter not returning the original, the duplicate and its reversal; the history not chaining row to row or not ending at the balance the store held; an administrative row without exactly one audit row under its request; answering the dispute writing a key. T-14's retry inside the window not reversed exactly once (UC-16, DR-048, DR-049, consistency-and-recovery §4.6) |
+| 5 | `TestTheRebuildIsAccurateInBothDirections` (integration), `TestTheRebuildReadsTheSixFieldsFromTheLastCycle`, `TestTheRebuildKeepsAnUntouchedCycle`, `TestALossOrARejectedEventIsNeverExact`, `TestRetentionBoundsWhatIsExact`, `TestAFeatureWithNoRowsOpensAtItsLimit`, `TestAPresentHashIsVerifiedNotRewritten` | After a store loss: a flagged tenant-feature that was not faulty, a faulty one not flagged, a written hash differing from the lost one in any of six fields or carrying an expiry, a flagged one written, or an unreconcilable one with no finding. A crashed writer's session not making the cycles it covers unverified; a `never` feature older than retention called exact (D7, D8, S9) |
+| 6 | `TestNoPathGrantsAFullAllowanceDuringARebuild` (integration) | While a read-only fleet serves and a rebuild runs: any sample of a tenant key above its balance before the loss, a flagged hash appearing by any route or job, a second concurrent rebuild writing, or the surviving hash rewritten; then `--accept` or `--set` writing other than its one tenant-feature, unaudited, or a `--set` breaking the cycle's reconciliation (DR-045, testing-strategy §9 step 6) |
+| — | `TestLoadReadsTheReconciliationKeys`, `TestTheRebuildFlagsAreRead`, `TestLoadNamesAllNineScripts`, `TestTheControlScriptsReadTheArgumentsTheRunnerSends` | A reconciliation key or rebuild flag not read, or a write without `--reason` accepted; `rebuild.lua` not loaded or not sent the arguments it reads (S1, D7) |
+
+Three things are recorded here because the phase surfaced them.
+
+- **`TestTheLedgerReconcilesEveryCycle` was flaky.** Its seeded checks could meet the bounded-miss
+  limiter and be answered `503`, which the test read as a failure. Its checks now retry a `503` for
+  up to five seconds, and the workload it seeds is shared with T-11.
+- **Balance hashes expired.** An idle tenant's hash could expire and be re-provisioned at the full
+  limit, which DR-045 forbids. The fix shipped first, on its own (PR #7), and balance hashes no
+  longer expire.
+
+- **Two earlier tests failed when every package ran at once.** `go test ./...` runs the packages in
+  parallel against one store, and this phase's suite is long enough to overlap them.
+  `TestConfigNamespaceAndInvalidationRoundTrip` (`IP-04`) read a config version the stacks bump, and
+  now keeps its keys in a database of its own; `TestTheScriptsWorkIsNotProportionalToTheTenant`
+  (`IP-05`) now takes the fastest of 21 timings rather than the median of 11.
 
 **Exit criteria.** A customer disputing a deduction gets an answer from the ledger, and the
 reconciliation says which tenants cannot be answered.
@@ -659,7 +1450,9 @@ reconciliation says which tenants cannot be answered.
 
 ## IP-12 — Usage ledger, writer and archiver
 
-**Status** `BLOCKED`, gated on `IP-08`.
+**Status** `COMPLETE`, opened and closed 2026-10-20. `IP-08` closed on 2026-10-19 and nothing else
+gated this phase. All 8 DoD items are met, each closed by a test in the evidence table below; items
+3, 4, 7 and 8 carry dated notes reading the invariants they cite for the ledger writer.
 
 **Objective.** One signed event per applied mutation, written off the request path, retained by
 policy, and never able to slow enforcement down.
@@ -693,24 +1486,94 @@ policy, and never able to slow enforcement down.
 4. Duplicate delivery is possible by design and every payload carries an `event_id` for the consumer
    to deduplicate on; a test delivers each event twice and asserts the consumer's result is
    unchanged (INV-W1).
+   > **Amended 2026-10-20 (`IP-12`) — items 3 and 4 cite webhook invariants.** INV-W1 and INV-W2 are
+   > v0.3 webhook delivery's ([state-machines.md](../product/state-machines.md) §10). They are read
+   > for the ledger here — an enqueue that never blocks, and an `event_id` the consumer deduplicates
+   > on, where the first consumer is the ledger table itself — and stay `IP-21`–`IP-23`'s as written.
 5. A dead-lettered event is visible and replayable, never silently dropped (INV-U3).
 6. Retention is applied by a background job on a configured schedule, and the job is what removes
    rows (DR-044, NFR-C6). No API call deletes an event.
 7. The writer holds a runtime-scoped credential and has no direct database access (INV-WK2).
+   > **Amended 2026-10-20 (`IP-12`) — INV-WK2 is the reset worker's.** A ledger writer is the
+   > component that appends to Postgres (ADR-0016), so it cannot have no database access.
+   > [security-model.md](../architecture/security-model.md) §2 states the writer's own rule in the
+   > same sentence as INV-WK2: it appends and cannot mutate balances. The item is closed by that rule,
+   > as a source check: the writer's package imports no data-store, script or SQL package, and its SQL
+   > only inserts into `usage_events`. INV-WK2 is not changed.
 8. Deleting or stalling the writer, or running it twice, changes no enforcement outcome
    (INV-WK1).
+   > **Amended 2026-10-20 (`IP-12`).** INV-WK1 is the reset worker's too, and its property is read
+   > for the writer: stopped, stalled, or running in two instances against one database, it changes
+   > no enforcement outcome and writes no row twice.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The rows
+marked `(integration)` need real valkey and Postgres 16 and run in CI's `service` job; the ones in
+`cmd/quotacore` read the rows the real writer appended, after a flush of the sink, and never poll
+with a request.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestEveryAppliedMutationAppendsOneEvent` (integration), `TestTheSinkRefusesAZeroDelta` (integration), `TestTheLedgerAppendsWhatItIsGivenOnce` (integration), with `IP-08`'s `TestTheLedgerAndAuditConstraintsRefuseWhatTheyShould` | U-1 to U-7 through their routes, and U-6 through a consume, a refund refused at the ceiling, a check, a grant and a set that each cross a boundary: no row, two rows, or a row whose type, source, delta, `balance_after`, window, request id, idempotency key or instant is not the operation's; a zero-amount consume, a `set` to the current value or a rollover with nothing consumed writing a row; a zero delta queued by the sink (INV-U1, INV-X2, DR-042, Q-22) |
+| 2 | `TestTheLedgerReconcilesEveryCycle` (integration), `TestAnImmediateOverrideIsWrittenAsAPlanChange` (integration) | Over four tenants on hourly, monthly and `never` features, 300 seeded random consumes, refunds, checks, grants, sets, force-rollovers, plan changes, an apply-now and boundary crossings: a cycle whose last `balance_after` is not its last opening plus the deltas after it, or a current cycle that does not end at the hash's balance; an immediate override's balance move missing from the ledger (D1, DR-042, data-model §2.7, Q-24) |
+| 3 | `TestLedgerSaturationLeavesEnforcementAlone` (integration), `TestEnqueueNeverBlocks`, `TestAnEnqueueOnAFullQueueIsCheap` | With the writer stalled behind an `ACCESS EXCLUSIVE` lock and a queue of 64: any of 2 000 consumes answered other than with the balance a ledger-less run gives, `queue_full` drops not equal to the overflow, a depth other than the cap, or a p99 more than 50 % plus 2 ms above the unlocked runs'. An `Enqueue` on a full queue that blocks, allocates, or takes more than 50 µs at p99 over 100 000 calls (FS-10) |
+| 4 | `TestEveryEventIsWrittenOnceWhenDeliveredTwice` (integration), `TestTheWriterRetriesATransientFailure` | Each event delivered twice in one batch, again in a second batch, and again after a commit whose acknowledgement was lost: a row count other than the distinct events, a dead letter, or a duplicate counted (D2) |
+| 5 | `TestADeadLetterIsVisibleAndReplayed` (integration), `TestARejectedEventIsKeptAndReplayed` (integration), `TestAPermanentFailureIsBisectedToItsRow` | An event naming no feature and a second deduction under one key: either written, lost, or missing from the dead letters with its reason, its counter, its gauge or a log line naming its `event_id`; the rejected one not replayed exactly once after the feature exists, or the duplicate ever replayed (INV-U3, D6) |
+| 6 | `TestRetentionRemovesOnlyExpiredRows` (integration), `TestNoRouteReachesRetention`, `TestNoAuditOrLedgerRowIsRewritten` | Rows at 89, 91, 399, 401 and 402 days: a tick deleting a younger row or keeping an older one, a batch above its size, two instances deleting twice, a `0` deleting anything, or a delete before the first tick; any caller of the job outside its start in `cmd/quotacore`; a deletion from the two tables in any file but `retention.go` (DR-044, NFR-C6, INV-U2) |
+| 7 | `TestTheWriterCanOnlyAppend` | `internal/ledger` importing a data-store, script, `internal/db` or SQL package, or `internal/db/ledger.go` saying anything but an insert into the two ledger tables, the replay's removal and re-count of a dead letter, and reads (D5, security-model §2) |
+| 8 | `TestTheWriterIsAnOptimisation` (integration), `TestShutdownWritesWhatIsQueued`, `TestACancelledWriterCountsWhatItLeaves` | A fixed sequence of consumes, refunds, checks, grants and a boundary crossing answered differently, or leaving different balances, with the writer healthy, never started, stalled, or in two instances on one database; two instances writing a row twice; a shutdown that loses a queued event uncounted |
+| — | `TestStatusReportsTheLedger` (integration) | `Status.worker`, `queue_depth` and `ledger_dropped_total` not reporting `running`, a full queue and its drops under a stall, `draining` during a shutdown and `stopped` after it (`IP-09` hand-on, D8) |
+| — | `TestListUsageEventsReadsWhatTheWriterWrote` (integration) | The events route over writer-produced rows rendering a window the anchor does not compute, a non-null window for a row stored against another start (S5), or for a row an older anchor defined (`IP-09` hand-on) |
+| — | `TestAnIdleTenantRollsOnceAndEmitsOneEvent` (integration) | A tenant idle across three boundaries granted more than one allowance, or the ledger gaining other than one `cycle_rolled_over` whose index jumps by three (v0.1 exit criterion) |
+| — | `TestCheckAcrossABoundaryOnlyRolls`, `TestCheckChangesNothingInsideACycle`, `TestT01TwoHundredConsumesOverHTTP`, `TestT02FiftyDeliveriesOverHTTP`, `TestT08EveryRefusalChangesNothing`, `TestAdminEndpointErrorMatrix`, `TestAPlanChangeIsAHardReset` (integration) | The obligations `IP-05`, `IP-06`, `IP-07` and `IP-10` handed here, against real rows: a check writing a row inside a cycle or other than one rollover across a boundary; T-01's rows other than 100 summing to −100; T-02's other than one; any refusal, data plane or admin, writing a row or a dead letter; the plan change's `+200` missing |
+| — | `TestDecodeReadsEveryShapeAScriptCanAnswerWith`, `TestDecodeRefusesAnythingItDoesNotUnderstand`, `TestT06MissedBoundariesSkippedIsNotMissed`, `TestOnlyOneOfManyConcurrentCallersRollsTheCycle`, `TestTheSixScriptsShareOneTransitionBlock` | The closed balance missing from a roll, present on a replay or on a transition that rolled nothing, or reported by more than the one caller that rolled (D3) |
+| — | `TestTheWriterKeepsUpWithTheFloor` (integration), `TestLoadReadsTheLedgerKeys` | Fewer than 1 000 appends a second over 20 000 events (S9, the measured figure is `IP-16`'s); a ledger setting not read, or one the writer cannot run with accepted (S8) |
+
+Six things are recorded here because the phase surfaced them.
+
+- **A consume of zero answered `503`.** consume.lua passed `-amount` to `HINCRBY`, and Lua renders
+  the negation of zero as `-0`, which Redis refuses as not an integer, so DR-023's valid zero-amount
+  request failed as a store fault. The increment is now formatted as an integer. No test before
+  this phase sent a zero consume through the route.
+- **An immediate override moved a balance with no event.** `IP-10`'s relimit applies the change in
+  limit to the balance (D6) and discarded the script's answer, and its section records that no
+  balance moves. The move is now written as `plan_changed`, the closest type the frozen contract
+  has, and `Q-24` records the default.
+- **A force-rollover reopens the cycle it is in.** It refills the computed current window, so its
+  row shares that cycle's identity with the rows before it; the reconciliation identity reads from a
+  cycle's last opening (data-model §2.7, as amended).
+- **The replay updates its dead letter.** A replay that fails again raises the row's `attempts`, so
+  the appender's SQL includes an `UPDATE` of `usage_event_dead_letters`; it never updates
+  `usage_events`, and `TestTheWriterCanOnlyAppend` allows exactly that.
+- **A lost acknowledgement under-counts `event_written_total`.** A batch whose commit succeeded and
+  whose answer was lost is retried and found present, so the rows are right and the counter reads
+  what the writer could know.
+- **No request-path benchmark exists**, so the plan's `make bench` against `dev` was not run; the
+  request path gains one non-blocking channel send, and DoD 3's test compares its latency directly.
+
+Found in passing and not this phase's, left unchanged and named in the PR: no v0.1 phase builds the
+reset worker that mvp-scope §2's cycle-control row, `Q-13`, `QUOTACORE_WORKER_ENABLED` and `IP-14`'s
+`quotacore worker` describe, so an idle tenant still rolls only on its next request.
 
 **Exit criteria.** The ledger is a best record of what happened, not a dependency of whether it
 happened.
 
 **Deferred.** Export to an external sink beyond the configured file or stream, and webhooks
 (`IP-21`–`IP-23`).
+> **Amended 2026-10-20 (`IP-12`).** v0.1 has no file or stream sink and no replica:
+> [mvp-scope.md](../product/mvp-scope.md) §4c makes the ledger table the interface, and `Q-20` is
+> answered by a documented export query. Every external sink is deferred.
 
 ---
 
 ## IP-13 — Observability
 
-**Status** `BLOCKED`, gated on `IP-07`.
+**Status** `COMPLETE`, opened 2026-10-21 and closed 2026-10-29, when item 7's review row was filled
+in: Claude followed every runbook on the reference stack with each fault injected, and the owner
+approved the report. Before that: `IP-07` closed on 2026-10-19 and nothing else gates
+this phase. Items 1 to 6 and 8 are met, each closed by a test in the evidence table below; item 7
+waits on its review by a person who did not write the runbooks, recorded in
+[the runbooks' review table](../runbooks/README.md#review), and the phase closes when that row is
+filled in.
 
 **Objective.** Every metric, log and probe the specification names, with cardinality that stays
 bounded and alerts that name a runbook.
@@ -731,6 +1594,10 @@ bounded and alerts that name a runbook.
   as alerts
 - [SECURITY.md](../../SECURITY.md) §2.1, what is never logged
 
+  > **Amended 2026-10-21 (`IP-13`).** SECURITY.md has no §2.1; the table of what is never logged is
+  > [observability.md](../architecture/observability.md#21-what-is-never-logged) §2.1, with
+  > SECURITY.md §4.3 and §4.4.
+
 **Dependencies.** Blocked by `IP-07`. Blocks `IP-15`.
 
 **Definition of Done.**
@@ -742,15 +1609,53 @@ bounded and alerts that name a runbook.
    `external_id` is not a label (NFR-O2).
 4. Every log line is JSON, carries the request's `X-Request-Id`, and contains no personally
    identifiable information and no secret (NFR-O3, NFR-O6, DR-043).
+   > **Amended 2026-10-21 (`IP-13`).** A line no request caused carries a `job` instead of a request
+   > id, as NFR-S10's note reads it; the item is proved for the default `QUOTACORE_LOG_FORMAT=json`,
+   > and `text` stays for a person at a terminal.
 5. `/healthz` and `/readyz` answer differently and correctly: liveness survives a data-store outage,
    readiness does not, because a service that cannot enforce is not ready.
 6. Alerts exist for the three conditions the specification calls P0 or P1: `rollover_stale_total`,
    `balance_key_missing_total` and `ceiling_violation_total`, each naming the runbook that answers
    it.
+   > **Amended 2026-10-21 (`IP-13`).** These three are a subset: observability.md §5 alerts on eleven
+   > P0 and P1 conditions and says each names a runbook, so every §5 row with a signal is a rule in
+   > `ops/alerts/quotacore.rules.yml`.
 7. Every runbook is followable by a person who did not write it. Reviewed by someone else, which is
    the only test that exists for a runbook.
 8. The process runs unprivileged, on a non-root port, with a read-only filesystem outside its data
    volumes (NFR-S6).
+   > **Amended 2026-10-21 (`IP-13`) — the process half.** No image exists before `IP-15`. This phase
+   > proves the binary needs nothing an image would have to grant: it refuses a port below 1024,
+   > writes no file, warns as uid 0, and runs from a read-only directory. `IP-15` item 10 keeps the
+   > image half.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The rows
+marked `(integration)` need real valkey and Postgres 16 and run in CI's `service` job; CI's `docs`
+job runs `promtool check rules` and `promtool test rules` against the rules file.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestEveryDocumentedMetricIsRegistered`, `TestEveryDocumentedMetricIsServed` (integration), `TestTheCatalogueParserReadsLabelsAndValues`, `TestTheBuildAndProcessSeries` | A §1 family or label missing from the registry or the scrape, or one served that §1 does not name, in either direction |
+| 2 | `TestTheServedCodeLabelsAreTheCatalogue` (integration) | A `code` value served that the catalogue lacks, or a catalogue code with no series |
+| 3 | `TestCardinalityIsIndependentOfTenantCount` (integration), `TestNoLabelValueIsCustomerData` (integration) | The series count changing between 50 and 2,000 tenants, or a canary `external_id`, name or metadata value in any label |
+| 4 | `TestEveryLogLineIsJSONWithItsRequestId` (integration), `TestNoLogLineCarriesCustomerDataOrASecret` (integration), `TestEveryLogCallUsesAnAllowedKey`, `TestTheBinaryLogsJSONBeforeItsConfiguration` (integration) | A line that is not one JSON object, a request line without its id or with another's, a background line without its `job`, a canary or secret anywhere in the output, or a call site using a key off the allow-list |
+| 5 | `TestTheProbesAnswerTheContract`, `TestAFreshInstallIsReady` (integration), `TestReadinessFollowsTheDataStore` (integration), `TestReadinessIgnoresAPostgresOutage` (integration), `TestReadinessRefusesReadOnlyAndTheFence` (integration), `TestReadinessDuringADrain` (integration), `TestLivenessIgnoresEveryDependency` (integration) | Liveness failing on any dependency or while draining, readiness surviving a store outage, a read-only mode or a held fence, or failing on a Postgres outage or an empty install |
+| 6 | `TestEveryAlertIsTheDocumentsAndNamesARunbook`, `TestEveryAlertReadsAServedMetric` (integration), `TestEveryRunbookIsFollowable`, promtool | A rule without a §5 row or the reverse, a severity that differs, an expression naming a metric §1 lacks or the stack does not serve, a P0 or P1 without a runbook anchor that exists, or an alert that never fires on its condition |
+| 7 | `TestEveryRunbookIsFollowable`, and a person's review | A runbook missing a heading, naming a command the binary lacks or a route the contract lacks; the review is the only test that the steps work |
+| 8 | `TestAPrivilegedPortIsRefused`, `TestTheServerWritesNoFile`, `TestTheBinaryRunsOnAReadOnlyFilesystem` (integration) | A port below 1024 accepted, a server code path that writes a file, or the built binary failing to become ready from a read-only directory |
+| — | `TestRolledOverCountsEveryTransitionOnce`, `TestAStaleTransitionIsCountedAndABoundaryRaceIsNot`, `TestACeilingViolationIsCounted`, `TestTheStoreMetricsFollowAnOutage`, `TestControlPlaneUpFollowsPostgres`, `TestTheScriptCacheCountsAReload`, `TestEveryRequestIsCountedOnce`, `TestReanchorsPendingFollowsTheTable`, `TestStatusAgreesWithTheMetrics` (all integration), `TestTheStoreErrorClasses`, `TestTheAPIListenerDoesNotServeMetrics`, `TestAnUnknownMethodIsNotALabel` | A metric that is registered and served but does not move with what it measures |
+
+Three things are recorded here because the phase surfaced them.
+
+1. **Nothing was served at `/metrics`.** The collectors were registered on a registry no listener
+   served. `/metrics` is now served on its own listener, `QUOTACORE_METRICS_ADDR`, and the API
+   listener answers it `404` ([deployment.md](../architecture/deployment.md#41-core) §4.1).
+2. **A fresh install was never ready.** Readiness required a known tenant, so an empty install
+   answered `503` until its first tenant. The terms are now
+   [observability.md](../architecture/observability.md#4-health-and-status) §4's.
+3. **A Postgres outage made the fleet read-only.** The fence treated a lost connection as a lost
+   fence; fixed in its own change on 2026-10-21, the fence fix
+   ([consistency-and-recovery.md](../architecture/consistency-and-recovery.md#3-dependency-failure-matrix) §3).
 
 **Exit criteria.** An operator who has never seen the service can tell whether it is enforcing,
 and what to do about it.
@@ -761,7 +1666,9 @@ and what to do about it.
 
 ## IP-14 — The `quotacore` CLI
 
-**Status** `BLOCKED`, gated on `IP-09` and `IP-12`.
+**Status** `COMPLETE` — opened and closed 2026-10-27, 7 of 7 DoD items met, each closed by a test
+in the evidence table below. Item 7's image half belongs to `IP-15` by a dated note. `IP-09` and
+`IP-12` closed on 2026-10-20, so nothing gated this phase.
 
 **Objective.** One binary that administers the service, so an operator never needs a database client
 or a copy-pasted `curl`.
@@ -771,6 +1678,15 @@ or a copy-pasted `curl`.
 - `quotacore serve` and `quotacore worker`, so the shipped binary is both the server and the
   administration tool.
 - Exit codes distinct from HTTP statuses, and no secret printed.
+
+> **Amended 2026-10-27 (`IP-14`) — the nine words are groups, and there is no worker.** The list
+> above names the groups; [cli.md](../architecture/cli.md#1-commands) is the complete table, one
+> command for each of the contract's 32 admin operations, including `audit`, `status`, the plan
+> and override operations `IP-10` handed here (named `plan apply`, `plan impact` and
+> `tenant override set` and `clear`, which supersede the names in `IP-10`'s note), plus `init`,
+> `serve`, `key mint` and `IP-11`'s four local operations. Nothing is added to the release: every
+> command wraps something already in it. `quotacore worker` is not in v0.1, because no v0.1 phase
+> builds the reset worker it would run; whichever phase answers `Q-13` adds it as one row.
 
 **Specification references.**
 - [mvp-scope.md](../product/mvp-scope.md) §2, the v0.1 CLI row
@@ -786,11 +1702,19 @@ or a copy-pasted `curl`.
 
 1. Every command maps to exactly one documented endpoint or one local operation, and the mapping is
    a table in the document rather than an inference from the flag names.
+
+   > **Amended 2026-10-27 (`IP-14`).** `init` is the one composite row: it makes the quickstart's
+   > calls in order ([deployment.md](../architecture/deployment.md#2-the-quickstart) §2), and its
+   > row lists them. Making it a local operation would skip the audit log and the API's validation.
 2. `grant`, `set` and `force-rollover` are available from the CLI, because those are the three
    operations an operator reaches for when a customer disputes a deduction
    ([mvp-scope.md](../product/mvp-scope.md) §1).
 3. A disputed deduction is fully investigable from the CLI alone, with no database access. A test
    performs a dispute and resolves it using only `quotacore events` and `quotacore tenant`.
+
+   > **Amended 2026-10-27 (`IP-14`).** Read as: investigated with `events` and `tenant`, and
+   > corrected with `grant` or `set`, which are top-level commands as
+   > [mvp-scope.md](../product/mvp-scope.md) §2 names them.
 4. No command prints a secret, and `quotacore key create` prints a plaintext exactly once, with a
    warning that it cannot be shown again (INV-K3).
 5. Exit codes distinguish client error, not found, conflict, exhausted quota, rate limited,
@@ -799,6 +1723,53 @@ or a copy-pasted `curl`.
    exercised by a test rather than by a human.
 7. The CLI and the server are one binary, and a single binary is what the reference image ships
    (NFR-OPS6).
+
+   > **Amended 2026-10-27 (`IP-14`) — the image half is `IP-15`'s.** This phase proves the binary
+   > half: the built file serves, with no argument and with `serve`, and administers itself. That
+   > the reference image ships it, with `quotacore` as its entrypoint so that
+   > `docker compose exec quotacore quotacore init` works, is `IP-15`'s, since no image exists
+   > before it.
+
+   > **Amended 2026-10-20 (`IP-11`) — four local operations already exist.** `verify-tenant`,
+   > `verify-all`, `reconcile-report` and `rebuild` are local operations of the binary, which
+   > [observability.md](../architecture/observability.md) §5 and
+   > [consistency-and-recovery.md](../architecture/consistency-and-recovery.md) §4.1 send an
+   > operator to. They belong in item 1's mapping table as local operations, and this phase folds
+   > the minimal dispatch `IP-11` added (no argument still serves) into its own.
+
+   > **Amended 2026-10-21 (`IP-13`) — the runbooks call `curl`.** Each
+   > [runbook](../runbooks/README.md) names an admin route by `curl`, because no CLI command exists
+   > yet. This phase replaces each with its command, and `TestEveryRunbookIsFollowable` then holds
+   > the runbooks to the commands the binary has.
+
+**Evidence.** Each item is closed by a test that fails when the property stops holding. The
+`(integration)` rows run against real valkey and Postgres in CI's `service` job, and drive the CLI
+with stdin that is not a terminal.
+
+| # | Closed by | What it refutes |
+| --- | --- | --- |
+| 1 | `TestTheMappingTableIsTheBinary`, `TestEveryAdminOperationHasACommand`, `TestEveryCommandCallsItsRow` (integration) | A command missing from [cli.md](../architecture/cli.md) or a row with no command; an admin operation with no command or two; a row whose method, path or operation is not the contract's; a command that, run against a stack, makes any call but its row's |
+| 2 | `TestGrantSetAndRolloverFromTheCLI` (integration) | A grant that does not raise balance and bonus together, a set that does not land the value, a rollover that does not refill, any of the three without its audit row and ledger event, or a `never` rollover exiting other than `6` |
+| 3 | `TestADisputeIsResolvedFromTheCLI` (integration) | J-5 from stdout alone: the deltas not summing to the balance, the disputed `Idempotency-Key` showing other than one deduction, or the correcting grant missing from the events |
+| 4 | `TestNoCommandPrintsASecret` (integration), `TestKeyCreateWarnsOnce`, `TestKeyMintIsAnAdminToken` | A key's secret in any output, on success or on a refused, revoked or unreachable call; `key create`'s plaintext absent, twice, or on stderr; a minted token that is not an admin key |
+| 5 | `TestEveryCatalogueCodeHasOneExitCode`, `TestExitCodesFollowTheCode`, `TestExitCodesFollowTheEnvelope` (integration), `TestAConnectionFailureIsUnavailable` | A catalogue code with no exit code or two, the table and the binary disagreeing, an exit code of 100 or more, or a provoked answer exiting other than its code's |
+| 6 | Every integration test above; `TestInitRunsWithoutAPrompt` (integration), `TestInitPromptsOnlyAtATerminal` | A command that waits on input; `init` prompting without a terminal or with `--yes`, or not offering its defaults at one |
+| 7 | `TestTheBinaryIsTheServerAndTheCLI` (integration, the built binary), `TestTheLocalOperationsAreRows` (integration), `TestEveryRunbookIsFollowable` | The built file failing to serve with no argument or with `serve`, or to run `init --yes`, `tenant list` and `events` against itself; a local operation that is not a row; a runbook line the binary refuses, or a `curl` to an admin route |
+
+Four things are recorded here because the phase surfaced them.
+
+1. **A runbook command the binary refused.** *Data store lost* ran `quotacore rebuild --apply`
+   without the `--reason` the rebuild requires whenever it writes. `TestEveryRunbookIsFollowable`
+   checked only the first word of a command; it now parses every line against the binary, and
+   the runbook is corrected.
+2. **Two runbook `curl`s were never checked.** The two multi-line `POST`s were continued onto a
+   second line, which the runbook test's pattern did not join. Both are commands now, and a `curl`
+   to an admin route fails the test.
+3. **The local operations' exit codes moved.** `IP-11`'s operations exited `2` on any error; `2`
+   is now usage, and an error is `5`, `6`, `9` or `10` by its cause
+   ([cli.md](../architecture/cli.md#3-exit-codes) §3).
+4. **`GET /v1/admin/status` refuses a caller with no envelope,** by contract, so the CLI maps its
+   bare `401`, `403` and `429` by status; every other route is mapped by its code.
 
 **Exit criteria.** The whole administrative surface is reachable from one executable, and CI proves
 it.
@@ -810,7 +1781,17 @@ environment variable.
 
 ## IP-15 — Reference deployment and restore rehearsal
 
-**Status** `BLOCKED`, gated on `IP-13`.
+**Status** `COMPLETE` — opened 2026-10-27, before any file it owns was written; `IP-14` closed
+the same day. Closed 2026-10-29, when the runbook and restore review it carried for `IP-13` was
+recorded in [the runbooks' review table](../runbooks/README.md#review).
+
+> **Amended 2026-10-27 — the dependency on `IP-13`.** `IP-13` has met seven of its eight items and
+> waits only on item 7, a person following the runbooks against a running instance. That review and
+> this phase's exit criterion, a restore performed by someone following a document, are the same
+> session, and the stack this phase builds is what makes it one command. So this phase depends on
+> `IP-13`'s items 1 to 6 and 8, and carries item 7: the review is performed on the reference stack
+> after this phase's code is merged, recorded in [the runbooks' review table](../runbooks/README.md#review),
+> and both phases close on that row. Accepted by the owner on 2026-10-27.
 
 **Objective.** One `docker compose up`, no account and no external dependency, plus a restore
 procedure that has actually been performed.
@@ -832,6 +1813,11 @@ procedure that has actually been performed.
   [ADR-0017](../decisions/0017-noeviction-and-duplicate-reversal.md)
 - NFR-A1 to NFR-A6, NFR-D4, NFR-D6, NFR-D7, NFR-T9, NFR-T10, NFR-OPS1 to NFR-OPS8, NFR-C5, NFR-C6
 
+> **Amended 2026-10-27 (`IP-15`) — NFR-A1.** A 99.9% uptime is not something a phase can measure.
+> It is read here as its measure: the image's healthcheck is `/readyz`, through `quotacore
+> healthcheck`, so Compose and any orchestrator see the readiness NFR-A1 is counted by, and the
+> figure itself is the operator's to observe.
+
 **Dependencies.** Blocked by `IP-13` and `IP-14`. Blocks `IP-16`.
 
 **Definition of Done.**
@@ -839,6 +1825,11 @@ procedure that has actually been performed.
 1. `docker compose up` on a clean machine reaches a working service with no account, no signup, no
    egress and no manual step, and the quickstart in the README is executed by a script in CI
    ([mvp-scope.md](../product/mvp-scope.md) §1, NFR-OPS1).
+
+   > **Amended 2026-10-27 (`IP-14`).** The scripted quickstart runs `quotacore init --yes`, which
+   > asks nothing and exits non-zero on any failure ([cli.md](../architecture/cli.md#3-exit-codes)),
+   > and the image's entrypoint is `quotacore`, so `docker compose exec quotacore quotacore init`
+   > works; that is `IP-14` DoD 7's image half.
 2. The service makes no outbound connection of any kind in the MVP, asserted by a test that runs it
    with egress blocked (NFR-S3, NFR-C5).
 3. Graceful shutdown completes in-flight requests, leaves no partial state and finishes within the
@@ -847,21 +1838,69 @@ procedure that has actually been performed.
 5. The restore drill in [testing-strategy.md](../architecture/testing-strategy.md) §9 passes
    end to end, including its step 6 — no tenant is granted a full allowance by any path at any
    point (DR-045). The drill runs nightly against a real stack.
+   > **Amended 2026-10-20 (`IP-11`).** Steps 5 and 6 are `IP-11` DoD 3, 5 and 6, which that phase
+   > proves in `cmd/quotacore`'s integration suite. This item is the same assertion against the
+   > Compose stack with the real `quotacore rebuild`, run nightly, and adds T-14 end to end.
+
+   > **Amended 2026-10-27 (`IP-15`) — where "nightly" runs.** The drill runs in CI's `reference`
+   > job on every pull request, which is this phase's evidence, and in `.github/workflows/nightly.yml`
+   > on a schedule. GitHub runs a schedule only from the default branch, so the nightly run starts
+   > when `dev` merges to `main`; until then "nightly" describes the workflow, not a run history.
 6. The data store's memory projection for the idempotency window is measured, not estimated, and it
    is the figure in [deployment.md](../architecture/deployment.md) §5. The measurement is the per-record
    footprint of an idempotency entry at the sustained-throughput figure in NFR-T1, held in a scratch
    instance that is then destroyed; the projection in §5 is a floor until it exists, and this item
    replaces the floor with a number (NFR-T9).
+
+   > **Amended 2026-10-27 (`IP-15`) — "measured" and "soak".** NFR-T9 names a 24-hour projected
+   > soak, which at 2,000/s is 172.8 million records and a machine with tens of GiB for a day. What
+   > this item asks for is the per-record footprint, so it is measured directly: `tools/idemsize`
+   > drives the real consume script against a scratch store, reads `used_memory` at doubling record
+   > counts on either side of the engine's hash-table resizes, and projects the marginal cost at the
+   > contract's longest key to 172.8 million. The report is
+   > [ip-15-idempotency-footprint.md](../research/ip-15-idempotency-footprint.md).
 7. The store runs `maxmemory-policy noeviction`, and the rehearsal demonstrates the two states that
    policy creates: at the configured `maxmemory` the service returns `503 store_capacity_exhausted`
    and rejects writes, and a full flush of the idempotency namespace is never observed (DR-048,
    NFR-T9, T-13).
+
+   > **Amended 2026-10-27 (`IP-15`) — the code, and a finding.** The catalogue has no
+   > `store_capacity_exhausted`; FS-21, DR-048 and ADR-0017 all say a write that does not fit is
+   > `503 service_unavailable`, and that is the answer, because a full store and a dead store are both
+   > "the store cannot take this write". Building T-13 found that the store did *not* refuse: a script
+   > without a shebang is checked against `maxmemory` only at its first write that may grow memory,
+   > and the consume script's first write is a `PERSIST`, which is not one, so every later write in
+   > the script went through and the store grew far past its limit. Every script now declares
+   > `#!lua`, under which the engine refuses the whole script while the store is over `maxmemory`;
+   > `internal/script`'s `TestAFullStoreRefusesEveryScript` holds each one to it.
 8. Total store loss is rehearsed, and the automatic reversal of a duplicate detected after it is
    observed end to end: an idempotency record lost to a flush, a replayed request, a detection, a
    `reversal` API-key event and a balance that returns to its prior value (DR-049, T-14).
+
+   > **Amended 2026-10-27 (`IP-15`).** The "`reversal` API-key event" is the row DR-049 and `IP-11`
+   > write: a `refunded` usage event, `source: system`, under the key `#reversal/<event_id>`, which
+   > the events filter by the client's key returns beside the two deductions.
 9. An upgrade path from the previous release is documented and exercised, and rollback is a restore
    (NFR-OPS7).
+
+   > **Amended 2026-10-27 (`IP-15`).** There is no previous release yet. Until v0.1 is tagged, "the
+   > previous release" is the previous build: CI's `reference` job builds the image from the pull
+   > request's merge base as well as its head, and `TestUpgradeAndRollback` upgrades from one to the
+   > other and rolls back with a restore, following [deployment.md](../architecture/deployment.md) §11.
 10. The image runs unprivileged, on a non-root port, with a read-only root filesystem (NFR-S6).
+    > **Amended 2026-10-21 (`IP-13`) — the image half.** `IP-13` item 8 proved the process half: the
+    > binary refuses a port below 1024, writes no file and runs from a read-only directory. This item
+    > keeps `USER`, the read-only root filesystem, dropped capabilities and `no-new-privileges`. The
+    > Compose healthcheck is `/readyz`, and the metrics listener, `127.0.0.1:9090` by default, is
+    > published only if a scraper outside the container needs it.
+11. The build produces an SBOM covering the base image and the Go module graph, and the licence scan
+    that gates it covers the whole shipped runtime rather than the module graph alone. This item was
+    moved here from `IP-01` on 2026-09-27, and the reason is recorded rather than quietly dropped:
+    `IP-01`'s own DoD asked for an SBOM over "the Go module graph and the base image", but `IP-01`
+    does not own an image and never will, because the scope above does not include one. The
+    module-graph half of that item is met in `IP-01` and this is the half that could not be. An SBOM
+    that omits the base image describes a binary the operator cannot run, which is the one thing an
+    SBOM is for, so the obligation belongs with the phase that builds the thing (NFR-C3, NFR-C4).
 
 **Exit criteria.** The third claim is demonstrated, and a restore has been performed by someone
 following a document rather than by someone who remembered the commands.
@@ -873,7 +1912,20 @@ following a document rather than by someone who remembered the commands.
 
 ## IP-16 — Full suite, the three claims, v0.1 exit
 
-**Status** `BLOCKED`, gated on `IP-15`.
+**Status** `COMPLETE` — closed 2026-10-29, when the runbook and restore review was recorded, so
+item 9's "complete pending the review" became done. It was opened 2026-10-28, before any file it
+owns was written; `IP-15`'s code merged the same day. On 2026-10-29, 9 of 10 DoD items were met, each with its proof in
+[v0-1-evidence.md](../release/v0-1-evidence.md). Item 9 says v0.1 is complete pending the runbook
+and restore review, and becomes "done" when [the runbooks' review table](../runbooks/README.md#review)
+records that session.
+
+> **Amended 2026-10-28 — the dependency on `IP-15`.** `IP-15`'s code is merged and its one open item
+> is the human session it carries for `IP-13`: a person follows the README, two runbooks and
+> deployment §11 on the reference stack. That session needs nothing this phase builds, and nothing
+> this phase builds needs it, so this phase depends on `IP-15`'s code and carries the session as the
+> release's one named gap (DoD 8). PROJECT.md and ROADMAP.md state v0.1 as done only once
+> [the runbooks' review table](../runbooks/README.md#review) records it. Accepted by the owner on
+> 2026-10-28.
 
 **Objective.** Run everything, demonstrate the three claims, and tick every line of the release
 checklist.
@@ -892,7 +1944,8 @@ checklist.
 - [PROJECT.md](../../PROJECT.md) and [ROADMAP.md](../../ROADMAP.md), for the status this phase
   changes
 
-**Dependencies.** Blocked by every other v0.1 phase. Blocks `IP-17`, `IP-21`, `IP-24` and `IP-26`.
+**Dependencies.** Blocked by every other v0.1 phase. Blocks `IP-17`, `IP-19`, `IP-21`, `IP-24`,
+`IP-26` and `IP-27`, as [the index](roadmap-index.md#6-dependency-chain) lists them.
 
 **Definition of Done.**
 
@@ -913,6 +1966,15 @@ checklist.
 9. `tools/check-docs.ps1` exits 0, and `PROJECT.md` and `ROADMAP.md` state v0.1 as done with the
    evidence.
 10. The change is recorded in [CHANGELOG.md](../../CHANGELOG.md).
+
+> **Amended 2026-10-28 (`IP-16`) — DoD 1 and DoD 6.** DoD 1 was written when there were eleven
+> named tests; [testing-strategy.md](../architecture/testing-strategy.md#2-correctness-tests-the-ones-that-matter)
+> §2 now has fifteen. All fifteen are reported by name: `T-01` to `T-12`, `T-14` and `T-15` under
+> `-race` in the integration suite, and `T-13` and `T-14`'s stack form in the reference suite.
+> DoD 6's soak is 5 h 30 m, not 24 h: a hosted runner's job ends at 6 h, and "no leak" is asserted
+> as a slope over the run's second half rather than as a final value, which a longer run would
+> only confirm (testing-strategy §5, amended). The soak's duration is one variable, so a 24-hour
+> run on a self-hosted runner changes nothing else.
 
 **Exit criteria.** Every claim in the README has a measurement, every capability in the scope has a
 test, and a reader who doubts the product can find the evidence in one place.

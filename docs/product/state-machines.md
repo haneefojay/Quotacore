@@ -52,6 +52,14 @@ Where a transition has a product-level consequence it is cross-referenced to a r
 version. A client that receives no response retries with the same expected version and either
 sees the applied change or is told the version has advanced.
 
+> **Amended 2026-10-20 (`IP-10`).** T-5 is from `active` **or `suspended`**, and a suspended
+> tenant stays suspended: T-6 already allows both, and a downgrade during a dispute is a real
+> case. Its effect also re-pins the tenant's cadences and feature set to the new plan, and the
+> balances are rewritten after the commit by the re-anchor drain, so a request in between is
+> served the old state and never a fresh allowance. The target is an active plan; an archived
+> or unknown one is `400 validation_failed` naming `plan_key`, and the tenant's current
+> `plan_key` is no change at all.
+
 ---
 
 ## 2. Plan
@@ -71,8 +79,8 @@ sees the applied change or is told the version has advanced.
 | P-3b | active | apply-now, above the threshold, no token | active | `reason` ≥ 8 chars; assigned tenants above the threshold; no `confirmation_token` | **applies nothing**; `409 confirmation_required` with `affected_tenants`, `earliest_cycle_end` and a single-use token (DR-046) | yes, as a refusal |
 | P-3c | active | apply-now, with a valid token | active | token unused; plan `resource_version` equals the version it was issued against; not past `QUOTACORE_CONFIRMATION_TTL` | applies immediately, as P-3; token consumed | yes, with reason |
 | P-4 | active | archive | archived | — | not assignable; existing tenants continue unchanged | yes |
-| P-5 | archived | unarchive | active | — | assignable again; no effect on existing tenants | yes |
-| P-6 | any | delete | — | no tenant, plan assignment, or event reference | otherwise `409 plan_in_use` | no |
+| P-5 | archived | unarchive | active | no route in v0.1; archiving an archived plan is a no-op | assignable again; no effect on existing tenants | yes |
+| P-6 | any | delete | — | no tenant, plan assignment, or event reference | otherwise `409 plan_in_use` | yes, with reason; a refusal is not |
 
 **Invariants**
 - INV-P1 Archiving a plan does not alter any assigned tenant's balance or cycle. Stopping new
@@ -83,6 +91,20 @@ sees the applied change or is told the version has advanced.
 - INV-P4 A `409 confirmation_required` re-anchors nothing. The count is taken before any write, and
   the token is issued only on the refusal path, so a wide `apply-now` is a decision the operator
   makes twice rather than a change that half-happened (DR-046).
+
+> **Amended 2026-10-20 (`IP-09`).** P-5 has no route in v0.1: the diagram calls `archived`
+> terminal, no operation unarchives, and an archive of an archived plan is a no-op rather than a
+> reversal. P-6 and F-6 said a delete is not audited, while DR-041 audits every administrative
+> mutation; a delete that succeeds is audited with its reason, and only the `409` refusal writes
+> nothing, because nothing changed.
+
+> **Amended 2026-10-20 (`IP-10`).** P-3b said "audited, as a refusal", while INV-P4, P-6 and T-08
+> hold that a refusal writes nothing. The `409` writes no audit row; what it does write is the
+> token, in the fast store, which is the one named exception to T-08. P-3c's token is also bound
+> to the request's `reason`, and is honoured only while the plan's count has not grown past the
+> count it was issued against; anything else is counted afresh, which above the threshold is
+> P-3b again. P-3 and its variants re-anchor suspended tenants too, and an archived plan cannot
+> be applied (`400 validation_failed`).
 
 ---
 
@@ -100,7 +122,7 @@ sees the applied change or is told the version has advanced.
 | F-3 | active | archive | archived | — | new consumption → `403 feature_archived`; balances intact (DR-016) | yes |
 | F-4 | active | set metered (default) | active | no assignment yet | defines unit and default interval | yes |
 | F-5 | active | set boolean | active | v0.2; no metered assignment yet | entitlement becomes inclusion-only | yes |
-| F-6 | any | delete | — | no plan, tenant, or event reference | otherwise `409 feature_in_use` | no |
+| F-6 | any | delete | — | no plan, tenant, or event reference | otherwise `409 feature_in_use` | yes, with reason; a refusal is not |
 
 **Invariants**
 - INV-F1 Archiving never resets a balance. The balance remains readable until its cycle ends and
@@ -130,6 +152,16 @@ The row joining a plan to a feature. Its lifecycle is a strict subset of its par
   configuration change.
 - INV-E2 At most one entitlement per plan per feature. Enforced by a unique constraint; a
   duplicate is `400 validation_failed` naming the feature.
+
+> **Amended 2026-10-20 (`IP-10`).** Each tenant keeps the cadence and the feature set it was
+> anchored on, recorded when it is anchored (T-1, T-5, P-3) and changed only at its next
+> re-anchor. So E-3 reaches an existing tenant at its next re-anchor, a plan change or an
+> apply-now, never at a natural boundary, because a live interval would renumber the open cycle.
+> E-1 reaches an existing tenant the same way, because nothing can give it a balance at a natural
+> boundary (DR-045). E-4 keeps the feature, at the limit it had, until the end of the window the
+> removal landed in, after which the feature is absent (`403 feature_not_in_plan`); a removed
+> `never` feature has no window end and stays until the next re-anchor. Adding the feature back
+> before then keeps it. E-2 is unchanged: the limit is read from the plan as it is now.
 
 ---
 
@@ -162,7 +194,7 @@ grant a feature the plan excludes (DR-015).
 | # | From | Trigger | To | Effect | Audited |
 | --- | --- | --- | --- | --- | --- |
 | K-1 | absent | issue (UC-15) | active | plaintext returned once; hash and prefix stored | yes, prefix only |
-| K-2 | active | revoke | revoked | rejected on the next request, no cache delay | yes, prefix only |
+| K-2 | active | revoke | revoked | rejected on the next request to the revoking instance, and within NFR-D3 on every other (amended 2026-10-19, `IP-07`) | yes, prefix only |
 | K-3 | active | expiry reached | expired | same as K-2, by clock | on transition |
 | K-4 | active | rotate | active | a new key is issued by K-1; the old key is retired by K-2 only when the caller chooses | yes |
 
@@ -209,11 +241,11 @@ advance(now):
 | # | From | Trigger | To | Guard | Effect |
 | --- | --- | --- | --- | --- | --- |
 | C-1 | uninitialised | tenant provisioned, or plan assigned (UC-05) | current | tenant active, feature in plan | materialise allowance; `window` computed from anchor. **Not** a data-plane trigger: an absent hash at request time is a `503` fault, not an initialisation (DR-045) |
-| C-1a | uninitialised | data-plane access with the hash absent | unchanged | — | **rejected** with `503 service_unavailable`; `balance_key_missing_total` rises; the tenant-feature joins the rebuild queue (DR-045) |
+| C-1a | uninitialised | data-plane access with the hash absent | unchanged | — | **rejected** with `503 service_unavailable`; `balance_key_missing_total` rises; the tenant-feature joins the rebuild queue (DR-045). Amended 2026-10-20 (`IP-11`): there is no persisted queue; the tenant-feature is found by `quotacore rebuild`'s enumeration, which writes it only if the ledger determines it exactly (DR-045's note) |
 | C-2 | current | access at or after `window_end` | current(n+1) | `n+1 > cycle_index` | reset to limit, clear bonus, new window |
 | C-3 | current | access with `n < cycle_index` | unchanged | — | **rejected**, not applied. A stale writer cannot re-grant a past allowance |
 | C-4 | current | admin set / grant | current | ceiling respected | balance or bonus changes, no window change |
-| C-5 | current | admin force-rollover (UC-12) | current(n+1) | interval ≠ `never` | same transition as C-2, distinct event source |
+| C-5 | current | admin force-rollover (UC-12) | current(n+1) | interval ≠ `never` | same transition as C-2, distinct event source. Amended 2026-10-20, see the note below |
 | C-6 | current | interval is `never` | current | — | no boundary exists; C-2 can never fire; no TTL |
 | C-7 | current | plan change (UC-06) | current(0) | — | re-anchor to now; new limit; previous balance discarded (DR-013) |
 
@@ -222,13 +254,25 @@ advance(now):
   is what makes an out-of-order or duplicated worker harmless (ADR-0003).
 - INV-C2 The request path and the worker use the same transition, so the two racing on a boundary
   converge. There is no second implementation of rollover to drift out of agreement.
-- INV-C3 Key expiry is `window_end + 24h`, which is strictly later than any rollover could
-  legitimately need, so a live tenant's key is never absent (garbage collection only).
+- INV-C3 A balance hash has no expiry, so a live tenant's key is never absent. (Amended
+  2026-10-20: this read "key expiry is `window_end + 24h`, which is strictly later than any rollover
+  could legitimately need". No v0.1 phase runs the worker that would keep an idle tenant's hash
+  alive, so that expiry removed the hash a day after an idle tenant's window closed, and DR-045
+  forbids the request path from writing it again: the tenant was refused `503` until a rebuild.)
 - INV-C4 Within a cycle, `balance = opening_allowance + Σ(delta)` (DR-042).
 - INV-C5 `bonus` is zero at the start of every cycle except when a grant has been applied to the
   new cycle (DR-020).
 - INV-C6 A `never` cycle has no window end, so `cycle_end` is `null` in every response. Clients
   must handle the null; it is the documented shape, not an omission.
+
+> **Amended 2026-10-20 (`IP-10`).** C-5's `n+1` cannot be expressed without a per-feature anchor,
+> which DR-002 forbids, and mid-cycle the C-2 transition does nothing. Force-rollover refills the
+> cycle the anchor puts the current instant in: the balance becomes the effective limit and the
+> bonus zero, whatever cycle was stored, which also repairs a stored index that is ahead. A second
+> call refills again. C-7 restarts the index at 0 under the new anchor, and C-5's repair can lower
+> it, so INV-C1 holds **under one anchor**: no data-plane path writes a smaller index, and the
+> re-anchor and the force-rollover are the two audited control-plane exceptions. C-4's grant
+> raises the bonus with the balance (DR-020), and C-4's set is bounded by `limit + bonus`.
 
 ---
 
@@ -257,7 +301,9 @@ advance(now):
   charge (DR-048).
 - INV-I4 Absence after total store loss is a **distinct** state from absence by expiry. I-4 is a new
   operation; I-6 is a lost one, and it is detected by reconciliation and reversed. Treating them
-  alike is what made the second claim unprovable.
+  alike is what made the second claim unprovable. (Amended 2026-10-20, `IP-11`: the reversal is
+  the in-service pass's, under the key `#reversal/<event_id>`, with the client's key carried on the
+  reversal's ledger row; see DR-049's note.)
 
 ---
 
@@ -283,6 +329,21 @@ Append-only. There is no state machine: an event is written or it is not.
 - INV-U3 An event may fail to reach the sink. That is visible as
   `quotacore_event_sink_dropped_total` and a gap in history, never as a silent omission
   (ADR-0016).
+
+> **Amended 2026-10-20 (`IP-12`).** U-6 is written by whichever caller's script rolled the window —
+> consume, refund, check, grant, set or an immediate override — as `source: system` with the
+> triggering request's id, enqueued before that request's own event; a roll whose delta is zero
+> writes nothing (Q-22). An override set or cleared with `apply_at: immediate` moves the open
+> cycle's balance by the change in limit, and that move is written as U-5's `plan_changed`, because
+> it changes the tenant's effective entitlement and the contract has no other type for it (Q-24).
+> U-7 carries its reason in `metadata`. An event the ledger refuses is kept in
+> the dead-letter table rather than dropped, so the gap INV-U3 describes is the queue's drops alone.
+> `IP-12`'s Definition of Done cites INV-W1 and INV-W2 (webhook delivery, section 10) and INV-WK1 and
+> INV-WK2 (the reset worker, section 11) for the ledger writer; it reads each for the writer — the
+> `event_id` a consumer deduplicates on, an enqueue that never blocks, a writer whose absence changes
+> no enforcement outcome, and a writer that appends and cannot touch a balance
+> ([security-model.md](../architecture/security-model.md#2-trust-boundaries)). The four invariants are
+> not changed.
 
 ---
 
@@ -331,3 +392,14 @@ because its interaction with cycle state is the single most dangerous part of th
 - INV-WK1 The worker is an optimisation. Deleting it, stalling it, or running it twice changes
   nothing observable, because the request path repairs any tenant it touches (DR-009).
 - INV-WK2 The worker holds a runtime-scoped credential and has no direct database access.
+
+> **Amended 2026-10-28 (`IP-16`) — the worker as built.** It runs inside the service process, on
+> `QUOTACORE_WORKER_ENABLED` (`Q-13`, answered yes). *Select* is read as the tenants this instance's
+> snapshot holds whose cycle began since the previous scan: a look-behind, because a transition
+> cannot be applied before its boundary, and a boundary that passed while the process was down is
+> the request path's to repair (INV-WK1). *Act* is the data plane's `Advance`, which runs the check
+> script for an amount of zero through the request path's resolution, so the transition is the one
+> implementation (INV-C2) and a stale verdict is success. INV-WK2 is read in process: the worker has
+> no credential of its own and no route to the database or the store except that call, which
+> `internal/worker`'s source check asserts (`TestTheWorkerHasNoDatabaseAccess`). Read-only mode
+> pauses it.

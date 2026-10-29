@@ -29,18 +29,43 @@ already decided, [Q-04](../../docs/product/assumptions-and-open-questions.md#2-o
 [Q-14](../../docs/product/assumptions-and-open-questions.md#2-open-questions) produced new rules and a
 new route, and [Q-21](../../docs/product/assumptions-and-open-questions.md#2-open-questions) produced
 [ADR-0017](../../docs/decisions/0017-noeviction-and-duplicate-reversal.md). `IP-00` is therefore
-`COMPLETE`. The next phase is `IP-01`, the toolchain and CI foundation, and `IP-02` follows it with
-the OpenAPI document that is the output of the questions `IP-00` closed.
-`A-01` is a dated, owner-accepted v0.1 **release** risk, not a code-start blocker, and that is a
-deliberate decision recorded in
-[the register](../../docs/product/assumptions-and-open-questions.md#accepted-risks).
+`COMPLETE`. `IP-01`, the toolchain and CI foundation, closed on 2026-09-27 with all six
+Definition-of-Done items met, after item 4 was amended by its owner: the item had asked for an
+SBOM over the Go module graph *and the base image*, no image exists in that phase, and the
+base-image half moved to `IP-15`'s item 11, which now names NFR-C3 and NFR-C4. **`IP-02`, the
+OpenAPI contract, started and closed on 2026-09-28** with all seven DoD items met: the contract
+that the questions `IP-00` closed were about now exists, is served at `/openapi.json`, and has a
+generated reference at `/docs`. **`IP-03`, the cycle engine and the boundary matrix, started and
+closed on 2026-09-28**: the pure calendar function that every cycle boundary in the product rests on
+now exists, proved by a 20-row boundary table rather than by prose. Its only dependency, `IP-01`, was
+`COMPLETE`, its gating decisions were accepted, and the status was set before any file it owns was
+written, which is what [AGENTS.md](../../AGENTS.md) requires. Verification surfaced two defects, both
+fixed and recorded in the phase's own section: rows 4–7 of the boundary table itself were wrong
+(corrected with a dated note in [cycle-engine.md](../../docs/architecture/cycle-engine.md)), and the
+committed `go.mod`/`go.sum` were never tidy (repaired, because CI's tidy gate requires it). `A-01` is
+a dated, owner-accepted v0.1 **release** risk, not a code-start blocker, and that is a deliberate
+decision recorded in [the register](../../docs/product/assumptions-and-open-questions.md#accepted-risks).
 
 | Item | State |
 | --- | --- |
-| Specification | 63 documents, 49 rules, 17 accepted decisions, 15 named correctness tests |
-| Questions blocking v0.1 | None. 8 open and 3 deferred, none of them gating; the five that needed an answer before the contract was frozen are answered |
-| Phases | 28, `IP-00`–`IP-27`. `IP-00` is `COMPLETE`; `IP-01` is `NOT STARTED` and is the only unblocked phase; the other 26 are `BLOCKED` on an earlier phase |
-| Code written | None. `IP-00` closed the contract and wrote none; `IP-01` is the first phase that owns files in the repository |
+| Specification | 79 documents, 49 rules, 17 accepted decisions and one superseded, 15 named correctness tests |
+| Questions blocking v0.1 | None. 10 open and 3 deferred, none of them gating; the five that needed an answer before the contract was frozen are answered |
+| Phases | 28, `IP-00`–`IP-27`. `IP-00`–`IP-16` are `COMPLETE`, and the other 11 are `BLOCKED` on an earlier phase |
+| Code written | `IP-01`: 19 Go, Compose, Makefile, module and CI files. No product behaviour, asserted by a test rather than claimed. `IP-00` closed the contract and wrote none; `IP-01` was the first phase to own files in the repository. `IP-02` added `api/openapi.yaml` — 39 operations, 67 schemas and the 34 codes the catalogue then held (`IP-09` added two operations and a code) — plus the types and validation generated from it, the served `/openapi.json` and `/docs`, and the generator that keeps the two in step. It adds no product behaviour either: an enforcement call still returns `404`, because `IP-07` owns the routes, and `TestNoProductBehaviour` fails if that ever stops being true. `IP-03` added `internal/cycle`: the engine and the suite that proves it — boundary matrix, DST pair, `never`, monotonicity, property, tzdata, benchmark and shape-scope tests, 8 files — plus the embedded time-zone database. It is a pure library: no route, no store, no clock; a caller feeds an instant and gets a window, and `TestNoProductBehaviour` now also pins the engine's arithmetic vocabulary inside `internal/cycle`. `IP-04` added `internal/store` (the key builders for every key [data-model.md](../architecture/data-model.md) section 3.1 names, the config-version reads, the invalidation publish/subscribe, the expiry rule, and the two source checks that hold the data plane off the control plane and off cursor scans), `internal/snapshot` (the bounded LRU with byte budget and interned plans, the token-bucketed miss path, and the subscriber and reconcile loops that keep the previous snapshot while a refresh fails), and `internal/observability` (seven collectors, exactly the seven observability.md names). The phase owns seven Go files plus seven test files, an integration pair and a datastore round trip
+that CI runs against the real valkey. It is still not product behaviour: the data plane has no route (`TestNoProductBehaviour`), and the snapshot's `Loader` is an interface whose Postgres implementation is `IP-08`'s. `IP-05` added `internal/script`: three embedded Lua bodies and the Go runner that addresses them by digest. It is the first phase in this repository to contain the arithmetic the product exists to perform, and it is still not product behaviour, because `TestNoProductBehaviour` still holds — a consume is one `EVALSHA` and no route reaches it until `IP-07`. `IP-06` added the idempotency record inside those same scripts and `internal/script/idempotency.go` (the fingerprint and the pinned window), so a retried consume is still one `EVALSHA` and `TestNoProductBehaviour` still holds. `IP-08` added the control-plane schema as six up-only migrations with a checksum record, the classifier that turns each constraint into its catalogue code, the three operations whose refusal is a schema property, and the Postgres `Loader`, which `cmd/quotacore` now wires. `IP-07` added the product: `POST /v1/consume`, `POST /v1/check`, `GET /v1/balance` and `POST /v1/refund`, in `internal/dataplane`, behind `internal/auth` (ADR-0018's token and verifier, a bounded key cache) and `internal/envelope` (the error envelope, with every status read from the contract), with the per-key rate limiter and the data-plane metrics. `TestNoProductBehaviour` now allow-lists those three packages by name. The control-plane routes answer a runtime key `403` and an admin key a bare `404` until `IP-09`. `IP-09` added `internal/admin`: the 24 admin operations of the resource surface (keys, features, plans, tenants, the audit and event reads, and status) over a Postgres store in `internal/db` that audits each mutation in its own transaction, the bootstrap key, signed list cursors, and a per-client-address admin rate limit. The eight operations that move a balance or a boundary are `IP-10`'s. `IP-10` added them: the plan entitlement edit, apply-now with its confirmation token, impact, a tenant's plan change, grant, set, force-rollover and both override routes, over migration `00009` (the tenant's pinned cadences and the pending re-anchors), five control-plane scripts beside the data plane's three, and the re-anchor drain that rewrites a tenant's hashes after its Postgres commit. No admin operation answers a bare `404` any more. `IP-12` added the ledger: `internal/ledger`, a bounded queue the request path hands each event to without waiting and one writer per process that appends it in batches, migration `00010` (`cycle_start`, a BRIN index and the dead-letter table), the Postgres appender and the bounded retention job in `internal/db`, and a ninth reply value in the six scripts that share the transition, so every rollover is a row. `IP-11` added detection: `internal/reconcile`, which checks a tenant-feature's ledger against itself and its balance hash, an in-service pass that reverses a duplicate deduction once and records each confirmed finding, read-only mode and a Postgres fence for the rebuild, migration `00011`, a tenth script (`rebuild.lua`, create-only), and the binary's first four local operations: `verify-tenant`, `verify-all`, `reconcile-report` and `rebuild`. `IP-14` added `internal/cli`: one command for each of the 32 admin operations, `init`, `key mint` and `serve`, in one dispatch that also runs the four local operations, with exit codes by catalogue code and the table in [cli.md](../architecture/cli.md) |
+| `IP-01` open DoD items | None. Item 4 was amended before it was met: the Go module graph stays here and the base image moved to `IP-15` item 11, so the obligation has a successor rather than a deletion |
+| `IP-02` open DoD items | None. All 7 met on 2026-09-28, each closed by a named test recorded in the phase's own section. Item 7 was added by its owner on 2026-09-28 because `mvp-scope.md` and ADR-0010 both required a generated `/docs` page and no phase owned it |
+| `IP-03` open DoD items | None. All 7 met on 2026-09-28. Verification found and fixed two defects, both recorded in the phase section and in CHANGELOG: rows 4–7 of the boundary table itself were wrong, and the committed `go.mod`/`go.sum` were never tidy |
+| `IP-04` open DoD items | None. All 6 met on 2026-09-28; item 1 was amended by a dated note to defer the end-to-end chaos row to `IP-07`, where the `503 control_plane_unavailable` verdict becomes observable. Verification resolved two conflicts inside the specification and found one defect in the phase's own fixtures, all recorded in the phase section and in CHANGELOG |
+| `IP-05` open DoD items | None. All 10 met on 2026-09-29; items 4, 5 and 6 were amended by dated notes so the process-level `T-09`/`T-10` and HTTP halves belong to `IP-07`, and item 10 was added for the caller answered `stale` that returned before the expiry write. Verification found three defects, all recorded in the phase section and in CHANGELOG |
+| `IP-06` open DoD items | None. All 7 met on 2026-09-30; items 1, 2, 3 and 6 carry dated amendments — the ledger's `usage_events` row half belongs to `IP-12`, the `409` and `400` statuses to `IP-07`, and the `noeviction` policy to `IP-01` with the sizing measured by `IP-15`. Verification found one defect in the phase's own fixtures (deterministic client keys replayed a previous run's records) and corrected two specification statements, all recorded in the phase section and in CHANGELOG |
+| `IP-07` open DoD items | None. All 8 met on 2026-10-19; items 2 and 8 carry dated amendments — the ledger half of a check to `IP-12`, the admin handlers and revoke route to `IP-09` — and the obligations `IP-04`, `IP-05` and `IP-06` deferred here are closed by named tests. Verification found four defects in `IP-04` (go-redis ignoring the deadline, an unlocked version compare, a plan reference leak, cold misses each spending a token), all recorded in the phase section and in CHANGELOG |
+| `IP-09` open DoD items | None. All 9 met on 2026-10-20, and the obligations `IP-05`, `IP-07` and `IP-08` deferred here are closed by named tests. The operations that move a balance or a boundary, and the three codes only they reach, are `IP-10`'s by a dated scope amendment. Verification found one defect in `IP-02` (the contract's `timezone` pattern refused its own default, `UTC`), recorded in the phase section and in CHANGELOG |
+| `IP-11` open DoD items | None. All 6 met on 2026-10-20; items 3, 5 and 6 carry a dated note dividing them with `IP-15`'s restore drill, and `IP-14` gains the four local operations by a dated note. Verification found a flaky check in `IP-12`'s `TestTheLedgerReconcilesEveryCycle`, and the balance-hash expiry that DR-045 forbids was fixed first on its own, both recorded in the phase section and in CHANGELOG |
+| `IP-12` open DoD items | None. All 8 met on 2026-10-20; items 3, 4, 7 and 8 carry dated notes reading INV-W1, INV-W2, INV-WK1 and INV-WK2 for the writer, and the obligations `IP-05` to `IP-10` handed here are closed by named tests against real rows. Verification found two defects in earlier phases (a zero-amount consume answered `503`; an immediate override moved a balance with no event, now `Q-24`), recorded in the phase section and in CHANGELOG |
+| `IP-14` open DoD items | None. All 7 met on 2026-10-27; item 1 names `init` as the one composite command, item 3 is read as corrected with `grant` or `set`, and item 7's image half is `IP-15`'s, all by dated notes. Verification found a runbook command the binary refused and two runbook `curl`s the runbook test never checked, recorded in the phase section and in CHANGELOG |
+| `IP-10` open DoD items | None. All 9 met on 2026-10-20; item 4 carries a dated note reading DR-015 by its body, and the ledger rows, the reconciler's view of a re-anchor, a pending-re-anchor gauge and the CLI commands are handed on to `IP-11`, `IP-12`, `IP-13` and `IP-14` by dated amendments. The obligations `IP-07` and `IP-09` deferred here are closed by named tests |
+| `IP-08` open DoD items | None. All 8 met on 2026-10-19; items 4, 5, 6 and 7 carry dated amendments — the `409` statuses and the boundary validation call belong to `IP-09`, the retention deletion to `IP-12`, and the eviction sizing in the scope to `IP-15`. Verification found defects in `IP-01` (no checksum record, a pooled lock release) and `IP-04` (archived resolved after suspended), all recorded in those phases' sections and in CHANGELOG |
 
 ## 3. How to use this roadmap
 
@@ -72,9 +97,67 @@ from a decision record, an issue or a commit message stays valid for the life of
 | `IN REVIEW` | DoD claimed complete and under review against its own items |
 | `COMPLETE` | Every DoD item satisfied and evidenced, and the phase's exit criteria met |
 
-**`IP-00` is `COMPLETE` and `IP-01` is `NOT STARTED`.** `IP-00` was the phase that closed the
-contract questions, and it closed them on 2026-09-27. `IP-01` is unblocked and is the next phase;
-every later phase is `BLOCKED` on an earlier phase, not on a question.
+**`IP-00`, `IP-01`, `IP-02`, `IP-03`, `IP-04`, `IP-05` and `IP-06` are `COMPLETE`.**
+`IP-00` was the phase that closed the contract questions, and it closed them on 2026-09-27. `IP-01`
+was the first phase allowed to own code files, and it closed on 2026-09-27 with all six DoD items
+met. `IP-02`, the OpenAPI contract, started and closed on 2026-09-28 with all seven DoD items met,
+including item 7, the generated `/docs` page, which was added by its owner on the day it was needed
+because [mvp-scope.md](../product/mvp-scope.md) and
+[ADR-0010](../decisions/0010-go-chi-spec-first-openapi.md) required a page that no phase owned.
+
+`IP-03`, the cycle engine and the boundary matrix, started and closed on 2026-09-28 with all seven
+DoD items met. Its only dependency, `IP-01`, was `COMPLETE`, and its gating decisions were accepted;
+verification then found and fixed two defects, both recorded in the phase's own section: four rows
+of the boundary table were wrong, and the committed `go.mod`/`go.sum` were never tidy. Every later
+phase is `BLOCKED` on an earlier phase, not on a question. `IP-04` followed: its dependencies,
+`IP-02` and `IP-03`, were both closed, and its status was set to `IN PROGRESS` on 2026-09-28 before
+any file it owns was written, which is what [AGENTS.md](../../AGENTS.md) requires.
+
+`IP-04`, the keyspace and the snapshot cache, started and closed on 2026-09-28 with all six DoD items
+met; item 1 was amended by a dated note so the end-to-end chaos row belongs to `IP-07`, and the
+mechanism is proven by construction here — source checks hold the data plane off the control-plane
+imports and off `KEYS`/`SCAN`, a miss is one bounded read behind a rate limiter, and
+`quotacore_dbpool_wait_seconds` samples the control-plane pool off the request path. The phase added
+`internal/store`, `internal/snapshot` and `internal/observability`, and it resolved two conflicts in
+the specification it was owned by: the cache-miss metric name (one name per metric,
+[observability.md](../architecture/observability.md) wins) and the key spelling conflict between
+ADR-0002's examples and [data-model.md](../architecture/data-model.md)'s layout, which is the
+stated-once source for the key addresses. Both resolutions are recorded in the phase's own section.
+Exactly one phase may be `IN PROGRESS` at a time, and the status is recorded as the truth about the
+work — nothing is marked in progress while it is not. `IP-05`, the atomic scripts, was opened
+`IN PROGRESS` on 2026-09-29, its gating decisions being accepted and its dependency `IP-04` closed,
+which is what [AGENTS.md](../../AGENTS.md) requires before a file the phase owns exists, and was
+closed the same day. `IP-06`, idempotency prevention, was opened `IN PROGRESS` on 2026-09-30, its
+gating decision accepted and its dependency `IP-05` closed, and was closed the same day. `IP-07`, the
+data-plane endpoints, was permitted once its dependencies, `IP-05` and `IP-06`, had closed, and it was
+opened `IN PROGRESS` on 2026-10-19, after `IP-08` closed and before any file it owns was written. `IP-08`, the control-plane schema, was opened `IN PROGRESS` on 2026-10-19 before any
+file it owns was written, its only dependency `IP-02` having closed on 2026-09-28, and was closed the
+same day, which permits `IP-09` and `IP-12`. `IP-07` follows it because `IP-07`'s runtime-key authentication reads the `api_keys` table and the Postgres snapshot
+loader that `IP-08` builds. `IP-07` was closed the same day, which permits `IP-13`. `IP-09`, the
+control-plane API, was opened `IN PROGRESS` on 2026-10-19, after `IP-07` closed and before any file
+it owns was written, and was closed on 2026-10-20, which permits `IP-10`. `IP-10`, plan lifecycle
+and cycle-boundary semantics, was opened `IN PROGRESS` on 2026-10-20, before any file it owns was
+written, and was closed the same day. It permits nothing new: `IP-16`, the only phase that needs it, still
+waits on `IP-11` and `IP-15`. `IP-12`, the usage ledger, was opened `IN PROGRESS` on 2026-10-20,
+before any file it owns was written, and was closed the same day, which permits `IP-11` and `IP-14`.
+`IP-11`, idempotency detection and reconciliation, was opened `IN PROGRESS` on 2026-10-20, before
+any file it owns was written, and was closed the same day. `IP-16` now waits on `IP-15` only.
+`IP-13`, observability, was opened `IN PROGRESS` on 2026-10-21, before any file it owns was
+written; by the end of that day 7 of its 8 DoD items were met, and item 7 waits on a person's review
+of the runbooks, so `IP-15` stays `BLOCKED`. `IP-14`, the CLI, was opened `IN PROGRESS` on
+2026-10-27, before any file it owns was written; its dependencies, `IP-09` and `IP-12`, closed on
+2026-10-20. It was closed the same day, so `IP-15` now waits on `IP-13` alone. `IP-15`, the reference
+deployment, was opened `IN PROGRESS` on 2026-10-27, before any file it owns was written, by a dated
+amendment the owner accepted: it depends on `IP-13`'s eight items except the runbook review, and that
+review is performed on the reference stack this phase builds, in one session with the restore
+`IP-15`'s exit criterion asks for. `IP-13` stays `IN PROGRESS` until that row is filled in, so two
+phases are open at once, as `IP-13` and `IP-14` were. `IP-16`, the v0.1 exit, was opened `IN PROGRESS`
+on 2026-10-28, the day `IP-15`'s code merged, before any file it owns was written, by a dated
+amendment the owner accepted: it depends on `IP-15`'s code, and carries the one review `IP-13` and
+`IP-15` still wait on as the named gap of the release. v0.1 is declared done only once that row is
+recorded. The review was held on 2026-10-29: Claude followed the runbooks and the restore drill on
+the reference stack and the owner approved the report, which closed `IP-13`, `IP-15` and `IP-16`
+that day. A code review of the whole tree followed before the tag, and its fixes are in CHANGELOG.
 
 ### Phase-complete checkpoint
 
@@ -102,22 +185,22 @@ answer.
 | ID | Phase | Gating | Status |
 | --- | --- | --- | --- |
 | `IP-00` | Close the blocking questions | — | `COMPLETE` — closed 2026-09-27 |
-| `IP-01` | Repository, toolchain and CI foundation | ADR-0009, ADR-0010, ADR-0011, ADR-0014 | `NOT STARTED` — unblocked 2026-09-27 |
-| `IP-02` | The OpenAPI contract | ADR-0010 | `BLOCKED` on `IP-01` |
-| `IP-03` | Cycle engine and boundary matrix | ADR-0003, ADR-0007, ADR-0008 | `BLOCKED` on `IP-01` |
-| `IP-04` | Data-plane skeleton, keyspace and snapshot cache | ADR-0001, ADR-0011 | `BLOCKED` on `IP-02`, `IP-03` |
-| `IP-05` | The four atomic scripts | ADR-0002, ADR-0005 | `BLOCKED` on `IP-03`, `IP-04` |
-| `IP-06` | Idempotency prevention in the data plane | ADR-0004 | `BLOCKED` on `IP-05` |
-| `IP-07` | Data-plane endpoints | ADR-0001, ADR-0012 | `BLOCKED` on `IP-05`, `IP-06` |
-| `IP-08` | Control-plane schema and migrations | ADR-0011, ADR-0013 | `BLOCKED` on `IP-02` |
-| `IP-09` | Control-plane API and API keys | ADR-0012, ADR-0013 | `BLOCKED` on `IP-08` |
-| `IP-10` | Plan lifecycle and cycle-boundary semantics | ADR-0006, `Q-01`, `Q-02`, `Q-04`, `Q-14` | `BLOCKED` on `IP-09` |
-| `IP-11` | Idempotency detection and reconciliation | ADR-0004, ADR-0016, ADR-0017 | `BLOCKED` on `IP-07`, `IP-12` |
-| `IP-12` | Usage ledger, writer and archiver | ADR-0016 | `BLOCKED` on `IP-08` |
-| `IP-13` | Observability | — | `BLOCKED` on `IP-07` |
-| `IP-14` | The `quotacore` CLI | — | `BLOCKED` on `IP-09`, `IP-12` |
-| `IP-15` | Reference deployment and restore rehearsal | ADR-0009, `Q-21`, ADR-0017 | `BLOCKED` on `IP-13`, `IP-14` |
-| `IP-16` | Full suite, the three claims, v0.1 exit | — | `BLOCKED` on `IP-10`, `IP-11`, `IP-15` |
+| `IP-01` | Repository, toolchain and CI foundation | ADR-0009, ADR-0010, ADR-0011, ADR-0014 | `COMPLETE` — closed 2026-09-27, 6 of 6 DoD items met, item 4 amended to the Go module graph with its base-image half moved to `IP-15` |
+| `IP-02` | The OpenAPI contract | ADR-0010 | `COMPLETE` — started and closed 2026-09-28, 7 of 7 DoD items met, item 7 added by its owner on 2026-09-28 |
+| `IP-03` | Cycle engine and boundary matrix | ADR-0003, ADR-0007, ADR-0008 | `COMPLETE` — started and closed 2026-09-28, 7 of 7 DoD items met |
+| `IP-04` | Data-plane skeleton, keyspace and snapshot cache | ADR-0001, ADR-0011 | `COMPLETE` — started and closed 2026-09-28, 6 of 6 DoD items met, item 1 amended to defer the chaos row to `IP-07` |
+| `IP-05` | The atomic scripts | ADR-0002, ADR-0005 | `COMPLETE` — started and closed 2026-09-29, 10 of 10 DoD items met with items 4, 5 and 6 amended to defer the process-level and HTTP halves to `IP-07`, and item 10 added |
+| `IP-06` | Idempotency prevention in the data plane | ADR-0004 | `COMPLETE` — started and closed 2026-09-30, 7 of 7 DoD items met with items 1, 2, 3 and 6 amended to defer the byte-identity, HTTP-status, ledger and sizing halves to `IP-07`, `IP-12` and `IP-15` |
+| `IP-07` | Data-plane endpoints | ADR-0001, ADR-0018 | `COMPLETE` — started and closed 2026-10-19, 8 of 8 DoD items met with items 2 and 8 amended to defer the ledger and admin-handler halves to `IP-12` and `IP-09` |
+| `IP-08` | Control-plane schema and migrations | ADR-0011, ADR-0013 | `COMPLETE` — started and closed 2026-10-19, 8 of 8 DoD items met with items 4, 5, 6 and 7 amended to defer the HTTP, boundary and retention halves to `IP-09` and `IP-12` |
+| `IP-09` | Control-plane API and API keys | ADR-0012, ADR-0013 | `COMPLETE` — opened 2026-10-19 and closed 2026-10-20, 9 of 9 DoD items met, with the scope amended to leave the balance-moving routes to `IP-10` |
+| `IP-10` | Plan lifecycle and cycle-boundary semantics | ADR-0006, `Q-01`, `Q-02`, `Q-04`, `Q-14` | `COMPLETE` — opened and closed 2026-10-20, 9 of 9 DoD items met, with item 4 read by DR-015's body and the ledger, reconciler, gauge and CLI halves handed to `IP-11` to `IP-14` |
+| `IP-11` | Idempotency detection and reconciliation | ADR-0004, ADR-0016, ADR-0017 | `COMPLETE` — opened and closed 2026-10-20, 6 of 6 DoD items met, with items 3, 5 and 6 divided with `IP-15`'s restore drill |
+| `IP-12` | Usage ledger, writer and archiver | ADR-0016 | `COMPLETE` — opened and closed 2026-10-20, 8 of 8 DoD items met, with items 3, 4, 7 and 8 reading the webhook and worker invariants they cite for the writer |
+| `IP-13` | Observability | `Q-25`, `Q-26` | `COMPLETE` — opened 2026-10-21 and closed 2026-10-29, 8 of 8 DoD items met; item 7 by the runbook review, followed on the reference stack and approved by the owner |
+| `IP-14` | The `quotacore` CLI | — | `COMPLETE` — opened and closed 2026-10-27, 7 of 7 DoD items met, with item 7's image half handed to `IP-15` |
+| `IP-15` | Reference deployment and restore rehearsal | ADR-0009, `Q-21`, ADR-0017 | `COMPLETE` — opened 2026-10-27 by a dated amendment to its dependency on `IP-13`, and closed 2026-10-29 with the runbook and restore review it carried |
+| `IP-16` | Full suite, the three claims, v0.1 exit | — | `COMPLETE` — opened 2026-10-28 by a dated amendment to its dependency on `IP-15`, and closed 2026-10-29, 10 of 10 DoD items met once the runbook and restore review was recorded |
 | `IP-17` | Boolean entitlements | — | `BLOCKED` on `IP-16` |
 | `IP-18` | `set` and `grant` as first-class operations | — | `BLOCKED` on `IP-17` |
 | `IP-19` | Rolling windows | — | `BLOCKED` on `IP-05` |

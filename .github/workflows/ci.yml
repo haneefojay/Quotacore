@@ -1,0 +1,188 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Specification check
+        run: make check-docs
+      - name: Alert rules parse and their cases pass
+        # IP-13 D9: promtool from a pinned release, checked against its published digest.
+        run: |
+          curl -fsSL -o /tmp/prometheus.tar.gz \
+            https://github.com/prometheus/prometheus/releases/download/v3.5.0/prometheus-3.5.0.linux-amd64.tar.gz
+          echo 'e811827af26d822afb09a4f28314f61b618b12cff5369835a67f674d8b46f39a  /tmp/prometheus.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/prometheus.tar.gz -C /tmp prometheus-3.5.0.linux-amd64/promtool
+          /tmp/prometheus-3.5.0.linux-amd64/promtool check rules ops/alerts/quotacore.rules.yml
+          /tmp/prometheus-3.5.0.linux-amd64/promtool test rules ops/alerts/quotacore.rules.test.yml
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+      - name: Build
+        run: make build
+      - name: go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Generated artefacts match the contract
+        run: make generate-check
+      - name: Lint
+        run: make lint
+      - name: Unit tests
+        run: make test
+      - name: Race detector
+        run: make race
+      - name: No copyleft in the runtime path
+        run: make license-check
+
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+      - name: SBOM at build time
+        run: make sbom
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom
+          path: dist/sbom.cdx.json
+          if-no-files-found: error
+
+  # The reference stack end to end (IP-15). It also asserts everything the former `compose` job
+  # did: the stores reach a healthy state and the fast store refuses to evict.
+  reference:
+    uses: ./.github/workflows/reference.yml
+
+  service:
+    runs-on: ubuntu-latest
+    env:
+      DB_URL: 'postgresql://quotacore:quotacore_dev_only@postgres:5432/quotacore?sslmode=disable'
+      REDIS_URL: 'redis://valkey:6379/0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+      - name: Build the image
+        run: docker compose build quotacore
+        env:
+          QUOTACORE_REVISION: ${{ github.sha }}
+      - name: The reference stack, with the stores published for the integration suite
+        # IP-15: the service under test is the image, as the reference file runs it.
+        run: docker compose -f docker-compose.yml -f .github/compose.ci.yml up -d --wait
+      - name: Liveness answers, and a fresh install becomes ready
+        # IP-13 finding 2: readiness needs no tenant, so an empty install is ready.
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8080/readyz; then break; fi
+            sleep 1
+          done
+          test "$(curl -s http://127.0.0.1:8080/healthz)" = '{"status":"ok"}'
+          test "$(curl -s http://127.0.0.1:8080/readyz)" = '{"status":"ready"}'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/metrics)" = "404"
+      - name: The data plane asks for a credential, in the envelope
+        run: |
+          test "$(curl -s -o /tmp/unauth.json -w '%{http_code}' 'http://127.0.0.1:8080/v1/balance?tenant_external_id=acme')" = "401"
+          python3 -c "import json;e=json.load(open('/tmp/unauth.json'))['error'];assert e['code']=='unauthorized',e;assert e['request_id'],e"
+      - name: The running binary serves the contract it was built from
+        run: |
+          curl -fsS -o /tmp/served.json http://127.0.0.1:8080/openapi.json
+          python3 -c "import json;d=json.load(open('/tmp/served.json'));assert d['openapi'].startswith('3.1'),d['openapi'];missing=[p for p in ['/v1/consume','/v1/refund','/v1/check','/v1/balance','/healthz','/readyz','/metrics','/openapi.json','/docs'] if p not in d['paths']];assert not missing,missing"
+      - name: The running binary serves the committed reference page
+        run: |
+          curl -fsS -o /tmp/served.html http://127.0.0.1:8080/docs
+          cmp /tmp/served.html api/docs.html
+      - name: The documentation routes take no credential and are GET only
+        run: |
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/openapi.json)" = "405"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/docs)" = "405"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/v1/consume)" = "405"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/v1/admin/tenants)" = "401"
+      - name: Refuses to start on an unacknowledged bootstrap key
+        run: |
+          if docker run --rm --network quotacore_internal \
+            -e QUOTACORE_DATABASE_URL="$DB_URL" -e QUOTACORE_REDIS_URL="$REDIS_URL" \
+            -e QUOTACORE_BOOTSTRAP_ADMIN_KEY=qc_admin_abc.def quotacore:local; then
+            echo 'the service started with an unacknowledged bootstrap key, which NFR-S9 forbids' >&2
+            exit 1
+          fi
+      - name: An acknowledged bootstrap key opens the admin API
+        run: |
+          key="$(docker run --rm quotacore:local key mint)"
+          # Published from the network with a gateway, joined to the stores' before it starts.
+          docker create --name quotacore-bootstrap --network quotacore_published -p 127.0.0.1:8081:8080 \
+            -e QUOTACORE_DATABASE_URL="$DB_URL" -e QUOTACORE_REDIS_URL="$REDIS_URL" \
+            -e QUOTACORE_BOOTSTRAP_ADMIN_KEY="$key" -e QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK=1 quotacore:local
+          docker network connect quotacore_internal quotacore-bootstrap
+          docker start quotacore-bootstrap
+          for attempt in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8081/healthz; then break; fi
+            sleep 1
+          done
+          test "$(curl -s -o /tmp/status.json -w '%{http_code}' -H "Authorization: Bearer $key" http://127.0.0.1:8081/v1/admin/status)" = "200"
+          python3 -c "import json;d=json.load(open('/tmp/status.json'));assert d['status'] in ('ok','degraded'),d"
+          if docker logs quotacore-bootstrap 2>&1 | grep -qF "${key#*.}"; then
+            echo 'the bootstrap secret reached a log line' >&2
+            exit 1
+          fi
+          docker rm -f quotacore-bootstrap
+      - name: Refuses to start on a shortened idempotency window
+        run: |
+          if docker run --rm --network quotacore_internal \
+            -e QUOTACORE_DATABASE_URL="$DB_URL" -e QUOTACORE_REDIS_URL="$REDIS_URL" \
+            -e QUOTACORE_IDEMPOTENCY_TTL=1h quotacore:local; then
+            echo 'the service started with a shortened idempotency window, which DR-029 pins' >&2
+            exit 1
+          fi
+      - name: Refuses to start against a store that may evict
+        # DR-048, IP-15 D6: the policy is read from INFO memory at start.
+        run: |
+          docker compose -f docker-compose.yml -f .github/compose.ci.yml exec -T valkey-scratch \
+            valkey-cli config set maxmemory-policy allkeys-lru
+          if out="$(docker run --rm --network quotacore_published -e QUOTACORE_DATABASE_URL="$DB_URL" \
+            -e QUOTACORE_REDIS_URL='redis://valkey-scratch:6379/0' quotacore:local 2>&1)"; then
+            echo 'the service started against an evicting store, which DR-048 forbids' >&2
+            exit 1
+          fi
+          echo "$out"
+          grep -q 'Quotacore runs only against noeviction' <<<"$out"
+          docker compose -f docker-compose.yml -f .github/compose.ci.yml exec -T valkey-scratch \
+            valkey-cli config set maxmemory-policy noeviction
+      - name: Integration tests against real backing services, under the race detector
+        # As the superuser, which the suite needs to create its scratch databases; the service
+        # itself connects as the non-superuser role (deployment.md section 7). Under -race, and
+        # reported by name: tools/testreport fails the step if a named test of the integration
+        # suite did not run, was skipped or failed (IP-16 DoD 1).
+        shell: bash
+        run: |
+          set -o pipefail
+          CGO_ENABLED=1 go test -race -count=1 -timeout 30m -json ./... | tee integration.json | go run ./tools/testreport -suite integration
+        env:
+          QUOTACORE_REQUIRE_INTEGRATION: '1'
+          QUOTACORE_DATABASE_URL: 'postgresql://postgres:quotacore_dev_only@127.0.0.1:15432/quotacore?sslmode=disable'
+          QUOTACORE_REDIS_URL: 'redis://127.0.0.1:16379/0'
+          QUOTACORE_SCRATCH_REDIS_URL: 'redis://127.0.0.1:16380/0'
+      - name: Report
+        if: always()
+        run: |
+          docker compose -f docker-compose.yml -f .github/compose.ci.yml logs --no-color quotacore || true
+          docker compose -f docker-compose.yml -f .github/compose.ci.yml ps

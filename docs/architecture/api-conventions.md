@@ -30,19 +30,24 @@ one of them, and a contract test enforces that they do not.
 
 | Element | Type | Format | Notes |
 | --- | --- | --- | --- |
-| `tenant_id` | string | UUIDv7 | Opaque. Never parsed by a client |
-| `plan_id` | string | UUIDv7 | Opaque |
-| `feature_id` | string | UUIDv7 | Opaque. Clients use `feature_key` |
+| `tenant_id` | string | UUID | Opaque. Never parsed by a client |
+| `plan_id` | string | UUID | Opaque |
+| `feature_id` | string | UUID | Opaque. Clients use `feature_key` |
 | `feature_key` | string | `^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$` | Immutable, customer-chosen, reverse-DNS style (INV-F3) |
 | `plan_key` | string | `^[a-z0-9][a-z0-9_-]{0,62}$` | Immutable |
 | `tenant.external_id` | string | `^[A-Za-z0-9._:-]{1,128}$` | Customer-chosen, unique, excludes `@` (DR-034) |
 | `unit` | string | `^[a-z][a-z0-9_]{0,31}$` | Immutable once assigned (INV-F2) |
-| `Idempotency-Key` | string | 8–255 chars, `[A-Za-z0-9._:-]` | Client-generated, stable per logical operation |
+| `Idempotency-Key` | string | 8–255 chars, `[A-Za-z0-9._:-]` | Client-generated, stable per logical operation. The contract's pattern is the same grammar (amended 2026-10-19, `IP-07`; it had said a ULID only) |
 | `X-Request-Id` | string | ULID or UUID | Adopted if valid, otherwise minted (NFR-S10) |
 
 Every identifier is opaque. A client that parses a `tenant_id` to extract meaning from it is
-relying on an implementation detail, and the ID type is chosen for index locality, not
-comprehensibility.
+relying on an implementation detail. The internal identifiers are version 4 UUIDs from
+`gen_random_uuid()`, and [data-model.md](data-model.md#22-features) §2.2 states why nothing depends on
+the version.
+
+> **Amended 2026-10-19 (`IP-08`).** These three rows said UUIDv7, chosen for index locality.
+> [data-model.md](data-model.md) is the source for the schema and generates v4, PostgreSQL 16 has no
+> `uuidv7()`, and the contract only ever said `format: uuid`, so the rows now say what is stored.
 
 ## 3. Time
 
@@ -68,6 +73,14 @@ display a cycle that ends an hour early or late, and the customer will notice.
 | Precision | Milliseconds in storage, RFC 3339 to the second in responses unless sub-second precision was configured |
 | Display advice | Documented in the reference: render in the tenant's zone, and say which zone |
 
+> **Amended 2026-10-28 (`IP-16`) — which second a boundary is rendered as.** An anchor keeps
+> milliseconds (a re-anchor moves it by at least one), so a cycle boundary can fall inside a second,
+> and no configuration of sub-second precision exists. A `cycle_start` or `cycle_end` is rendered as
+> the boundary rounded **up** to its second, so the instant a client is told is one at which the
+> boundary has passed: waiting until the `cycle_end` a `429` names lands in the next cycle, never a
+> fraction of a second early. It was rounded down until `IP-16`'s formatting property found it.
+> Every other timestamp, an audit or event time, is a record of an instant and is rounded down.
+
 ## 4. Amounts
 
 ```json
@@ -88,24 +101,60 @@ display a cycle that ends an hour early or late, and the customer will notice.
 ## 5. Authentication and authorisation
 
 ```
-Authorization: Bearer qc_live_9f2c1a4e7b8d…
+Authorization: Bearer qc_runtime_9f2c1a4e7b8d.kZ3nQ7xR2vT9wY4bH6mP1sD8fG5jL0cA…
 ```
 
 | Aspect | Rule |
 | --- | --- |
-| Format | `qc_live_<prefix>.<secret>` for runtime keys, `qc_admin_<prefix>.<secret>` for admin keys. The scope is visible in the token, so a mismatch is a 400-line debugging session avoided |
-| Storage | Only an Argon2id hash and the public prefix are stored (ADR-0012) |
+| Format | `qc_runtime_<prefix>.<secret>` for runtime keys, `qc_admin_<prefix>.<secret>` for admin keys, with a hexadecimal prefix and a base64url secret (ADR-0018). The scope is visible in the token, so a mismatch is a 400-line debugging session avoided. The label is cosmetic: the scope is read from the stored key, and a label that disagrees with it is `401 api_key_invalid` |
+| Storage | Only a SHA-256 digest of the secret and the public prefix are stored (ADR-0018) |
 | Recovery | None. A lost key is replaced. There is no endpoint that returns a key, and none will be added (INV-K3) |
 | Scopes | `runtime` for `/v1/*` data plane; `admin` for `/v1/admin/*`. An `admin` key also works on the data plane |
 | Expiry | Optional at issue time. Enforced on every request |
-| Revocation | Immediate. No cache delay, because the cache stores the hash and the state, and revocation bumps the version (K-2) |
-| Bootstrap | One admin key on first start, printed once at `warn`. The service **refuses to start** if it would run with an unacknowledged default key (NFR-S9) |
+| Revocation | Immediate on the instance that served the revoke, and within the propagation bound (NFR-D3) on every other, because each instance's cache re-reads its keys off the path on every invalidation and refresh tick (K-2) |
+| Bootstrap | One operator-supplied admin key, installed only while no key exists, with an audit row and a `warn` naming its prefix. The service never generates or prints a key, and **refuses to start** if a supplied key is unacknowledged (NFR-S9) |
 | Cross-tenant | A runtime key is **not** bound to one tenant in the MVP. A key is a credential for the whole instance, and `external_id` in the request selects the tenant. Consequence, stated plainly: possession of a runtime key gives access to every tenant on the instance. This is why key issuance is an admin action, is audited, and is a per-customer decision |
 | Logging | Only the prefix appears, never the secret (DR-043) |
 
+> **Amended 2026-10-19 (`IP-07`, [ADR-0018](../decisions/0018-api-key-format-and-verifier.md)).** The
+> format row said `qc_live_<prefix>.<secret>`, which disagreed with the contract's
+> `qc_runtime_<prefix>.<secret>`; the storage row said Argon2id; and the revocation row said "no cache
+> delay", which holds on the serving instance and, across instances, only within the propagation bound.
+
 That last row is the most security-relevant decision in the API surface, so it is documented as a
 consequence rather than buried: this is a single-tenant-per-instance product (ADR-0013), and a
-runtime key is scoped to the instance, not to a customer of the instance's owner.
+runtime key is scoped to the instance, not to a customer of the instance's owner's.
+
+### 5.1 How the contract states security
+
+`bearerAuth` is declared once, globally. The per-operation `security` array is the whole statement
+of what an operation accepts, and it takes these forms:
+
+| Operation | `security` | `x-required-scope` | Why |
+| --- | --- | --- | --- |
+| Data plane, `/v1/*` | `[ { bearerAuth: [] } ]` | `runtime` | An `admin` key also works here, so the scope is a minimum, not an equality |
+| Control plane, `/v1/admin/*` | `[ { bearerAuth: [] } ]` | `admin` | An `admin` action, and the scope is what the router checks before the handler |
+| Operational, probes and `/openapi.json` and `/docs` | `[]` | absent | Unauthenticated by design, because a liveness probe that needs a credential is a liveness probe that fails when credentials break (NFR-S9) |
+
+Three things about that table are deliberate:
+
+- **The requirement arrays are empty.** A scope in the array would mean the token must carry
+  exactly that scope, which excludes an `admin` key from the data plane — the opposite of the row
+  above in section 5. `[]` means "bearer, any scope"; `x-required-scope` names the minimum the
+  implementation enforces.
+- **`x-required-scope` is a vendor extension, not OpenAPI.** OpenAPI 3.1 has no vocabulary for "this
+  operation needs at least this scope", and inventing one inside the standard would make the
+  document non-conformant. A named extension is discoverable by a reader and ignored by a tool that
+  does not know it, which is the correct failure: an unknown tool is not wrong, it is just not
+  enforcing this yet.
+- **Operational routes state `security: []` explicitly** rather than relying on the global
+  declaration. Inheriting a global requirement and then opting out is how an operational route
+  accidentally requires a credential in one release and not the next.
+
+`TestSecurityRequirementsCarryNoScopes` asserts the empty arrays, and
+`TestEveryOperationDeclaresItsRequiredScope` asserts that every operation outside
+`/v1/admin/*` and the operational set declares `runtime` and that every `/v1/admin/*` operation
+declares `admin`. A route added without thinking about its scope fails the build.
 
 ## 6. Idempotency
 
@@ -169,11 +218,12 @@ Response:
 ```
 
 `balance` is after the deduction. `consumed` is the amount the *original* call applied, and it is
-returned unchanged on a replay, because the replayed response is byte-identical to the original
-(DR-026). A client that needs to know whether this particular call moved anything reads `replayed`
-or the `Idempotent-Replay` header, and it is a one-field test rather than an inference from
-arithmetic. `balance` minus `consumed` is the balance before the original deduction, which is why
-both are returned.
+returned unchanged on a replay, because it is read from the record rather than recomputed
+(DR-026, DR-027). A retry is not byte-identical to the original — the first response carries
+`"replayed": false` and the retry `"replayed": true` — but the seven state values are, so a client
+that needs to know whether this particular call moved anything reads `replayed` or the
+`Idempotent-Replay` header, a one-field test rather than an inference from arithmetic. `balance`
+minus `consumed` is the balance before the original deduction, which is why both are returned.
 
 ### 7.2 `check`
 
@@ -217,6 +267,40 @@ plan's entitlement count (NFR-T5), so the unbounded case does not exist. Always 
 whether the endpoint returns every feature for a tenant or requires a feature key. `feature_key` is
 optional.
 
+### 7.4 Nullable-but-required control-plane fields
+
+A control-plane request body may carry a field that is **required and nullable**, where `null` means
+"not specified by this request" as opposed to the field being absent. A nullable field states an
+intent the caller has formed; an absent one states nothing, and those are different facts.
+
+`POST /v1/admin/tenants/{id}/overrides` is the case in point. UC-13 sets "a limit, a reset
+interval, or both", so `limit_value` and `interval` are both required, both nullable, and at least
+one is non-null:
+
+```json
+{
+  "feature_key": "llm.tokens.output",
+  "limit_value": 10000000,
+  "interval": null,
+  "apply_at": "next_boundary"
+}
+```
+
+`null` on `interval` inherits the plan's cadence. Omitting `interval` entirely is a
+`400 validation_failed`, and requiring the key rather than allowing absence is the point: absence
+would have two readings, that the aspect is inherited and that the operator left it out, and a
+quota system should not have a wire format with two readings for the same omission.
+
+**The both-null case is enforced by the data store, not by the schema.** It is
+`400 validation_failed` when it happens, and the constraint that catches it is
+`tenant_overrides_not_empty`. This is stated here rather than left implicit because the schema
+genuinely cannot express it: the JSON Schema for "at least one of two properties is non-null" is an
+`anyOf` over object branches, and the generator named in
+[ADR-0010](../decisions/0010-go-chi-spec-first-openapi.md)
+cannot generate one. A schema that appeared to enforce this and did not would be worse than one
+that says it does not, so the division of labour is stated: the schema enforces presence, type and
+range; the store enforces non-nullness.
+
 ## 8. Error handling
 
 Full catalogue in [error-catalog.md](../product/error-catalog.md). Conventions:
@@ -236,14 +320,14 @@ Full catalogue in [error-catalog.md](../product/error-catalog.md). Conventions:
 
 ## 9. Pagination and filtering
 
-Used by `GET /v1/admin/tenants`, `/events` and `/audit`.
+Used by every admin list: features, plans, tenants, keys, `/events` and `/audit`.
 
 | Aspect | Rule |
 | --- | --- |
 | Style | Opaque cursor. `?cursor=…&limit=…` |
 | Default limit | 50. Maximum 200 |
 | Ordering | Newest first, always, with a stable tiebreaker so a cursor is never ambiguous |
-| Cursor | Opaque and signed. A tampered cursor is `400 validation_failed`, not a silent full scan |
+| Cursor | Opaque and signed. A tampered cursor is `400 validation_failed`, not a silent full scan. The signature is HMAC-SHA256 under a key every instance shares at `qc:cfg:cursor_key` ([data-model.md](data-model.md#31-key-layout) §3.1), and covers the position and the filters, so a cursor replayed under different filters is refused rather than silently misread |
 | Filters | `tenant_external_id`, `feature_key`, `from`, `to`, `source`, `event_type` |
 | Filter values | `event_type` is one of `consumed`, `refunded`, `granted`, `set`, `plan_changed`, `cycle_rolled_over`, `force_rolled_over`. `source` is one of `api`, `admin`, `system`. Any other value is `400 validation_failed`, never an empty result |
 | Time filters | RFC 3339 with offset, matching the response format |
@@ -278,13 +362,25 @@ rather than by operator intent (DR-046). The threshold is
 {
   "error": {
     "code": "confirmation_required",
-    "affected_tenants": 1840,
-    "earliest_cycle_end": "2026-10-01T00:00:00+02:00",
-    "confirmation_token": "cnf_01J...",
-    "details": { "threshold": 50, "expires_in_s": 900 }
+    "request_id": "01J8Z6M2QK9V3X7B4C0N5TDEFA",
+    "details": {
+      "affected_tenants": 1840,
+      "earliest_cycle_end": "2026-10-01T00:00:00+02:00",
+      "confirmation_token": "cnf_01J...",
+      "threshold": 50,
+      "expires_in_s": 900,
+      "plan_version": 7
+    }
   }
 }
 ```
+
+Every code-specific field lives inside `details`, and `details` is where a client looks for
+whatever the particular `code` means. The envelope's own fields are fixed: `code`, `message`,
+`request_id`, and `details`. That is a deliberate cost. A client that switches on `code` and
+reads `details` is the only shape that lets a new code carry new information without a new
+envelope version, and it means a code can never be added that quietly overflows the envelope
+shape, because the envelope has no room to overflow.
 
 The operator re-issues the identical request with `confirmation_token` in the body, and it applies.
 Three properties make the handshake safe rather than merely awkward:
@@ -300,6 +396,13 @@ adding a second exactly-once mechanism to the same operation is a way to have tw
 whether it happened.
 *Answers:* [Q-04](../product/assumptions-and-open-questions.md#2-open-questions), which asked
 whether `apply-now` requires a confirmation token when more than N tenants are affected.
+
+> **Amended 2026-10-20 (`IP-10`).** The example gains `plan_version`, which the contract's example
+> carries and the response does. The token is also bound to the request's `reason`, and is
+> honoured only while the plan's count has not grown past the count it was issued against,
+> because tenants can join a plan without moving its version. A token that is not honoured is not
+> a separate refusal: the request is counted afresh, which above the threshold is a new `409`
+> with a new token. The `409` writes no audit row; the token in the fast store is its only write.
 
 ### 10.2 `GET /v1/admin/plans/{id}/impact`
 
@@ -328,6 +431,13 @@ meaningless against a version the operator has not read.
 `earliest_cycle_end` is the answer to "when does this land first", which is the question that
 actually decides whether an `apply-now` is safe to run on a plan whose tenants are on monthly
 cycles with scattered anchors.
+
+> **Amended 2026-10-20 (`IP-10`).** The example above is not the contract's `PlanImpact`, and the
+> contract wins on wire shape: the route takes no query parameter and answers `plan_key`,
+> `affected_tenants`, `earliest_cycle_end` and `exceeds_confirmation_threshold`. It previews an
+> apply-now of the plan **as saved**, over every non-deleted tenant on it, suspended ones
+> included; `earliest_cycle_end` is over their features that reset, in the zone of the tenant it
+> belongs to, and `null` when there is none. A preview of an unsaved edit is a later release.
 *Answers:* [Q-14](../product/assumptions-and-open-questions.md#2-open-questions), which asked
 whether an operator can see a plan edit's blast radius before committing it. This route is the
 answer, and the `409` above is the fallback for an operator who does not call it.
@@ -399,6 +509,52 @@ Enforced in CI, so this document and the specification cannot drift apart:
 4. The error envelope shape is validated for every documented non-2xx response.
 5. `additionalProperties` is `false` on request bodies, so a typo in a field name is a `400`
    rather than a silently ignored field. This is the difference between a typo being found in
-   testing and found in production by a customer.
-6. The generated Go and TypeScript types are rebuilt from the specification, so the served
-   validation and the reference cannot describe different shapes.
+   testing and found in production by a customer. Asserted per schema, not on a sample, so a
+   body added without the constraint fails the build.
+6. The generated Go types are rebuilt from the specification, so the served validation and the
+   reference cannot describe different shapes. TypeScript types are not generated in this phase;
+   see [ADR-0010](../decisions/0010-go-chi-spec-first-openapi.md).
+7. No `$ref` in the document is unresolved, and no component is defined and left unreferenced. A
+   dead schema is either a draft or a mistake, and neither should survive review.
+8. A constraint the schema cannot express is stated as such in the schema, with the mechanism
+   that does enforce it. See [section 7.4](#74-nullable-but-required-control-plane-fields) for
+   the one such constraint today; the rule is that a silent gap fails the contract test rather
+   than passing as enforcement.
+
+Item 3 is enforced slightly more strictly than it reads. The test requires a description on every
+*schema* as well as on every field, and it accepts a description that a field inherits through a
+`$ref` or an `allOf`, so a field that is a bare `$ref` to a documented component is not asked to
+repeat the component's prose. The stricter form is deliberate: a schema with no description is a
+shape nobody has explained, and field-level inheritance only works if the component is documented in
+the first place.
+
+## 14. The served contract
+
+The contract is one file, `api/openapi.yaml`, and it is served. Three things follow from that, and
+each is a rule rather than an implementation note.
+
+| Route | Serves | Cache |
+| --- | --- | --- |
+| `GET /openapi.json` | The embedded contract, converted from YAML to JSON at start-up | `no-store` |
+| `GET /docs` | A committed HTML page, `api/docs.html`, generated from the same file | `no-store` |
+| `GET /healthz`, `GET /readyz` | The probe bodies | `no-store` |
+
+- **`/openapi.json` is JSON, and it is generated from the YAML at build time** rather than parsed
+  per request. A request path that parses a 5,000-line document is a request path that spends time
+  on something that cannot change while the process runs, and the conversion is done once and
+  cached. Object key order is preserved, so the served bytes are stable and diffable; a converter
+  that sorted keys would make the output look reordered on every change.
+- **Both are unauthenticated**, for the reason in [section 5.1](#51-how-the-contract-states-security).
+  A contract that needs a credential cannot be fetched by the tool that documents the credential.
+- **`/docs` is a committed artefact, not a runtime template.** Generating the page per request would
+  mean the reference is only as correct as the code path that renders it; committing it means the
+  page is reviewed in a diff like any other deliverable. It is self-contained — inline CSS, no
+  JavaScript, no CDN, no external font, nothing fetched — because a documentation page that needs
+  the network is a documentation page that is blank on an air-gapped deployment, and this product is
+  designed to run on one.
+- **The page and the generated Go types are both derived from the same file**, and both are checked
+  for drift: `make generate-check` regenerates them and fails if the working tree changed. A
+  contract that has drifted from its artefacts is worse than no contract, because it looks
+  authoritative.
+- **`/docs` and `/openapi.json` are `GET` only.** A `HEAD` or `POST` is `405`, not a silent success
+  and not a redirect; the contract documents one method and the router serves that method.

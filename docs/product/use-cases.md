@@ -262,8 +262,8 @@ requirement that it be correct under retry and under concurrency.
 - *Then* exactly one succeeds with balance `40` and the other receives `429 quota_exceeded` with
   balance `40`
 - *And* the sum of all event deltas in the cycle equals `40` minus the cycle opening allowance
-- *And* the same idempotency key replayed 10 times returns the identical response body and
-  deducts once
+- *And* the same idempotency key replayed 10 times returns the recorded state (with `replayed: true`)
+  and deducts once
 
 ---
 
@@ -384,6 +384,14 @@ reason.
   the before window, the after window and the reason
 - *And* calling it twice produces one transition, because the tenant is already current
 
+> **Amended 2026-10-20 (`IP-10`).** Mid-cycle, "the same monotonic transition" does nothing, so
+> this flow's own acceptance cannot be met by it. A force-rollover refills the cycle the anchor
+> puts the current instant in: the balance becomes the effective limit and the bonus `0`,
+> whatever cycle was stored, which also repairs a stored index that is ahead (C-5's note). It
+> takes no new anchor: the anchor moves only on a plan change or an apply-now (DR-033), and the
+> contract has no field for one. Calling it twice refills twice; if nothing was spent in between
+> the second changes nothing and hands the ledger nothing (Q-22).
+
 ---
 
 ### UC-13 — Apply a tenant override
@@ -400,7 +408,9 @@ The escape hatch that lets a B2B SaaS stop hard-coding plan names in application
 - An override for a feature the plan does not include → `400 validation_failed`. Overrides
   customise an included feature; they never add one (DR-015).
 - Clearing an override restores the plan value from the next boundary, or immediately when the
-  clearing request sets `apply: now`.
+  clearing request sets `apply_at: immediate`. `DELETE /v1/admin/tenants/{id}/overrides/{feature_key}`
+  is the clearing route, because the `tenant_overrides_not_empty` constraint makes a row with both
+  values null impossible: clearing is the absence of the row, not a row of nulls.
 
 **Postcondition:** effective limit for the feature is the override when present, else the plan
 value; this precedence rule is stated once and used by every read path.
@@ -410,6 +420,13 @@ value; this precedence rule is stated once and used by every read path.
 - *When* the next cycle begins
 - *Then* the new cycle's balance is `5000` and `GET /v1/balance` reports `limit: 5000`
 - *And* clearing the override returns the tenant to the plan's `1000` at the next boundary
+
+> **Amended 2026-10-20 (`IP-10`).** The acceptance above is `apply_at: next_boundary`. With
+> `immediate`, the default, a limit re-limits the open cycle and keeps what was spent: the
+> balance moves by the same difference as the limit, floored at zero. An **interval**, set or
+> cleared, reaches the tenant at its next re-anchor in either mode, because a live interval would
+> renumber the open cycle (E-3's note). An override survives a plan change (UC-06); one on a
+> feature the new plan lacks is inert until a plan includes it again.
 
 ---
 
@@ -439,6 +456,13 @@ history.
 - *And* after the next boundary both `balance` and `bonus` equal the new limit and `0`
   respectively
 
+> **Amended 2026-10-20 (`IP-10`).** "A grant of `51` returns `409`" contradicts DR-020, which this
+> flow's own step 2 follows: a grant raises the bonus with the balance, so a grant of `51` makes
+> `balance: 101`, `bonus: 101`, under a ceiling of `201`. `409 grant_exceeds_ceiling` is a grant
+> that would take the balance or the bonus past `2^53 − 1` (DR-022), and a `set` above
+> `limit + bonus`. A grant has no `version` and no `Idempotency-Key`, so a grant retried after a
+> timeout is a second grant, visible in the audit log.
+
 ---
 
 ## Client and operator lifecycle
@@ -453,10 +477,12 @@ history.
 4. Revocation is audited, and the prefix appears in the audit log so a leak can be traced.
 
 **Alternative flows**
-- A revoked key is rejected on the next request with no cache delay.
+- A revoked key is rejected on the next request to the instance that revoked it, and within the
+  propagation bound (NFR-D3) on every other instance.
 - A lost key is replaced, not recovered. There is no "show key" endpoint and none will be added.
-- The bootstrap admin key exists only on first start, is printed once with a warning, and is
-  regenerated only by an explicit CLI command.
+- The bootstrap admin key is supplied by the operator and installed only while no key exists, with
+  an audit row and a `warn` naming its prefix. It is never generated or printed by the service, and
+  is ignored, with a warning, once any key exists (ADR-0018).
 
 **Postcondition:** the new key works, the old key does not, and the plaintext exists nowhere but
 in the caller's possession.
@@ -481,6 +507,12 @@ disputes a deduction is the first time anyone evaluates the tool.
 3. Operator sums the deltas for a cycle and compares with the reported balance; they agree.
 4. For a specific disputed charge, the operator supplies the customer's `Idempotency-Key` and
    receives the recorded outcome, proving whether it was applied once or twice.
+   (Amended 2026-10-20, `IP-11`: after a store loss the second deduction was kept out of the
+   ledger by its unique index until reconciliation reversed it. The reversal appends it, and its
+   reversal, with the client's key carried on both rows, so the key filter returns the deduction,
+   the second deduction and the `refunded` reversal with `source: system`, and the cycle's deltas
+   still sum to the balance. The procedure is
+   [consistency-and-recovery.md](../architecture/consistency-and-recovery.md#46-a-customer-disputes-a-deduction).)
 
 **Alternative flows**
 - Events that the sink could not deliver are visible as a gap, with the documented sink-drop
@@ -573,6 +605,12 @@ no token is issued.
 - *Then* `affected_tenants` is `12`
 - *And* `cycle_end` is the earliest of the twelve boundaries
 - *And* the plan `resource_version`, and every tenant's anchor, is unchanged
+
+> **Amended 2026-10-20 (`IP-10`).** The route previews an apply-now of the plan **as saved**, so
+> step 1's edit is saved first; a preview of an unsaved edit is a later release. It counts every
+> non-deleted tenant on the plan, suspended ones included, and the earliest `cycle_end` is over
+> their features that reset, in the zone of the tenant it belongs to, or `null` when there is
+> none.
 
 ---
 

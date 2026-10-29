@@ -38,7 +38,7 @@ Every one of these is a real failure mode, not a hypothetical.
 | S6 | A key is reused for a *different* operation by mistake | Charges twice, or corrupts the accounting | `409`. The original record is preserved so the original outcome is still retrievable |
 | S7 | The server applies the deduction, then crashes before responding, and the client retries | Charges twice | Replays, if the record was written atomically with the mutation |
 | S8 | The server applies the deduction but the idempotency record write fails | Charges twice on retry | **The most important case.** It is why the record write is in the same atomic execution as the deduction |
-| S9 | The client sends the same key concurrently 50 times | 50 charges | One charge, 50 identical responses |
+| S9 | The client sends the same key concurrently 50 times | 50 charges | One charge, 49 replays each marked `replayed: true` |
 | S10 | The client retries with the same key but a different amount, because it recalculated the cost | Rejected or silently accepted | `409 idempotency_key_reuse`, never silently accepted |
 
 **S8 is the case that determines the design.** If the deduction and the idempotency record are
@@ -100,14 +100,16 @@ easy to get wrong and produces a system where retries always fail.
 | Field | Purpose |
 | --- | --- |
 | Fingerprint | Distinguish a replay from a misuse |
-| HTTP status | Replay the correct status, including a denial |
-| Response body | Replay the identical body (T-02 asserts byte-identical) |
+| Transition verdict | Whether the window was rolled, so the replay answers the same window the first delivery saw |
+| Response body | Replay the original decision's state, so a retry reads what the first delivery saw (T-02) |
 | Expiry | 24 hours (DR-029) |
 
-**The response is stored rather than recomputed.** A replayed denial must return the balance *as it
-was when the denial happened*, not the balance now, and the only way to do that is to store the
-response. Storing it is also what makes the response byte-identical, which is what stops clients
-from diffing responses and concluding the service is inconsistent.
+**The decision state is stored rather than recomputed.** A replay must return the balance and the
+window *as they were when the mutation was applied*, not as they are now, and the only way to do that
+is to store them. Storing them is also what makes the seven state values identical across a retry,
+which is what stops clients from recomputing and concluding the service is inconsistent; the retry is
+marked with `replayed: true` and the `Idempotent-Replay` header rather than by a difference in the
+state (DR-027).
 
 **A denial is not recorded** (DR-025). A denial changed nothing, so there is nothing to protect
 against re-applying, and recording it would mean a client could not retry a denied operation after
@@ -155,7 +157,7 @@ the ceiling (DR-019). The interaction that needed care:
 | Content-based deduplication | Legitimate identical operations are common. Severe false positives, and trivially evaded |
 | A server-side "same request in N ms" heuristic | Undetectable in the ambiguous cases, and introduces rejections of legitimate operations |
 | Sequence numbers per client | Same problem, more machinery, and worse for a client without a durable store |
-| Storing the fingerprint without the response | A replayed denial would report a stale balance, and the response would not be byte-identical |
+| Storing the fingerprint without the response | A replayed denial would report a stale balance, and the retry would not return the original decision's state |
 | Recording denials | A client could not retry a denied operation after an administrative grant |
 | An unbounded idempotency window | Unbounded key growth in the fast store, which is a memory exhaustion vector |
 | Relying on the Postgres unique constraint to prevent double charges | It is asynchronous and detects after the fact. It cannot prevent, and relying on it would be a correctness claim that is false |
@@ -170,7 +172,7 @@ the ceiling (DR-019). The interaction that needed care:
   ceiling invariant bounds the damage (DR-019).
 - `DR-026` to `DR-030` in the [domain rules](../product/domain-rules.md), including the explicit
   statement that prevention is in the data plane and detection is in the control plane.
-- The S8 test and the byte-identical assertion in [testing-strategy](../architecture/testing-strategy.md#t-02--idempotent-replay).
+- The S8 test and the state-identity assertion in [testing-strategy](../architecture/testing-strategy.md#t-02--idempotent-replay), where a replay answers the recorded state and is marked `replayed`.
 - The S2 disclosure in [error-catalog.md](../product/error-catalog.md) and in J-7, and the
   SDK-generated-key plan as the actual fix in the [SDK release](../product/mvp-scope.md#v05--client-libraries).
 - The idempotency key space in the data store's memory sizing, and the `allkeys-lru` decision
@@ -186,6 +188,16 @@ is answered by [ADR-0017](../decisions/0017-noeviction-and-duplicate-reversal.md
 total-store-loss case is answered by an automatic reversal of the detected duplicate (DR-049)
 rather than by accepting the loss. The `noeviction` `503` on the hot path is the price, and it is now
 paid deliberately and sized for.
+
+**Update, 2026-09-30 — the replay is not byte-identical, and the record write needs no `NX`.** `IP-06`
+implemented the record inside the same script execution, and two statements above were superseded.
+A repeat returns the recorded seven state values with `replayed: true` and the `Idempotent-Replay`
+header (DR-027, [api-conventions](../architecture/api-conventions.md) §6 and §7.1), so it differs
+from the first delivery by exactly that marker; what is identical is the state, not the bytes, and
+that is what [T-02](../architecture/testing-strategy.md#t-02--idempotent-replay) now asserts. The
+write is `SET … EX 86400` with no `NX`, because the fingerprint check and the write are one
+execution and there is nothing left to guard against ([data-model](../architecture/data-model.md)
+§3.3, ADR-0002).
 
 ## Confidence and what would change this
 
@@ -218,4 +230,4 @@ revisited, because the current requirement on clients is the weakest part of the
 - Standard message-queue and payment-processor literature on at-least-once delivery and
   consumer-side deduplication, for the parallel with the ledger in
   [metering-ledger-patterns](metering-ledger-patterns.md).
-- Redis/Valkey scripting semantics for `SET … NX` inside a script, for the atomic record write.
+- Redis/Valkey scripting semantics for `SET … EX` inside a script, for the atomic record write.

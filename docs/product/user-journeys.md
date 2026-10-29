@@ -18,10 +18,11 @@ expected to have plenty of headroom.
 
 1. **Discovery.** The customer reads the README. The quickstart is one `docker compose up`, no
    signup, no cloud account. The deciding factor is that nothing asks for an account.
-2. **First start.** Compose brings up the service, Postgres and Valkey. The service prints the
-   bootstrap admin key once, at `warn`, with a note that it will not be shown again. The customer
-   copies it. This is the first trust test: the key is shown once, which is mildly alarming, and
-   the log says so plainly.
+2. **First start.** Compose brings up the service, Postgres and Valkey. The customer mints an
+   admin key with the one-line recipe in the deployment guide, supplies it with its
+   acknowledgement, and the service logs at `warn` that it installed a bootstrap key, naming the
+   prefix and never the secret. This is the first trust test: the service never generated or
+   printed a credential, and the log says so plainly.
 3. **Model the offer.** One CLI command creates the feature, one creates the plan, one adds the
    entitlement. The commands are verbose but obvious, and the plan is printed back with the exact
    cycle window the first tenant will receive.
@@ -159,6 +160,12 @@ plainly that a grant, not a forced apply, is the right tool for "give them more 
 operators are using a destructive tool for an additive intent, and the error messages should be
 improved.
 
+> **Amended 2026-10-20 (`IP-10`).** Step 1 said the edit's response names the affected count and
+> the earliest `cycle_end`. `PATCH` answers the plan; those two numbers are
+> `GET /v1/admin/plans/{id}/impact`'s, read before an apply. A limit edit lands at each tenant's
+> own boundary as step 1 says; an interval edit or an added feature lands at the next re-anchor
+> (E-3's note in [state-machines.md](state-machines.md#4-plan-entitlement)).
+
 ---
 
 ## J-5 — A customer disputes a charge (P-4, support)
@@ -218,7 +225,7 @@ has a one-line answer.
    event (FS-05).
 
 **Failure mode to expect.** Partial rather than total outage: a subset of tenants affected
-because they were not in the snapshot cache. `quotacore_control_plane_cache_miss_total` rises
+because they were not in the snapshot cache. `quotacore_config_cache_miss_total` rises
 first, before any `503`. That is the leading indicator, and it is documented as one.
 
 **What we would measure.** Detection-to-mitigation time, and whether the customer's recovery
@@ -249,7 +256,7 @@ correct.
    hidden.
 4. **The fix.** The customer derives the key from their own durable operation identifier, so every
    retry of the same logical operation reuses it. One line of code. After that, the storm is
-   harmless: 50 attempts, one deduction, one stored response, 50 identical replies.
+   harmless: 50 attempts, one deduction, one record, 49 replays each marked `replayed: true`.
 5. **The SDK shortcut.** In v0.5 this is not a line of code at all, because the SDK manages key
    lifetime across retries. This is the strongest argument for the SDK release, and it is why
    DR-026 was not relaxed to make the key optional: an optional key would make the default

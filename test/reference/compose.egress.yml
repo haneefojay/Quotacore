@@ -1,0 +1,26 @@
+# The egress test's override (IP-15 D10, DoD 2): a capture container owns the network namespace,
+# starts recording before the service exists, and the service joins that namespace, so every
+# packet the service sends from its first instruction is on the capture.
+services:
+  capture:
+    # Test-only, never shipped; pinned by digest like every image this repository pulls.
+    image: nicolaka/netshoot:v0.14@sha256:7f08c4aff13ff61a35d30e30c5c1ea8396eac6ab4ce19fd02d5a4b3b5d0d09a2
+    command: ["tcpdump", "-i", "any", "-nn", "-U", "-w", "/capture/egress.pcap"]
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - ${QUOTACORE_CAPTURE_DIR:?the egress test sets the capture directory}:/capture
+    networks: [internal, published]
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "test", "-s", "/capture/egress.pcap"]
+      interval: 1s
+      retries: 30
+
+  quotacore:
+    network_mode: service:capture
+    networks: !reset []
+    ports: !reset []
+    depends_on:
+      capture:
+        condition: service_healthy

@@ -1,0 +1,65 @@
+# Runbook: Enforcement is failing closed
+
+Part of [the runbooks](README.md). Every command assumes `QUOTACORE_URL` is the API (for example
+`http://127.0.0.1:8080`), `QC_METRICS` the metrics listener (`http://127.0.0.1:9090`) and
+`QUOTACORE_ADMIN_KEY` an admin key, as [the CLI](../architecture/cli.md#2-environment) reads them.
+The local operations (`verify-tenant`, `verify-all`, `reconcile-report`, `rebuild`) run the binary
+against the same environment as the service. On the reference Compose stack (amended 2026-10-27, `IP-15`), a
+command runs in the service's container as `docker compose exec quotacore quotacore …`, which has
+that environment, and the metrics listener is reachable at `QC_METRICS` only with the override:
+`docker compose -f docker-compose.yml -f docker-compose.metrics.yml up -d --wait`.
+
+## Trigger
+
+The *Enforcement failing closed* alert (P0) or *Data store unreachable* (P1), or a customer reporting `503` on the data plane.
+
+## Impact
+
+Consumes and refunds are refused with `503 service_unavailable` rather than answered. No balance is changed and nothing is granted for free (NFR-A3, DR-045), so the customer is denied service but not overcharged.
+
+## Check
+
+1. Which dependency is down, by this instance's own probes:
+
+```sh
+curl -sS "$QC_METRICS/metrics" | grep -E '^(quotacore_datastore_up|quotacore_controlplane_up|quotacore_datastore_errors_total|quotacore_balance_key_missing_total)'
+```
+
+2. What the status route says, with each dependency's latency:
+
+```sh
+quotacore status
+```
+
+3. Whether the instance is serving: `curl -sS -o /dev/null -w "%{http_code}\n" "$QUOTACORE_URL/readyz"` answers `503` while the data store is down.
+
+## Decide
+
+- `datastore_up` is `0`: the data store is down or unreachable. Go to **Act**.
+- `datastore_up` is `1` and `balance_key_missing_total` is rising: balances are missing; follow [Data store lost](data-store-lost.md) instead.
+- Both are healthy and the customer still sees `503`: read the `code` in the customer's envelope and the matching `quotacore_errors_total{code=...}` series; `control_plane_unavailable` is a tenant the snapshot had not seen during a Postgres outage, which [the dependency matrix](../architecture/consistency-and-recovery.md#3-dependency-failure-matrix) expects.
+
+## Act
+
+1. Restore the data store's availability: its host, its network path, its memory (`quotacore_datastore_memory_used_ratio`; the store runs `noeviction`, DR-048).
+2. Do not restart the service to make the alert go away: it fails closed by design, and the probe returns it to ready within two seconds of the store answering.
+3. Do not flush or restart the data store unless it is lost; a restart that loses data is [Data store lost](data-store-lost.md).
+
+## Verify
+
+`quotacore_datastore_up` is `1`, `/readyz` answers `200`, and the share of `rejected` outcomes in `quotacore_consume_total` has fallen back. Then confirm no partial deduction: a retry with the customer's same `Idempotency-Key` replays or applies once (DR-027).
+
+> **Amended 2026-10-29 (`IP-16`, the v0.1 runbook review on the reference stack).** Restarting the data store
+> on the reference stack loses every balance, because Valkey runs without persistence. That is the
+> [Data store lost](data-store-lost.md) case, and it shows as `balance_key_missing_total` rising once
+> `datastore_up` is back at `1`. Check that counter in Verify too. A tenant first seen during the
+> outage gets `503 service_unavailable` within the data-store budget. Before this review, the
+> answer for such a tenant was `control_plane_unavailable`, and it took the control plane's 3 s.
+
+## Escalate
+
+If the data store does not come back within the outage the customer tolerates, or balances are missing when it does, escalate to the owner of the data store and follow [Data store lost](data-store-lost.md).
+
+## Source
+
+[observability.md section 5](../architecture/observability.md#5-alerts); [the dependency failure matrix](../architecture/consistency-and-recovery.md#3-dependency-failure-matrix); NFR-A3; DR-045; DR-048.

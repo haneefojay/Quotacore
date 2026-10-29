@@ -1,8 +1,17 @@
 # Documentation
 
-Every document in this repository, what it settles, and who should read it. 67 files: 12 at the
-root, 9 product, 12 architecture, 17 decisions, 8 research, 6 roadmaps, and this index. One tool,
-[`tools/check-docs.ps1`](../tools/check-docs.ps1), holds the specification to its own rules.
+Every document in this repository, what it settles, and who should read it. 112 files: 64 Markdown
+documents — 10 root, 9 product, 12 architecture, 18 decisions, 8 research, 6 roadmaps and this
+index — plus 48 that are not documents: `LICENSE`, the two checkers, one allowlist and the
+documentation generator under `tools/`, `.gitignore`, `.gitattributes`, the two files under
+`.github/`, the module, Compose and Makefile files `IP-01` owns, the twenty files `IP-02` owns
+under `api/` — the contract, its generator config, the generated types, codecs and validators, the
+JSON and HTML renderers, the committed reference page, and the tests that hold them to the document —
+and the fifteen files `IP-04` owns under `internal/` — the keyspace, the snapshot cache, the
+observability package and the pool observer, with their tests.
+Two tools hold the work to its own rules:
+[`tools/check-docs.ps1`](../tools/check-docs.ps1) for the specification and
+[`tools/gendocs`](../tools/gendocs/main.go) for the served contract.
 
 Not sure where to start? [PROJECT.md](../PROJECT.md#reading-order) has four reading orders. This
 file is the reference. If you are an agent or a contributor making changes, read
@@ -16,7 +25,7 @@ file is the reference. If you are an agent or a contributor making changes, read
 | [../PROJECT.md](../PROJECT.md) | Orientation, status, the three claims, four reading orders | You are new to the project |
 | [../PRD.md](../PRD.md) | Requirements, personas, metrics, and the scope boundary with reasons | You are deciding whether to adopt or to build |
 | [../ARCHITECTURE.md](../ARCHITECTURE.md) | System shape, components, data model, runtime flow | You are building or reviewing the system |
-| [../TECHNICAL-DECISIONS.md](../TECHNICAL-DECISIONS.md) | All 17 decisions, their rationale and revisit triggers | You want to know *why*, or you want to reopen something |
+| [../TECHNICAL-DECISIONS.md](../TECHNICAL-DECISIONS.md) | All 18 decisions, their rationale and revisit triggers | You want to know *why*, or you want to reopen something |
 | [../SECURITY.md](../SECURITY.md) | Threat model, controls, known gaps, incident response | You are assessing risk, or deciding whether to trust it with revenue-bearing state |
 | [../ROADMAP.md](../ROADMAP.md) | v0.1 → v0.5, gates, and what is deliberately late | You want to know what ships when, and what will not |
 | [../AGENTS.md](../AGENTS.md) | How to work in this repository: reading order, change recipes, definition of done | You are about to change anything here |
@@ -36,9 +45,9 @@ Read in order; the documents build on each other. Start with
 | [mvp-scope.md](product/mvp-scope.md) | The hard v0.1 boundary, per-release exit criteria, and what is deferred | You are planning work or defending a cut |
 | [use-cases.md](product/use-cases.md) | 19 use cases (`UC-01`–`UC-19`) with preconditions, triggers, flows and alternatives | You are writing tests, or designing an interface |
 | [state-machines.md](product/state-machines.md) | Every state, its transitions, guards and invariants | You are implementing transitions or reasoning about an edge case |
-| [error-catalog.md](product/error-catalog.md) | 34 error codes and 22 failure scenarios (`FS-01`–`FS-22`), with a client action for each | You are handling errors, or writing an SDK |
+| [error-catalog.md](product/error-catalog.md) | 35 error codes and 22 failure scenarios (`FS-01`–`FS-22`), with a client action for each | You are handling errors, or writing an SDK |
 | [user-journeys.md](product/user-journeys.md) | 10 end-to-end journeys (`J-1`–`J-10`), including the sceptical evaluator | You are validating that the product solves a real problem |
-| [assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) | 23 assumptions (`A-01`–`A-23`) with validation methods, a dated accepted-risk table and a corrections log, and 21 questions: 10 answered, 3 deferred, 8 open | You are about to build on an unverified assumption |
+| [assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) | 23 assumptions (`A-01`–`A-23`) with validation methods, a dated accepted-risk table and a corrections log, and 31 questions: 21 answered, 3 deferred, 7 open | You are about to build on an unverified assumption |
 | [glossary.md](product/glossary.md) | Every term, with the ones that are easy to confuse marked | Any time a word is ambiguous |
 
 ## Architecture — how it is built and proven
@@ -60,6 +69,28 @@ build order and the review order.
 | [deployment.md](architecture/deployment.md) | Images, configuration, upgrades, backup, restore, resource sizing | You are deploying or sizing a host |
 | [performance.md](architecture/performance.md) | Budgets per stage, and the measurement plan | You are tuning or setting a capacity target |
 | [testing-strategy.md](architecture/testing-strategy.md) | 15 named correctness tests, 7 further suites, and the three that prove the claims | You are writing a test plan or a CI pipeline |
+| [cli.md](architecture/cli.md) | The `quotacore` CLI: every command and the route it calls, the environment, the exit codes | You are administering an instance or scripting against one |
+
+## Runbooks — what an operator does when an alert fires
+
+Added 2026-10-21 (`IP-13`). Each links to its procedure in
+[consistency-and-recovery.md](architecture/consistency-and-recovery.md) or
+[security-model.md](architecture/security-model.md) rather than copying it.
+
+| Document | What it settles | Read it if |
+| --- | --- | --- |
+| [runbooks/README.md](runbooks/README.md) | The index, which alert names which runbook, and the review record | You are on call |
+| [enforcement-failing-closed.md](runbooks/enforcement-failing-closed.md) | Consumes refused with `503` | *Enforcement failing closed* or *Data store unreachable* fired |
+| [data-store-lost.md](runbooks/data-store-lost.md) | Balance hashes missing; the rebuild | *Balance hash missing* fired |
+| [postgres-restore.md](runbooks/postgres-restore.md) | A restore from backup and the reconciliation after it | You are restoring Postgres |
+| [long-outage.md](runbooks/long-outage.md) | Re-anchors waiting for the data store | *Re-anchors pending* fired, or the service was down a cycle |
+| [cycle-rolled-over-incorrectly.md](runbooks/cycle-rolled-over-incorrectly.md) | A stuck or wrong window, and a force-rollover | A customer reports the wrong reset |
+| [leaked-key.md](runbooks/leaked-key.md) | Revoking and replacing a key | A key may be exposed |
+| [stale-rollover-or-clock-skew.md](runbooks/stale-rollover-or-clock-skew.md) | A wrong clock and the monotonic guard | *Stale rollover refusal* or *Clock skew* fired |
+| [double-charge.md](runbooks/double-charge.md) | A second deduction and its reversal | A duplicate alert fired |
+| [reconciliation-mismatch.md](runbooks/reconciliation-mismatch.md) | A balance its ledger does not explain | *Reconciliation mismatch* fired |
+| [ceiling-violated.md](runbooks/ceiling-violated.md) | A balance above `limit + bonus` | *Ceiling violated* fired |
+| [audit-write-failure.md](runbooks/audit-write-failure.md) | An admin write that failed with `internal_error` | *Audit write failure* fired |
 
 ## Decisions — why each choice was made
 
@@ -85,6 +116,7 @@ Full records in [decisions/](decisions/), indexed with rationale in
 | [0015](decisions/0015-release-slicing.md) | A hard MVP boundary, with the rest sequenced behind it | |
 | [0016](decisions/0016-usage-event-ledger.md) | The usage event log is a signed-delta ledger, and it is the recovery source | Yes |
 | [0017](decisions/0017-noeviction-and-duplicate-reversal.md) | No eviction inside the 24-hour window, and an automatic reversal for what no eviction cannot prevent | Yes |
+| [0018](decisions/0018-api-key-format-and-verifier.md) | API keys: the contract's token format, and a SHA-256 verifier on every request. Supersedes 0012 | |
 
 ## Research — what was investigated before deciding
 
@@ -100,14 +132,23 @@ Evidence, with dates and sources, so a future reader can tell a re-check from a 
 | [go-stack-and-dependency-selection.md](research/go-stack-and-dependency-selection.md) | Go 1.27, chi, pgx, `go-redis`, embedded migrations, OpenAPI tooling | You are setting up the repository |
 | [idempotency-and-retries.md](research/idempotency-and-retries.md) | Keys, fingerprints, TTLs, and the exact-once illusion, with the `iPhone` case | You are implementing retries or a client SDK |
 | [a-01-design-partner-validation.md](research/a-01-design-partner-validation.md) | The interview script that closes or kills A-01, and the sources for the two configuration defaults | You are about to build on an untested market claim, or you are asking where a default number came from |
+| [ip-15-idempotency-footprint.md](research/ip-15-idempotency-footprint.md) | What an idempotency record and a ledger row cost, measured, and the store's memory floor | You are sizing the data store or Postgres |
+
+## Release — what proves v0.1
+
+Added 2026-10-28 (`IP-16`).
+
+| Document | What it settles | Read it if |
+| --- | --- | --- |
+| [release/v0-1-evidence.md](release/v0-1-evidence.md) | Each claim, NFR, named test and scope line of v0.1, with the measurement or test behind it and where it was taken | You doubt the product and want the evidence in one place |
 
 ## Roadmaps — in what order the work is done
 
 Execution plan, in [roadmaps/](roadmaps/). [ROADMAP.md](../ROADMAP.md) decides what ships in which
 release and [mvp-scope.md](product/mvp-scope.md) decides what a release contains; these decide the
 order of the work and what proves a piece of it finished. [Gate 0](../ROADMAP.md#gate-0--unblock-the-specification)
-is closed: `IP-00` is `COMPLETE`, `IP-01` is the only unblocked phase, and the other 26 wait on
-their dependencies.
+is closed: `IP-00` to `IP-04` are `COMPLETE`; the other 23 wait on their dependencies, with `IP-05`
+(the four atomic scripts) the next permitted.
 
 | Document | What it settles | Read it if |
 | --- | --- | --- |
@@ -127,17 +168,17 @@ documents themselves and fails if this table disagrees, so a stale count cannot 
 | --- | --- | --- |
 | Rules | 49 | [product/domain-rules.md](product/domain-rules.md) |
 | Use cases | 19 | [product/use-cases.md](product/use-cases.md) |
-| Error codes | 34 | [product/error-catalog.md](product/error-catalog.md) |
+| Error codes | 35 | [product/error-catalog.md](product/error-catalog.md) |
 | Failure scenarios | 22 | [product/error-catalog.md](product/error-catalog.md) |
 | Assumptions | 23 | [product/assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) |
-| Open questions | 21 | [product/assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) |
+| Open questions | 31 | [product/assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) |
 | Journeys | 10 | [product/user-journeys.md](product/user-journeys.md) |
 | Non-functional requirements | 63 | [architecture/non-functional-requirements.md](architecture/non-functional-requirements.md) |
 | Invariants | 43 | [product/state-machines.md](product/state-machines.md), [architecture/data-model.md](architecture/data-model.md) |
 | Named tests | 15 | [architecture/testing-strategy.md](architecture/testing-strategy.md) |
-| Decisions | 17 | [decisions/](decisions/) |
-| Markdown documents | 63 | repository root |
-| Files in the repository | 67 | repository root |
+| Decisions | 18 | [decisions/](decisions/) |
+| Markdown documents | 79 | repository root |
+| Files in the repository | 354 | repository root, excluding the paths `.gitignore` marks as build output (13 files added by `IP-05` and `IP-06`: `IP-05`'s three embedded Lua scripts, the runner and the outcome, and the source, unit and integration tests that assert them; `IP-06`'s `idempotency.go` and its unit and integration tests; and 16 by `IP-08`: six migrations, the checksum record, the error classifier, the three guarded operations and the Postgres snapshot loader, and the schema, enum, constraint, source, loader and test-database tests; and 31 by `IP-07`: ADR-0018, the four routes and their decoding, rate limiter and event sink in `internal/dataplane`, the token, key cache and miss limiter in `internal/auth`, the error envelope and contract reader in `internal/envelope`, the key and tenant reads in `internal/db`, the balance read, the data-plane metrics, the server assembly, and the unit, matrix, outage, kill and restart tests; and 23 by `IP-09`: the audit `reason` migration, the `internal/admin` package (the routes, their decoding, cursor, rendering and per-client-address limit), the Postgres admin store, audit insert and bootstrap in `internal/db`, the balance provisioning and publish in `internal/store`, the build identity, the key, write-path, error-matrix and log integration tests, the trusted-proxy unit test, and the contract test that only a key create carries a secret; and 14 by `IP-10`: the pins and pending re-anchors migration, the plan, balance and re-anchor routes in `internal/admin`, the lifecycle store in `internal/db`, the confirmation token in `internal/store`, the five control-plane scripts and their runner, and the script source and lifecycle integration tests; and 13 by `IP-12`: the ledger migration, the `internal/ledger` queue and writer with its unit, source and race-build tests, the Postgres appender and retention job in `internal/db` with their tests, the ledger metrics and their test, and the ledger integration tests; and 1 by the 2026-10-20 expiry fix: the idle-tenant expiry tests; and 21 by `IP-11`: the reconciliation migration, the `internal/reconcile` verifier, pass and rebuild classifier with their unit and source tests, the Postgres reconciler, rebuild reads and fence in `internal/db`, the read-only guard in `internal/store`, the reversal's refund in `internal/dataplane`, `rebuild.lua`, the four local operations in `cmd/quotacore`, and the reconciliation, verify, read-only, guard, rebuild and dispute tests); and 28 by `IP-13`: the store instrument and its error-class test, the cycle, dependency and process collectors and the catalogue parser in `internal/observability` with its test, the prober in `cmd/quotacore`, the metrics, cardinality, probe, log, log-source and alert tests, the alert rules and their promtool cases, and the runbooks' index and eleven runbooks; and 9 by `IP-14`: the `internal/cli` command table, flags, client, exit codes, `init` and dispatch with their unit test, the CLI's integration tests, and [cli.md](architecture/cli.md); and 24 by `IP-15`: the `Dockerfile` and `.dockerignore`, the Postgres role script, the metrics override for Compose, the `reference` and `nightly` workflows, `tools/quickstart.sh` and `tools/idemsize`, the measurement's report, the store-full script test, the eviction, pool and shutdown tests in `cmd/quotacore`, and `test/reference`'s nine test files and two Compose overrides; and 27 so far by `IP-16`: the v0.1 evidence document, `tools/testreport` and its test, T-15, the reset worker in `internal/worker` with its test, the data plane's `Advance`, the worker's integration tests, the two property tests, the in-process chaos tests, `test/harness`'s stack, load generator, seed, sampler and measurement override, `test/load`'s load and soak tests, `test/chaos`'s tests and disk-full override, `tools/environment.sh`, the `heavy`, `full-suite` and `release` workflows, the audit `system` migration, the restore commands' tests, and the NFR-L7 overhead test) |
 
 ## Identifier namespaces
 

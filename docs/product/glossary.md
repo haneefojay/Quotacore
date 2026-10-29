@@ -42,7 +42,7 @@ most of the confusion in this product comes from words that sound right and mean
 | **Dangling key** | A key past its `cycle_end + 24h` TTL that no longer has a live tenant bound to it | A correctness risk. Expiry is garbage collection only, never the reset trigger (ADR-0003) |
 | **Denial** | A `consume` that is refused. Records no event, consumes no idempotency key, changes no balance (DR-025) | A failure. A denial is a correct, successful outcome of the business rule |
 | **DR-nnn** | A domain rule with a stable identifier in [domain-rules.md](domain-rules.md) | An ADR. Rules say what must be true; ADRs say why a choice was made |
-| **Effective entitlement** | The result of resolving the plan entitlement against the tenant override, using the fixed order in [state-machines.md](state-machines.md) section 5 | A third stored entity. It is computed, never persisted |
+| **Effective entitlement** | The result of resolving the plan entitlement against the tenant override, using the fixed order in [state-machines.md](state-machines.md) section 5, over the features the tenant is pinned to | A third stored entity. It is computed, never persisted. What is persisted is the tenant's **pins**, the cadence and feature set it was anchored on; the limit is still resolved (amended 2026-10-20, `IP-10`) |
 | **Expiry** | The Redis TTL on a key, set to `cycle_end + 24h` so a live key cannot disappear | The reset mechanism. Expiry never resets a balance |
 | **External ID** (`external_id`) | The customer's own stable identifier for a tenant, matching `[A-Za-z0-9._:-]{1,128}` | A username, an email address, or an internal database identifier. It is opaque to Quotacore |
 
@@ -70,6 +70,7 @@ most of the confusion in this product comes from words that sound right and mean
 | **Override** | A per-tenant modification of one feature's limit or interval, taking precedence over the plan (DR-011, DR-013 note) | A second plan, a discount, or a promotion. It cannot add a feature the plan excludes |
 | **P-n** | A persona in [foundation-and-personas.md](foundation-and-personas.md) | A privilege or a plan |
 | **Plan** | A named, versioned set of entitlements, assignable to tenants. Exactly one per tenant (DR-011) | A subscription, a price, or an invoice. There is no money in this product |
+| **Pin** | What a tenant was anchored on for one feature: the cadence its cycle index is counted in, and, for a feature since removed from its plan, the limit it had and when it lapses. Written at every re-anchor ([data-model.md](../architecture/data-model.md) §2.10) | A cached copy of the plan. A pin changes only at the tenant's next re-anchor, which is why an interval edit does not renumber an open cycle |
 | **Plan key** | The stable, customer-chosen string identifying a plan | A database key or a Redis key |
 | **Proration** | Crediting the unused remainder of a cycle when a plan changes mid-cycle. Not implemented (DR-013) | Rounding. Nothing here rounds |
 | **P-1..P-4** | Personas | Priorities |
@@ -81,6 +82,7 @@ most of the confusion in this product comes from words that sound right and mean
 
 | Term | Definition | Not |
 | --- | --- | --- |
+| **Re-anchor** | Moving a tenant's anchor to a new instant, by a plan change or an apply-now, which starts cycle 0 under the new anchor, re-pins the tenant and discards its balances (DR-013). The balances are rewritten after the commit by the re-anchor drain | A rollover. A rollover advances the index under one anchor; a re-anchor restarts it |
 | **Replayed** | An idempotency-key repeat whose fingerprint matches: the stored response is returned with `replayed: true` and nothing changed | A retry that re-applied the mutation. A replay never mutates |
 | **Reset interval** | One of `hourly`, `daily`, `weekly`, `monthly`, `yearly`, `never` | A duration in seconds, or a cron expression. A `monthly` tenant is not "every 30 days" |
 | **Rolling window** | A lookback of a fixed duration over recent events, requested per call, in the current cycle. v0.2 | A sliding counter with exact boundary semantics, or a moving average. The MVP does not do this (ADR-0008) |

@@ -61,14 +61,17 @@ Given  balance 100
 When  the same Idempotency-Key is sent 50 times concurrently with amount 30
 Then  exactly one deduction of 30 occurs
 And   the final balance is 70
-And   all 50 responses are byte-identical
+And   all 50 responses carry the same state: balance, limit, bonus, cycle index and both window ends
+And   the one applied response and the 49 replays differ only in `replayed` and `Idempotent-Replay`
 And   exactly one usage_events row exists
-And   each response has Idempotent-Replay: true except the first
+And   each response after the first has Idempotent-Replay: true
 ```
 
-Byte-identical is deliberate. A replayed response that differs in a timestamp or a rounding
-artifact forces clients to diff, and a client that diffs will eventually decide the service is
-inconsistent.
+The state every caller is told must be identical, because a replayed response that differs in a
+timestamp or a rounding artifact forces clients to diff, and a client that diffs will eventually
+decide the service is inconsistent. The responses themselves are not byte-identical, and that is
+deliberate: the first body says `applied` and the rest say `replayed`, so a client can tell a
+first delivery from a replay without comparing bodies (DR-027, api-conventions.md §6 and §7.1).
 
 ### T-03 — Idempotency fingerprint mismatch
 
@@ -97,6 +100,12 @@ Run over every state in a generated state space: all combinations of limit, bonu
 within range, with every operation applied in every order. This is a property test, and it is the
 one that most reliably finds an ordering bug in a script (see section 3).
 
+> **Amended 2026-10-20 (`IP-10`).** The grant line contradicted DR-020: a grant raises the bonus
+> with the balance, so a grant of 1 here makes `balance 101`, `bonus 1`, under a ceiling of 101,
+> and holds the invariant by construction. The ceiling a grant can break is `2^53 − 1` (DR-022),
+> and the admin operation the invariant refuses is a `set` above `limit + bonus`: with the state
+> above, a `set` of 101 is `409 grant_exceeds_ceiling` and the balance is still 100.
+
 ### T-05 — Monotonic rollover
 
 ```
@@ -123,6 +132,13 @@ And   the cycle_index jumped by 3, not by 1
 
 Parametrised over 1 hour, 1 day, 31 days, 97 days, 400 days and 4 years, because a rollover bug
 that only appears after a long idle period is the kind that is discovered in an incident.
+
+> **Amended 2026-10-20 (`IP-10`).** A second half covers a plan applied across an outage. A plan
+> edit followed by each idle period above produces one transition, to the current window, at the
+> new limit. An apply-now and a plan change committed while the fast store is unreachable leave
+> pending re-anchors; no tenant is served a fresh allowance before its drain, no pending row is
+> lost, two instances draining together re-anchor a tenant once, a restart or a second drain
+> changes nothing, and no tenant is left on its old anchor once the store returns.
 
 ### T-07 — Boundary table
 
@@ -165,6 +181,14 @@ For every tenant and feature in a generated dataset, assert the four-way agreeme
 nightly suite against a dataset that has had thousands of operations, rollovers, grants, sets and
 plan changes applied to it, because a reconciliation test on a clean dataset proves nothing.
 
+Amended 2026-10-20 (`IP-11`): no nightly suite exists before `IP-16`, so CI runs T-11 on every
+change against a seeded dataset of several hundred operations over hourly, monthly and `never`
+features in three zones, with `verify-all` and the in-service pass both required to find nothing;
+then five faults are injected one per tenant-feature (an event dropped mid-cycle, at the end of a
+closed cycle and at the end of the open one, a `balance_after` altered in place, and a hash
+balance altered in the store), and each must be found under its own kind, counted once across two
+passes, and corrected by nothing. The nightly run at thousands of operations is `IP-16`'s.
+
 ### T-12 — Wide `apply-now` needs a confirmation
 
 A `POST /v1/admin/plans/{id}/apply` against a plan with more assigned tenants than
@@ -192,11 +216,20 @@ Given  a consume of 30 that completed, with its idempotency record written
 When  the fast store is flushed, then rebuilt from the ledger
 And    the client retries the identical request inside the 24 h window
 Then   the second deduction is applied, because the record is gone
-And    reconciliation detects the duplicate event_id
+And    reconciliation detects the second deduction under that idempotency key
 And    exactly one refund of 30 is issued against that key
 And    the tenant's net balance equals a single charge of 30
 And    a second reconciliation pass issues no further refund
 ```
+
+Amended 2026-10-20 (`IP-11`): the sixth line's refund cannot run under the client's key, which
+still holds the first deduction's record; it runs under `#reversal/<event_id>`, and the client's
+key is carried on the reversal's row, so filtering the events by that key returns the deduction,
+the duplicate and the reversal (DR-049's note).
+
+Amended 2026-10-20 (`IP-12`): the fifth line read "detects the duplicate event_id". The replayed
+request is a new mutation with its own `event_id`; what repeats is the idempotency key, which is
+what the partial unique index detects (DR-049's note).
 
 The third assertion is the one that makes the guarantee honest: the system is not pretending the
 second charge did not happen, it is undoing it. Runs in the nightly suite because it requires a
@@ -226,7 +259,7 @@ The generator is not a fuzzer over bytes; it is a generator over **valid operati
 | The same key never applies twice | Random sequences with deliberate repeats | One deduction per key, always |
 | `balance == opening + Σ(delta)` per cycle | Random sequences crossing boundaries | The DR-042 identity holds for every cycle |
 | The projected window equals the computed window | Random anchors, intervals, zones and times | The transition's view and the engine's pure function always agree |
-| Rounding and formatting round-trip | Random instants and zones | A rendered timestamp parses back to the same instant at the same offset |
+| Rounding and formatting round-trip | Random instants and zones | A rendered timestamp parses back to the same instant at the same offset. Amended 2026-10-28 (`IP-16`): for a boundary, the same instant rounded up to its second ([api-conventions.md](api-conventions.md#3-time) §3) |
 
 **Shrinking is mandatory.** A property test that reports a violation with a 4,000-step sequence
 and no minimal example will be ignored, and therefore will not be fixed. The generator shrinks to
@@ -242,7 +275,7 @@ is possible because the scripts are static and take everything they need as `ARG
 | --- | --- |
 | The happy path, per script | The expected balance and return shape |
 | Every return branch | Each documented status is reachable, which stops dead code accumulating in a script |
-| `EXPIREAT` set to `window_end + 24h` | INV-C6, asserted by reading `PTTL` |
+| No expiry on a balance hash, whatever its window | INV-C3, asserted by reading `PTTL` as `-1` after every script, a stale call included. Amended 2026-10-20: this row asserted `window_end + 24h` |
 | `reset_interval = never` | No expiry is set at all, asserted by reading `PTTL` as `-1`, and the balance survives a simulated boundary (DR-008). The mirror of the row above: a `never` entitlement is the case where the key outlives every cycle |
 | No `KEYS`, no `SCAN`, no unbounded loop | A source-level assertion over the script text, plus a fuzz test asserting execution time is flat as metadata and key length grow |
 | A `NOSCRIPT` condition | The client re-registers with `SCRIPT LOAD` and the request succeeds |
@@ -271,6 +304,28 @@ The ledger-saturation test asserts a negative: that enforcement latency is *unch
 ledger pressure. That is the property that justifies dropping events rather than blocking, and it
 needs a test, because the intuitive alternative is to block.
 
+> **Amended 2026-10-28 (`IP-16`) — how the table is run.** The suite is `test/load`, against the
+> built image on the stack of `test/harness/compose.perf.yml`: the service and both stores pinned to
+> two CPUs, the reference host of NFR §0, with the generator on the runner's other two. The
+> generator is open loop, so a stall is counted rather than omitted.
+>
+> - **Latency rows.** NFR-L1 to L3 and L5 are gated on the service's own time for each request,
+>   read from its access log, and the client's figure is recorded beside it. A hosted runner's
+>   network hop costs a few hundred microseconds of idle wake-up that the service does not cause.
+>   NFR-L3's "10× expected peak" is [Q-30](../product/assumptions-and-open-questions.md#2-open-questions);
+>   the burst run's p99.9 is recorded as information.
+> - **Idempotency scale.** Not re-run for 24 h: `IP-15` measured the bytes per record
+>   (deployment §5). The sustained run checks that the store grows by that figure per record
+>   within 10%, and that it refuses nothing.
+> - **Soak.** 5 h 30 m at 500 consumes a second, weekly and before a release. A hosted runner's
+>   job ends at 6 h. Every 30 s the run samples memory, goroutines, open descriptors, the store's
+>   memory and the clock skew. Over the second half, a least-squares slope projected across that
+>   half must stay within noise. Counter drift is checked at the end: one ledger row per success,
+>   and the balances sum to what was granted less what was consumed. `QUOTACORE_SOAK_DURATION`
+>   runs it for 24 h on a self-hosted runner, with nothing else changed.
+> - **Boundary-crossing.** The rollover overhead (NFR-L7) is measured by
+>   `TestNFRL7RolloverOverhead` in `internal/script`, the difference of two medians against the real store, per commit.
+
 ## 6. Chaos tests
 
 Run nightly, against a real stack, with fault injection at named points.
@@ -292,6 +347,23 @@ Run nightly, against a real stack, with fault injection at named points.
 | Slow drain of the ledger writer | Fill the queue, then stop the writer | Drops are counted; enforcement is unaffected |
 | SIGTERM under load | Graceful shutdown | In-flight requests complete; no partial state; 30 s bound (NFR-A5) |
 | Disk full on Postgres | Fill the volume | Writes fail loudly; the service does not silently accept and drop administrative mutations |
+
+> **Amended 2026-10-28 (`IP-16`) — where each row runs.**
+>
+> - **In process, under `-race` on every pull request** (`cmd/quotacore/chaos_test.go`), for the
+>   rows a proxy or a store command can inject: one balance hash deleted, latency at 400 ms and
+>   2 s, and pub/sub muted. The first two data-store rows are `IP-07`'s
+>   `TestADeadDataStoreIs503WithinTheBound`. "Postgres unreachable" is `IP-04`'s
+>   `TestPostgresOutageSparesCachedTenants`, and under load it is `test/load`'s
+>   `TestPostgresOutageUnderLoad`. The slow drain is `IP-12`'s `TestLedgerSaturationLeavesEnforcementAlone`.
+> - **Against the reference stack.** The flush and the restore are `test/reference`'s drill and
+>   `T-14`. `SIGTERM` under load is `TestAStopDrainsWithinTheGrace`. Refusing to start without
+>   Postgres is a CI step.
+> - **`test/chaos`** runs disk full, on a tmpfs Postgres it fills, and the clock pair. The clock
+>   pair moves the runner's clock with `date` in a job of its own and puts it back.
+>
+> A host jump moves the data store's clock with the service's, so it fires the stale-rollover
+> alert but cannot fire the skew alert. The skew alert is proved by `IP-13`'s alert-rule cases.
 
 The clock-jump tests are the ones most likely to be removed because they are inconvenient. They
 are also the only proof that a monotonic guard behaves correctly when the world is inconsistent,

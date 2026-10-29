@@ -1,0 +1,21 @@
+# Configuration for ogen, the generator ADR-0010 selects.
+#
+#   ogen --config api/.ogen/ogen.yml --package api --target api api/openapi.yaml
+#
+# `disable_all: true` with nothing re-enabled is the whole point of this file, and it is
+# deliberate rather than minimal. ogen's default output includes a router, a client, an
+# OpenTelemetry layer and a full set of unimplemented handlers. The router is the one that
+# would do real damage here: generated unimplemented handlers answer 501, and this product
+# already has a catalogue code called not_implemented meaning "a v0.2 surface called on an MVP
+# build". Two meanings on one status is how an operator loses an hour. The routes themselves
+# belong to IP-07 and IP-09.
+#
+# What is left is what IP-02 needs: the types, the JSON codecs, and the request validation.
+# ADR-0010 asks for types and request validation generated from the document, and DoD item 2
+# and item 3 are both about the validation being real rather than aspirational.
+#
+# `packages` is set so ogen does not also try to generate a version package or an error package
+# under a second directory, which it would otherwise treat as part of the same output tree.
+generator:
+  features:
+    disable_all: true

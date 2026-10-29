@@ -205,7 +205,7 @@ CYCLE_TRANSITION(cycle_index, target_index, window_start, window_end, limit, bon
      window_end   = window_end
      balance      = limit                               # fresh allowance, no carry-over
      bonus        = 0                                    # DR-020
-     EXPIREAT     = window_end + 24h
+     PERSIST                                            # no expiry (INV-C3, amended 2026-10-20)
      emit cycle_rolled_over
      return ROLLED
 ```
@@ -217,12 +217,22 @@ Four properties, each of which corresponds to a failure that a naive implementat
 | Step 2 refuses to move backwards | A duplicated or delayed worker re-granting a stale allowance. The single most dangerous bug in a lazy-rollover design |
 | Step 3 is a single comparison | The hot path does not reset on every request, which is the whole point of lazy rollover |
 | Step 4 computes from the passed target | No accumulation of floating-point or rounding error, and identical results in the request path and the worker |
-| `EXPIREAT` is `window_end + 24h` | A key expiring before a rollover could need it. A `DUE` expiry is a correctness bug; a late expiry is only a dangling key (INV-C6) |
+| `PERSIST`, no expiry | A key expiring before a rollover could need it. Amended 2026-10-20: this was `EXPIREAT window_end + 24h`, and with no worker an idle tenant's key expired before its next request needed it (INV-C3) |
 
 **The worker and the request path call the same function.** There is no second implementation. If
 the two ever diverged, a race would produce either a duplicate allowance or a lost deduction, and
 the divergence would be invisible in testing. This is the strongest structural guarantee in the
 system and it costs nothing.
+
+**Re-anchors are not transitions.** A plan change or an apply-now moves the anchor, and a cycle
+index means something only under one anchor, so the new windows cannot be reached by the steps
+above: step 2 would refuse every one of them as stale. The control plane instead rewrites each hash
+to the window the new anchor puts the current instant in, at the new limit, with a
+compare-and-set on the window it read, and the request path keeps serving the old numbering until
+that rewrite lands (`IP-10`; [consistency-and-recovery.md](consistency-and-recovery.md#3-dependency-failure-matrix)).
+A rewrite never runs on the request path. The grant, set and re-limit scripts the admin routes run
+open with the transition above, byte for byte, so a grant to an idle tenant lands in the current
+cycle, not the closed one.
 
 ## 6. Test matrix
 
@@ -234,10 +244,10 @@ exact RFC 3339 timestamps with offsets.
 | 1 | UTC | hourly | 00:00 | 03:30 | 03:00 | 04:00 | DR-003 |
 | 2 | UTC | daily | 2026-01-01 00:00 | 2026-01-05 12:00 | 2026-01-05 | 2026-01-06 | DR-003 |
 | 3 | UTC | daily | 2026-03-28 00:00 | 2026-03-30 12:00 | 2026-03-30 | 2026-03-31 | DR-003 |
-| 4 | Europe/Berlin | daily | 2026-03-01 00:00 | 2026-03-30 12:00 | 2026-03-30 00:00 +01:00 | 2026-03-31 00:00 +02:00 | DR-007 |
-| 5 | Europe/Berlin | weekly | 2026-01-05 09:00 | 2026-04-01 | 2026-03-29 09:00 +01:00 | 2026-04-05 09:00 +02:00 | DR-006 |
-| 6 | UTC | monthly | 2026-01-31 00:00 | 2026-04-10 | 2026-04-01 | 2026-05-01 | DR-004 |
-| 7 | UTC | monthly | 2026-01-31 00:00 | 2026-03-01 | 2026-03-01 | 2026-04-01 | DR-004 |
+| 4 | Europe/Berlin | daily | 2026-03-01 00:00 | 2026-03-30 12:00 | 2026-03-30 00:00 +02:00 | 2026-03-31 00:00 +02:00 | DR-007 |
+| 5 | Europe/Berlin | weekly | 2026-01-05 09:00 | 2026-04-01 | 2026-03-30 09:00 +02:00 | 2026-04-06 09:00 +02:00 | DR-006 |
+| 6 | UTC | monthly | 2026-01-31 00:00 | 2026-04-10 | 2026-03-31 | 2026-04-30 | DR-004 |
+| 7 | UTC | monthly | 2026-01-31 00:00 | 2026-03-01 | 2026-02-28 | 2026-03-31 | DR-004 |
 | 8 | UTC | yearly | 2026-01-01 | 2028-06-01 | 2028-01-01 | 2029-01-01 | DR-005 |
 | 9 | UTC | yearly | 2024-02-29 00:00 | 2025-06-01 | 2025-02-28 | 2026-02-28 | DR-005, degraded |
 | 10 | UTC | yearly | 2024-02-29 00:00 | 2028-06-01 | 2028-02-29 | 2029-02-28 | DR-005, restored on a leap year |
@@ -262,6 +272,16 @@ instead produces 2025-02-28, 2026-02-28, 2027-02-28, 2028-02-28 — permanently 
 no error, no exception and no failed test anywhere else in the matrix. Row 10 is the assertion that
 finds it, which is why it is in the table rather than left to review.
 
+**Correction, 2026-09-28, by `IP-03`.** Rows 4–7 originally carried four date-math errors that
+neither the checker nor the rest of the matrix could detect: a Berlin daily boundary at `2026-03-30
+00:00` was written `+01:00` though EU summer time began 2026-03-29 (DR-007, [ADR-0007](../decisions/0007-per-tenant-timezone.md));
+a weekly boundary was written on a Sunday, two full days before the anchor's weekday; and the two
+monthly rows with a 2026-01-31 anchor were written as if the anchor were the 1st, contradicting
+DR-004's clamping example. The corrected cells above were each verified against Go's own tzdata,
+which is the same calendar authority the binary embeds, and against the web-sourced transition dates
+stated in [ADR-0007](../decisions/0007-per-tenant-timezone.md). The values asserted in the test
+fixture (T-07) are the corrected ones.
+
 ## 7. Interaction with overrides and plan changes
 
 | Event | Effect on the cycle | Rule |
@@ -279,6 +299,17 @@ The last row is a genuine consequence of the pure-function design and worth stat
 override that changes the **interval** cannot be applied to a running cycle without invalidating
 the anchor relationship, so it takes effect at the next boundary or requires an explicit apply.
 Changing only the **limit** has no such constraint.
+
+> **Amended 2026-10-20 (`IP-10`).** Three rows read two ways and are settled as follows. **Override
+> set, `immediate`**: the limit re-limits the open cycle when the override is written; the balance
+> moves by the same difference as the limit, floored at zero, and the window is unchanged.
+> **Force rollover**: a refill of the window the anchor puts the current instant in, at the
+> effective limit with a zero bonus, whatever was stored, which also repairs a stored index that
+> is ahead (C-5's note); mid-cycle the transition would do nothing. **Interval change**, on a plan
+> or an override: it reaches an existing tenant at its next **re-anchor**, not its next boundary,
+> because the tenant's cadence is pinned until then (E-3's note); a natural boundary under the old
+> cadence would otherwise be renumbered under the new one. A plan edit's **limit** lands at the
+> next boundary as the first row says, and a plan edit never moves a boundary.
 
 ## 8. Failure modes specific to this component
 

@@ -10,21 +10,44 @@
 
 | Field | Value |
 | --- | --- |
-| Stage | Specification complete, implementation not started |
+| Stage | v0.1 complete — [evidence](docs/release/v0-1-evidence.md) |
 | Version target | v0.1.0 (MVP) |
 | Canonical name | Quotacore. "Threshold" is a deprecated alias and must not appear in code, docs or marketing |
 | Licence | Apache-2.0 — [LICENSE](LICENSE), decided in [ADR-0014](docs/decisions/0014-apache-2-0-license.md) |
 | Specification frozen | 2026-09-27 |
 | Owner | Project owner |
 | Language and stack | Go 1.27, PostgreSQL 16+, Redis-compatible store (Valkey by default) |
-| Decisions | 17 accepted, none superseded |
-| Open questions | 21 logged, none blocking — [register](docs/product/assumptions-and-open-questions.md) |
+| Decisions | 17 accepted, and ADR-0012 superseded by ADR-0018 on 2026-10-19 |
+| Open questions | 31 logged, none blocking — [register](docs/product/assumptions-and-open-questions.md) |
 
-**Current phase.** The specification is complete and internally consistent, and every blocking
+**v0.1 status (2026-10-29).** Every phase from `IP-00` to `IP-16` is complete, and so is v0.1. The
+runbook and restore review carried from `IP-13` and `IP-15` was held on 2026-10-29 and approved by
+the owner. Each of the three claims, each measured NFR and
+each line of [mvp-scope.md](docs/product/mvp-scope.md#3-definition-of-done-per-capability) §3 is
+in [the v0.1 evidence](docs/release/v0-1-evidence.md), with the test that proves it, the run it was
+measured in, and the named gaps. Merging `dev` into `main`, the `v0.1.0` tag and the signed image
+are a maintainer's steps.
+
+**How it began.** The specification is complete and internally consistent, and every blocking
 question is now answered: [Q-01, Q-02, Q-04, Q-14](docs/product/assumptions-and-open-questions.md#2-open-questions)
-and [Q-21](docs/product/assumptions-and-open-questions.md#2-open-questions). There is still no
-application code, which is correct for one more step: the first implementation task is the API
-contract, not the data plane. A market assumption is carried as a dated, owner-accepted release risk
+and [Q-21](docs/product/assumptions-and-open-questions.md#2-open-questions). Implementation has
+started, and deliberately at the bottom rather than the top:
+[`IP-01`](docs/roadmaps/v0-1-enforcement-path.md#ip-01--repository-toolchain-and-ci-foundation) built
+the repository, the toolchain and the pipeline, contains no product behaviour, and closed on
+2026-09-27. [`IP-02`](docs/roadmaps/v0-1-enforcement-path.md#ip-02--the-openapi-contract) then wrote
+the contract the code is written against — 41 operations, 67 schemas, 35 error codes, served at
+`/openapi.json` with a generated reference at `/docs` — and closed on 2026-09-28.
+[`IP-03`](docs/roadmaps/v0-1-enforcement-path.md#ip-03--cycle-engine-and-boundary-matrix), the cycle
+engine and its boundary matrix, started and closed on 2026-09-28.
+[`IP-04`](docs/roadmaps/v0-1-enforcement-path.md#ip-04--data-plane-skeleton-keyspace-and-snapshot-cache),
+the data-plane skeleton, the keyspace and the snapshot cache, started and closed on 2026-09-28 with
+all six Definition-of-Done items met; it owns `internal/store`, `internal/snapshot` and
+`internal/observability`, and the integration pair that proves NFR-D3 against the real datastore.
+The atomic scripts
+([`IP-05`](docs/roadmaps/v0-1-enforcement-path.md#ip-05--the-atomic-scripts)) were started and
+closed on 2026-09-29; it owns `internal/script` and holds the three embedded Lua bodies. A market
+assumption is carried as a dated,
+owner-accepted release risk
 ([A-01](docs/product/assumptions-and-open-questions.md#accepted-risks)) rather than a code-start
 blocker, because no amount of further specification work would settle it.
 
@@ -46,7 +69,7 @@ Each is a testable property with a test behind it, not a slogan.
 | Claim | How it is enforced | How it is proven |
 | --- | --- | --- |
 | **Atomic by construction** — check and deduct are one indivisible datastore operation | One Lua script execution — [ADR-0002](docs/decisions/0002-lua-scripts-for-atomicity.md) | 200 concurrent requests against a balance of 100, exactly 100 allowed — [T-01](docs/architecture/testing-strategy.md#t-01--atomic-decrement-under-contention) |
-| **Correct under retry** — a client that retries is charged once, and a double charge caused by store loss is reversed ([ADR-0017](docs/decisions/0017-noeviction-and-duplicate-reversal.md)) | Required idempotency key, recorded in the same atomic execution — [ADR-0004](docs/decisions/0004-idempotency-prevention-and-detection.md) | 50 concurrent retries, one deduction, byte-identical replies — [T-02](docs/architecture/testing-strategy.md#t-02--idempotent-replay) |
+| **Correct under retry** — a client that retries is charged once, and a double charge caused by store loss is reversed ([ADR-0017](docs/decisions/0017-noeviction-and-duplicate-reversal.md)) | Required idempotency key, recorded in the same atomic execution — [ADR-0004](docs/decisions/0004-idempotency-prevention-and-detection.md) | 50 concurrent retries, one deduction, 49 replays that answer the recorded state — [T-02](docs/architecture/testing-strategy.md#t-02--idempotent-replay) |
 | **Correct under failure** — a missed cycle boundary cannot deny or over-grant | Lazy, monotonic, atomic rollover — [ADR-0003](docs/decisions/0003-lazy-monotonic-cycle-rollover.md) | Idle across three boundaries: one allowance, one event — [T-06](docs/architecture/testing-strategy.md#t-06--missed-boundaries) |
 
 ## Reading order
@@ -66,7 +89,7 @@ Each is a testable property with a test behind it, not a slogan.
 | --- | --- |
 | [PRD.md](PRD.md) | Requirements, personas, success metrics, scope boundary |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System shape, components, data model, runtime flow |
-| [TECHNICAL-DECISIONS.md](TECHNICAL-DECISIONS.md) | Index of all 17 ADRs with rationale and revisit triggers |
+| [TECHNICAL-DECISIONS.md](TECHNICAL-DECISIONS.md) | Index of all 18 ADRs with rationale and revisit triggers |
 | [SECURITY.md](SECURITY.md) | Threat model, controls, gaps, incident response |
 | [ROADMAP.md](ROADMAP.md) | Release sequencing and what gates each phase |
 | [AGENTS.md](AGENTS.md) | How to work in this repository: reading order by task, change recipes, traps, definition of done |
@@ -76,7 +99,7 @@ Each is a testable property with a test behind it, not a slogan.
 
 ## Documentation map
 
-63 documents. `docs/README.md` is the full index with reading paths. `docs/roadmaps/roadmap-index.md`
+79 documents. `docs/README.md` is the full index with reading paths. `docs/roadmaps/roadmap-index.md`
 is the execution plan: 28 phases, with the specification gate now passed.
 
 ```
@@ -101,22 +124,52 @@ Three conventions hold throughout, and violating them is a defect:
 
 ## Getting started
 
-There is no code to run yet. The first four tasks, in order, each one a phase in
+The first four tasks, in order, each one a phase in
 [roadmap-index.md](docs/roadmaps/roadmap-index.md#4-phase-map):
 
 1. ~~Close the four blocking open questions in
    [the register](docs/product/assumptions-and-open-questions.md#2-open-questions).~~ Done on
    2026-09-27, along with the eviction question that sat beside them. `IP-00` is `COMPLETE`.
-2. `IP-01`: the repository, the toolchain and the CI pipeline. `go.mod`, the embedded up-only
-   migrations, the development Compose file, and a pipeline that runs the checks in this file.
-   There is no product behaviour in it.
-3. `IP-02`: `api/openapi.yaml`, generated from the contract rather than written ahead of it, and
-   the validation and the reference it produces —
-   [ADR-0010](docs/decisions/0010-go-chi-spec-first-openapi.md).
-4. `IP-03`: the cycle engine and its boundary test table, which is the component most likely to
-   contain a silent permanent defect — [cycle-engine.md](docs/architecture/cycle-engine.md). The
-   atomic script and T-01, T-02 and T-09 follow it; if those three pass, the central argument of
-   the product holds.
+2. ~~`IP-01`: the repository, the toolchain and the CI pipeline.~~ Closed on 2026-09-27 with all six
+   Definition-of-Done items met, after item 4 was amended by its owner so that the base-image half
+   of the SBOM obligation moved to `IP-15`, which owns the image. `go.mod` with the module graph
+   pinned, the `Makefile` whose targets are the documented steps, the two health probes in
+   `internal/api`, embedded up-only migrations in `internal/db`, the service entry point, the licence
+   gate and SBOM, and a pipeline that runs the checks in this file. There is no product behaviour in
+   it, which a test asserts rather than claims. The steps and the evidence are in
+   [the phase section](docs/roadmaps/v0-1-enforcement-path.md#ip-01--repository-toolchain-and-ci-foundation).
+3. ~~`IP-02`: the OpenAPI contract.~~ Closed on 2026-09-28 with all seven Definition-of-Done items
+   met: `api/openapi.yaml` written from the specification rather than ahead of it, covering 39
+   operations, 67 schemas and all 34 catalogue codes; the types, JSON codecs and validation generated
+   from it, with no router and no unimplemented handler; the contract served at `/openapi.json`; and
+   a self-contained generated reference at `/docs`. The generator, the page and the served document
+   are all checked for drift, and the catalogue, matrix, example, header, scope and schema claims in
+   [api-conventions.md](docs/architecture/api-conventions.md#13-contract-tests) are enforced by named
+   tests. It contains no product behaviour either, and `TestNoProductBehaviour` fails if that ever
+   stops being true. The steps and the evidence are in
+   [the phase section](docs/roadmaps/v0-1-enforcement-path.md#ip-02--the-openapi-contract).
+4. ~~`IP-03`, `COMPLETE` (closed 2026-09-28): the cycle engine and its boundary
+   test table — the component most likely to contain a silent permanent defect, which verification
+   proved it did: rows 4–7 of the table were wrong and are corrected —
+   [cycle-engine.md](docs/architecture/cycle-engine.md). The atomic script and T-01, T-02 and T-09
+   follow it; if those three pass, the central argument of the product holds.~~
+5. ~~`IP-04`, `COMPLETE` (closed 2026-09-28): the data-plane skeleton, the keyspace and the snapshot
+   cache — `internal/store` for every key [data-model.md](docs/architecture/data-model.md) section 3.1
+   names, `internal/snapshot` for the bounded cache that enforces against a snapshot, and
+   `internal/observability` for the seven collectors. NFR-D3 (a control-plane change visible within
+   a second) is proven in CI against a real datastore, NFR-T7 (the snapshot within its memory cap) is
+   proven by a runtime measurement, and the two source checks pin the data plane off the control
+   plane and off `KEYS`/`SCAN`. The phase contains no product behaviour and no routes; the chaos
+   verdicts that make it observable arrive with `IP-07`.~~
+6. `IP-05`, `COMPLETE` (2026-09-29): the atomic scripts (`check`, `consume`, `refund`) that make a
+   decision and a mutation one indivisible step, embedding the IP-03 cycle transition inside the
+   keyspace `IP-04` defined. T-01, T-04, T-05, T-08, T-09 and T-10 are proven against a real
+   valkey: 200 concurrent decrements of 100 succeed exactly 100 times and leave the balance at
+   zero, 50 callers that all discover a closed boundary re-grant it once, and a command sent over a
+   raw socket is applied whole or not at all. The scripts are embedded in the binary, addressed by
+   digest, and reload themselves after a flush. T-02 and T-03 are `IP-06`'s, because the
+   idempotency record is written inside these same scripts; the process-level forms of T-09 and
+   T-10 are `IP-07`'s, because that is where there is a process to kill.
 
 Run the specification's own consistency checks at any time. One command verifies every link and
 anchor, every identifier reference, that nothing is defined twice, that the inventory in

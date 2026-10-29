@@ -87,7 +87,7 @@ Requirements here are elaborated in [security-model.md](security-model.md).
 | NFR-S7 | Dependencies are pinned, and the build produces an SBOM with licence information |
 | NFR-S8 | Lua scripts are static, shipped in the binary, and never assembled from customer input. A scripting injection vulnerability is a P0 class defect |
 | NFR-S9 | The service refuses to start rather than run with a default bootstrap key that has not been acknowledged |
-| NFR-S10 | Every response carries `X-Request-Id`; every log line carries it; it is quoteable in a bug report |
+| NFR-S10 | Every response carries `X-Request-Id`; every log line carries it; it is quoteable in a bug report. Amended 2026-10-21 (`IP-13`): every line a request causes carries its id, and a line no request caused carries a `job` instead ([observability.md section 2](observability.md#2-structured-logs)) |
 
 ## 6. Observability
 

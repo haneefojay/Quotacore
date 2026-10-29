@@ -9,19 +9,20 @@ release in [mvp-scope.md](docs/product/mvp-scope.md).
 
 ## Current position
 
-**Specification complete; implementation not started.** 63 documents, 17 accepted decisions, 15
-named correctness tests, 34 error codes, 49 domain rules — and no code. That is deliberate: the
-specification is the deliverable of the current phase, and [Gate 0](#gate-0--unblock-the-specification)
-is now closed. See
+**Specification complete; implementation started.** 79 documents, 17 accepted decisions, 15
+named correctness tests, 35 error codes, 49 domain rules — and the first code, in
+[`IP-01`](docs/roadmaps/v0-1-enforcement-path.md#ip-01--repository-toolchain-and-ci-foundation),
+which owns no product behaviour. See
 [the register](docs/product/assumptions-and-open-questions.md#2-open-questions).
 
 ## Execution plan
 
 This document is release slicing: **what** ships, in **which** release, and what it must not contain.
 The order of the work inside a release, and what proves each piece of it finished, is in
-[docs/roadmaps/](docs/roadmaps/roadmap-index.md) — 28 phases, `IP-00` to `IP-27`, with `IP-00` `COMPLETE`
-and `IP-01` the only unblocked phase. Read the index before starting anything;
-a phase is not the same thing as a release, and this file does not change when a phase does.
+[docs/roadmaps/](docs/roadmaps/roadmap-index.md) — 28 phases, `IP-00` to `IP-27`, with `IP-00` and
+`IP-01` `COMPLETE` as of 2026-09-27 and `IP-02` and `IP-03` unblocked. Read the index before
+starting anything; a phase is not the same thing as a release, and this file does not change when a
+phase does.
 
 | Release | Phases | Document |
 | --- | --- | --- |
@@ -63,20 +64,26 @@ and each now points at the document that answers it.
 One job, done correctly: **metered enforcement on the request path, with a calendar reset.** Nothing
 else ships.
 
-- [ ] `api/openapi.yaml`, spec-first, with validation generated from it
-- [ ] Cycle engine and its boundary test matrix — the component most likely to hide a silent,
+**Status (2026-10-29): complete.** The items are built, the exit criteria are met, and the runbook
+and restore review was held and approved on 2026-10-29. The proof is in
+[the v0.1 evidence](docs/release/v0-1-evidence.md), whose §5 names what is left: the release acts.
+
+- [x] `api/openapi.yaml`, spec-first, with validation generated from it
+- [x] Cycle engine and its boundary test matrix — the component most likely to hide a silent,
       permanent defect
-- [ ] Four atomic scripts: `consume`, `refund`, `check`, `balance`
-- [ ] Snapshot cache with generation-versioned invalidation
-- [ ] Control plane: tenants, features, plans, entitlements, API keys, audit
-- [ ] Plan `apply` with the `409 confirmation_required` handshake above the configured threshold, and
+- [x] Atomic enforcement scripts: `consume`, `refund` and `check` in the binary, with the balance
+      read served from the fast store in one round trip
+- [x] Snapshot cache with generation-versioned invalidation
+- [x] Control plane: tenants, features, plans, entitlements, API keys, audit
+- [x] Plan `apply` with the `409 confirmation_required` handshake above the configured threshold, and
       the read-only `GET /v1/admin/plans/{id}/impact` preview ([Q-04](docs/product/assumptions-and-open-questions.md#2-open-questions),
       [Q-14](docs/product/assumptions-and-open-questions.md#2-open-questions))
-- [ ] Embeddable CLI for tenant, plan, feature, key and status management
-- [ ] Signed-delta usage ledger, writer, optional replica, archiver
-- [ ] Metrics, structured logs, the two money counters, a counter for each of the 34 error codes
-- [ ] Docker image, `docker compose up` reference deployment, migration and restore rehearsal
-- [ ] All 15 correctness tests and the 7 further suites, in CI, with the three headline tests — [T-01](docs/architecture/testing-strategy.md#t-01--atomic-decrement-under-contention),
+- [x] Embeddable CLI for tenant, plan, feature, key and status management
+- [x] Signed-delta usage ledger, writer and archiver (amended 2026-10-20, `IP-12`: this read "optional
+      replica", which [mvp-scope.md](docs/product/mvp-scope.md) §4c never scoped; the table is the interface)
+- [x] Metrics, structured logs, the two money counters, a counter for each of the 35 error codes
+- [x] Docker image, `docker compose up` reference deployment, migration and restore rehearsal
+- [x] All 15 correctness tests and the 7 further suites, in CI, with the three headline tests — [T-01](docs/architecture/testing-strategy.md#t-01--atomic-decrement-under-contention),
       [T-02](docs/architecture/testing-strategy.md#t-02--idempotent-replay) and
       [T-09](docs/architecture/testing-strategy.md#t-09--atomicity-under-failure) — written first
 

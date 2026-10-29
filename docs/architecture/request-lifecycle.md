@@ -24,15 +24,23 @@ request volume.
 ### Step 2 — Authenticate  · target ≤ 100 µs
 
 Extract the bearer token, take its public prefix, and look up the key in the **bounded in-process
-key cache** by prefix. Verify the Argon2id hash in constant time. Update `last_used_at`
-asynchronously, off the path.
+key cache** by prefix. Verify the SHA-256 digest of the secret in constant time
+([ADR-0018](../decisions/0018-api-key-format-and-verifier.md)). Update `last_used_at` asynchronously,
+off the path, at most once a minute per key.
 
 **Why the hash is verified per request and not just at cache fill.** A cached *verified* key is
 what a 24-hour key TTL, a revoked key, or a copied key would defeat. Verification is the
-mechanism; the cache only avoids the database. Argon2id is deliberately expensive, which is
-precisely why the cache is bounded and eviction is a metric.
+mechanism; the cache only avoids the database. The cache is bounded
+(`QUOTACORE_KEY_CACHE_ENTRIES`), and a miss is one bounded, rate-limited read by prefix, as DR-039
+permits for configuration. Revocation reaches the cache off the path: every invalidation message and
+every refresh tick re-reads the cached prefixes in one query.
 
-**Forbidden:** a Postgres query to re-read the key on the request path. This is the single most
+> **Amended 2026-10-19 (`IP-07`).** This step said the stored hash was Argon2id, "deliberately
+> expensive". ADR-0018 keeps ADR-0012's SHA-256, because a slow hash on every request cannot fit the
+> first claim's budget and a 256-bit random secret does not need one.
+
+**Forbidden:** a Postgres query to re-read the key on the request path, beyond the one bounded read
+on a cache miss. This is the single most
 common way the two-plane boundary is eroded, by a well-meaning "let me look up the key's scope
 fresh" change.
 
@@ -112,10 +120,13 @@ in this order and without yielding:
    opportunity: the script returns a state-missing marker, the service answers
    `503 service_unavailable`, increments `quotacore_balance_key_missing_total`, and the
    tenant-feature joins the rebuild queue. Balances are materialised at provisioning and at
-   plan-assignment time, and at no other moment (DR-045, NFR-D7).
+   plan-assignment time, and at no other moment (DR-045, NFR-D7). (Amended 2026-10-20, `IP-11`:
+   there is no persisted queue and this step writes nothing; the tenant-feature is found by
+   `quotacore rebuild`'s enumeration, DR-045's note.)
 3. **Cycle transition.** The four-step transition in
    [cycle-engine.md](cycle-engine.md#5-the-transition), including the monotonicity guard, the reset
-   to `limit`, `bonus = 0`, and the `EXPIREAT` at `window_end + 24h`.
+   to `limit`, `bonus = 0`, and a `PERSIST`, because a balance hash never expires (INV-C3; amended
+   2026-10-20, this was an `EXPIREAT` at `window_end + 24h`).
 4. **Denial check.** `balance < amount` → return a denial carrying the balance, limit, bonus and
    cycle end. No write, no event (DR-025, DR-017).
 5. **Deduct.** `balance -= amount`, using `HINCRBY` so the arithmetic cannot overflow silently.
@@ -152,6 +163,18 @@ gap; a double charge is neither (FS-10, A-16).
 **Forbidden:** waiting for the write, making the write part of the response, or silently
 swallowing the failure without a counter.
 
+> **Amended 2026-10-20 (`IP-12`) — what a write error does.** "On a full queue or a write error, the
+> event is dropped" is now three cases. A full queue drops the event (`reason="queue_full"`). A
+> transient write error — a lost connection, a timeout — holds the batch and retries it with backoff,
+> so the events already taken survive a short Postgres outage and new ones drop only as the queue
+> fills. A row the ledger refuses outright, including a second deduction under one idempotency key,
+> is kept in the dead-letter table, visible and, unless it is a duplicate, replayed (INV-U3,
+> [data-model.md](../architecture/data-model.md#212-usage-event-dead-letters)); only a row that
+> cannot even be dead-lettered is dropped as `reason="error"`. An event still queued when the
+> process stops after its grace is dropped as `reason="shutdown"`. When the request rolled a window,
+> the rollover's own `cycle_rolled_over` event is enqueued first, so it precedes the request's event
+> in the ledger's order.
+
 ### Step 10 — Observe  · off-path
 
 Emit the metrics, one structured log line, and an optional trace span. Cardinality rules in
@@ -166,7 +189,7 @@ only where the label set is bounded.
 | --- | --- |
 | `POST /v1/refund` | Same path. The script reverses direction, adds the ceiling check `balance + amount <= limit + bonus` (DR-019), and can return `409 refund_exceeds_grant`. No `quota_exceeded` is possible on this path |
 | `POST /v1/check` | Steps 1 to 6 identical. The script performs the transition (so the reported window is current) and the denial check, then **stops**. No deduction, no idempotency record, no ledger append. A denial is reported as `allowed: false` in a `200`, not as a `429` (DR-024) |
-| `GET /v1/balance` | Steps 1 to 6, then a single `HMGET` of the balance hash. No script, no mutation, no rollover. A tenant in a cycle that has ended reports the **stored** window until a write or a `check` advances it; the response therefore always includes the `limit` that *will* apply, and the docs state that the window is refreshed by any write or `check` |
+| `GET /v1/balance` | Steps 1 to 6, then one pipelined round trip of `HMGET`s, one per requested feature, all in the tenant's slot. No script, no mutation, no rollover. A tenant in a cycle that has ended reports the **stored** window and the stored `limit`, `bonus` and `balance`, as one consistent set, until a write or a `check` advances it; the configured limit applies from that transition, and the docs state that the window is refreshed by any write or `check`. A missing hash for an active feature is the DR-045 fault. A missing hash for an archived feature is not: it expired after the feature's last cycle, and the entry is omitted (amended 2026-10-19, `IP-07`) |
 | Admin endpoints | No snapshot, no script. A Postgres transaction, an audit row in the same transaction, then an invalidation publish (NFR-D3) |
 | `POST /v1/admin/plans/{id}/apply` | The count of assigned tenants is taken **before** any write, from the same transaction that would perform the re-anchor. Above the threshold the transaction writes the audit row for the refusal and nothing else, and returns `409 confirmation_required` with the token (DR-046). The confirming call repeats the count, re-checks the plan's `resource_version`, consumes the token and then re-anchors. Postgres unreachable means no count and no token, so the call is `503 control_plane_unavailable` and the operator retries; there is no partial application to reason about |
 | `GET /v1/admin/plans/{id}/impact` | A single indexed count plus a `MIN` over the assigned tenants' boundaries. No write, no audit row, no token, and no invalidation publish, because nothing changed. It is a read of the same two numbers the `409` path computes, which is why the two cannot disagree |
@@ -193,6 +216,16 @@ workload means the bound is too small and the propagation delay is worse than it
 (NFR-D3, Q-08). The bound is measured and published, not asserted. Crucially, staleness can only
 cause a **stale limit**, never a wrong boundary, because boundaries are computed from the anchor
 inside the script at request time (INV-X8).
+
+> **Amended 2026-10-20 (`IP-10`).** Each tenant also carries its **pins**: for each feature it
+> holds, the cadence it was anchored on, and for a feature retired from its plan the limit it had
+> and when it lapses. The feature set and the cadence come from the pins, and the limit from the
+> override, else the plan as it is now, so "only a stale limit" holds for a plan edit. Across a
+> plan change or an apply-now a stale snapshot also carries a stale anchor; the refresh interval
+> is refused at or above one hour so that staleness never outlives the shortest first window under
+> the new anchor, and the script answers such a request stale and changes nothing
+> ([consistency-and-recovery.md](consistency-and-recovery.md#2-why-a-stale-configuration-cannot-produce-a-wrong-cycle)).
+> Tenants pinned alike share one interned set of pins, as they share a plan.
 
 **What is deliberately not cached.** Balances. They are always read from the store, because a
 cached balance is a wrong answer, and the entire point of the strong-consistency claim is that it
@@ -229,12 +262,18 @@ For a **plan edit**, propagation carries the plan; tenants on that plan are re-r
 no per-tenant work is needed. For a **plan assignment or an override**, the affected tenant is
 refetched directly.
 
+> **Amended 2026-10-20 (`IP-10`).** A plan edit or an apply-now bumps the version of every tenant
+> on the plan, published in chunks of a thousand per `HSET`, because a plan edit can retire a
+> feature from each of them and an apply-now moves each one's anchor. A plan is interned by its id
+> and its version, so an edit is a new plan object rather than a change under tenants still
+> holding the old one.
+
 ## 5. Concurrency and the shapes it takes
 
 | Shape | What happens | Why it is correct |
 | --- | --- | --- |
 | Two requests, one balance | One succeeds, one is denied with the post-deduction balance | One script execution (NFR-T3) |
-| The same key, 50 times at once | One deduction; 49 replays of the identical response | The record is written in the same execution as the mutation (INV-I1) |
+| The same key, 50 times at once | One deduction; 49 replays, each answering the recorded state with `replayed: true` | The record is written in the same execution as the mutation (INV-I1) |
 | A request and the worker at a boundary | Both compute the same target; one applies, the other is `STALE` | Monotonic transition, one implementation (INV-C2) |
 | An admin apply-now and a `consume` | The `consume` sees the pre- or post-change limit, never a partial one | The limit is one field read in one script execution |
 | A suspension and a `consume` | The `consume` may complete if it entered the script first | Suspension is not retroactive; both actions are audited |

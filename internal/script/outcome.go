@@ -1,0 +1,301 @@
+package script
+
+import (
+	"errors"
+	"fmt"
+	"strconv"
+	"time"
+)
+
+// Decision is what a script decided about a request. It is a closed set of
+// seven, and the strings are the ones the scripts return, so a value that is
+// not in this set means the reply and this code disagree and is refused rather
+// than interpreted.
+//
+// Two of the seven say nothing about whether the request fit in the balance:
+// Replayed and Reused are what an idempotency key decides (DR-027, DR-028), and
+// both arrive before the script has looked at the balance at all.
+type Decision string
+
+const (
+	// Applied means the mutation was written, or - for Check - that the
+	// request would fit in the remaining balance.
+	Applied Decision = "applied"
+	// Denied means the balance could not cover the amount. For Consume it is
+	// quota_exceeded and the state is untouched (DR-025); for Check it is an
+	// answer that fits in a 200.
+	Denied Decision = "denied"
+	// RefusedCeiling means a refund would have pushed the balance past
+	// limit+bonus. The whole refund is refused and the balance is untouched
+	// (DR-020).
+	RefusedCeiling Decision = "refused_ceiling"
+	// StateMissing is the marker of request-lifecycle.md step 2: the balance
+	// hash is absent, or present with a field that is not a number, so there
+	// is nothing to enforce against. It is 503 service_unavailable and it
+	// writes nothing, because a balance is materialised at provisioning and at
+	// plan assignment and at no other moment (DR-045).
+	StateMissing Decision = "state_missing"
+	// Invalid means the script would not accept the arguments it was given, so
+	// it refused before reading or writing anything.
+	Invalid Decision = "invalid"
+	// Replayed means this exact logical operation was already applied under this
+	// Idempotency-Key, and the state reported is the state that was recorded then
+	// rather than the state as it stands now. The script wrote nothing and
+	// evaluated nothing: a repeat is a read (DR-027).
+	Replayed Decision = "replayed"
+	// Reused means this Idempotency-Key was already used for a different
+	// operation - a different feature, amount or operation - and the request is
+	// refused as idempotency_key_reuse. The record that was there is untouched,
+	// so the original outcome is still retrievable (DR-028, INV-I2).
+	Reused Decision = "reused"
+)
+
+// Transition is what the script found when it compared the caller's window with
+// the store's, and it is reported separately from the decision because a stale
+// caller still gets an answer: the decision is made against the state as it
+// stands, and the verdict tells the caller its window was behind (C-3).
+type Transition string
+
+const (
+	// Current means the store was already in the window the caller asked
+	// about, so no boundary had closed.
+	Current Transition = "current"
+	// Rolled means a boundary closed, and the allowance was re-granted once,
+	// here, inside the same execution as the decision (DR-045).
+	Rolled Transition = "rolled"
+	// Stale means the caller was behind the store: its window had not opened,
+	// the store had already passed the index it named, or it named an index
+	// ahead of a window that has not closed. Nothing was rolled and nothing
+	// was refused; the request was answered against the live state.
+	Stale Transition = "stale"
+)
+
+// Outcome is the state the store was left in, as the script saw it inside the
+// one execution that decided it. Reading the balance from anywhere else would
+// be a second read that can disagree with the decision (performance.md §3), so
+// these fields are the answer and the reply is not followed by a read.
+type Outcome struct {
+	Decision   Decision
+	Transition Transition
+	// Balance is what the key holds now, after the decision. For a denial or a
+	// refusal it is what it was, which is what makes "changed nothing"
+	// checkable by the caller instead of assumed.
+	Balance int64
+	Limit   int64
+	Bonus   int64
+	// Index, Start and End are the cycle the store is on, which is not always
+	// the cycle the caller asked about: a rolled outcome is on a later one, and
+	// a stale outcome is on one the caller did not name. End is nil for a
+	// `never` entitlement, which has no boundary and no expiry (DR-008).
+	Index int64
+	Start time.Time
+	End   *time.Time
+	// Closed is the balance a rollover discarded: what the cycle that ended
+	// held when this execution re-granted the allowance. It is set exactly
+	// when Transition is Rolled, except on a replay, which rolled nothing, and
+	// the caller records it as that cycle's closing (IP-12 D3).
+	Closed *int64
+}
+
+// Allowed reports whether the request fits in the balance, which is the question
+// Check exists to answer and a decision rather than a status code.
+//
+// A Replayed outcome is allowed, because the operation it stands for was
+// allowed and applied: the customer is being told the truth about a charge that
+// already happened, not being refused. A client that treated a replay as a
+// denial would report a successful call as a quota failure, which is the
+// opposite of what a retry is for.
+func (o Outcome) Allowed() bool { return o.Decision == Applied || o.Decision == Replayed }
+
+// Replayed reports whether this execution applied anything, or returned the
+// answer an earlier execution of the same logical operation recorded (DR-027).
+// It is the field a caller reads instead of comparing balances, because a
+// balance it cannot see the history of is not evidence of anything. IP-07 maps
+// it to the `replayed` body field and the `Idempotent-Replay` header.
+func (o Outcome) Replayed() bool { return o.Decision == Replayed }
+
+// Rolled reports whether this execution crossed a boundary and re-granted the
+// allowance. IP-13 counts it, and a test asserts that it happens on a crossed
+// boundary and on no other occasion.
+func (o Outcome) Rolled() bool { return o.Transition == Rolled }
+
+// ErrStateMissing is the Go name for the state-missing marker. The caller maps
+// it to 503 service_unavailable and to the missing-balance counter, both of
+// which request-lifecycle.md step 2 owns.
+var ErrStateMissing = errors.New("the balance is not there to enforce against")
+
+// ErrInvalidArgument is a request this package or the script refused before
+// touching the store. The caller maps it to 400: invalid_amount or
+// validation_failed.
+var ErrInvalidArgument = errors.New("the request would be refused as invalid")
+
+// ErrMissingIdempotencyKey is a Consume or a Refund with no Idempotency-Key.
+// DR-026 requires the key rather than making it optional, and a server that
+// generated one would generate a fresh key per attempt and protect nothing while
+// appearing to. The caller maps it to 400 missing_idempotency_key.
+var ErrMissingIdempotencyKey = errors.New("this operation requires an Idempotency-Key")
+
+// ErrIdempotencyKeyReuse is an Idempotency-Key that was already used for a
+// different operation, and it is never applied (DR-028). The caller maps it to
+// 409 idempotency_key_reuse, whose documented remedy is a new key rather than a
+// retry of this one.
+//
+// It is an error rather than an Outcome because it carries no state: the record
+// it collided with is untouched (INV-I2), and a caller that received a balance
+// with it might reasonably charge against that balance.
+var ErrIdempotencyKeyReuse = errors.New("this Idempotency-Key was used for a different operation")
+
+// replyFields is the arity of every reply, and it is fixed. A table with a
+// missing or an extra element would decode into the wrong field rather than
+// fail, so both are refused. The one exception is a replayed reply of eight,
+// the shape before the closed balance was added (IP-12 D3): a replay carries no
+// closed balance, so the eight it had are the same eight it has now.
+const replyFields = 9
+
+// stateFields is the decision, the transition and the six values of the state.
+const stateFields = 8
+
+// decode turns a script's reply into an Outcome, or into an error. It never
+// guesses: an unknown decision, an unknown verdict, a number where a string was
+// promised, an empty string where a number was promised or a number outside the
+// representable range is an error, because a plausible wrong number is worse
+// than no number.
+//
+// A state_missing, invalid or reused reply carries no values at all, and
+// requiring that emptiness is deliberate: a script that answered a fault with a
+// zero balance would let a caller that forgot to check the decision report a
+// full exhaustion, and a reused key that returned the balance of the record it
+// collided with would let a caller charge against a balance this request never
+// touched.
+func decode(op Operation, raw any) (Outcome, error) {
+	table, ok := raw.([]any)
+	if !ok {
+		return Outcome{}, fmt.Errorf("the %s script answered %T rather than a table of %d strings", op, raw, replyFields)
+	}
+	if len(table) == stateFields {
+		if d, _ := table[0].(string); Decision(d) == Replayed {
+			table = append(table[:stateFields:stateFields], "")
+		}
+	}
+	if len(table) != replyFields {
+		return Outcome{}, fmt.Errorf("the %s script answered %d fields rather than %d", op, len(table), replyFields)
+	}
+	fields, err := asStrings(op, table)
+	if err != nil {
+		return Outcome{}, err
+	}
+	return decodeFields(op, fields)
+}
+
+// asStrings requires every element of a reply to be a string.
+func asStrings(op Operation, table []any) ([]string, error) {
+	fields := make([]string, len(table))
+	for i, v := range table {
+		s, isString := v.(string)
+		if !isString {
+			return nil, fmt.Errorf("the %s script answered %q in field %d rather than a string", op, v, i+1)
+		}
+		fields[i] = s
+	}
+	return fields, nil
+}
+
+// decodeFields reads the nine fields every script that runs the shared
+// transition answers with; reanchor and rollover answer the first eight and
+// leave the closed balance empty.
+func decodeFields(op Operation, fields []string) (Outcome, error) {
+	out := Outcome{
+		Decision:   Decision(fields[0]),
+		Transition: Transition(fields[1]),
+	}
+	switch out.Decision {
+	case Applied, Denied, RefusedCeiling, Replayed:
+	case StateMissing:
+		if err := requireEmpty(op, fields); err != nil {
+			return Outcome{}, err
+		}
+		return Outcome{}, fmt.Errorf("the %s script: %w", op, ErrStateMissing)
+	case Invalid:
+		if err := requireEmpty(op, fields); err != nil {
+			return Outcome{}, err
+		}
+		return Outcome{}, fmt.Errorf("the %s script: %w", op, ErrInvalidArgument)
+	case Reused:
+		if err := requireEmpty(op, fields); err != nil {
+			return Outcome{}, err
+		}
+		return Outcome{}, fmt.Errorf("the %s script: %w", op, ErrIdempotencyKeyReuse)
+	default:
+		return Outcome{}, fmt.Errorf("the %s script answered the decision %q, which is not one of the seven", op, fields[0])
+	}
+
+	switch out.Transition {
+	case Current, Rolled, Stale:
+	default:
+		return Outcome{}, fmt.Errorf("the %s script answered the transition %q, which is not one of the three", op, fields[1])
+	}
+
+	numbers := []*int64{&out.Balance, &out.Limit, &out.Bonus, &out.Index}
+	for i, dst := range numbers {
+		n, err := parseCount(op, fields[i+2])
+		if err != nil {
+			return Outcome{}, err
+		}
+		*dst = n
+	}
+	start, err := parseMilli(op, fields[6])
+	if err != nil {
+		return Outcome{}, err
+	}
+	out.Start = time.UnixMilli(start).UTC()
+	if fields[7] != "" {
+		end, err := parseMilli(op, fields[7])
+		if err != nil {
+			return Outcome{}, err
+		}
+		converted := time.UnixMilli(end).UTC()
+		out.End = &converted
+	}
+	closed := fields[stateFields]
+	switch {
+	case closed != "" && out.Transition != Rolled:
+		return Outcome{}, fmt.Errorf("the %s script answered a closed balance %q on a %s transition", op, closed, out.Transition)
+	case closed != "" && out.Decision == Replayed:
+		return Outcome{}, fmt.Errorf("the %s script answered a closed balance %q on a replay, which rolled nothing", op, closed)
+	case closed == "" && out.Transition == Rolled && out.Decision != Replayed && op != Reanchor && op != Rollover:
+		return Outcome{}, fmt.Errorf("the %s script rolled a cycle and did not say what it closed", op)
+	case closed != "":
+		n, err := parseCount(op, closed)
+		if err != nil {
+			return Outcome{}, err
+		}
+		out.Closed = &n
+	}
+	return out, nil
+}
+
+// requireEmpty asserts that a fault carried no state at all.
+func requireEmpty(op Operation, fields []string) error {
+	for i, f := range fields[2:] {
+		if f != "" {
+			return fmt.Errorf("the %s script answered %q in field %d of a %s, which must carry no state", op, f, i+3, fields[0])
+		}
+	}
+	return nil
+}
+
+func parseCount(op Operation, s string) (int64, error) {
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 || n > bound {
+		return 0, fmt.Errorf("the %s script answered %q where a count below 2^53 was promised", op, s)
+	}
+	return n, nil
+}
+
+func parseMilli(op Operation, s string) (int64, error) {
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("the %s script answered %q where a millisecond instant was promised", op, s)
+	}
+	return n, nil
+}

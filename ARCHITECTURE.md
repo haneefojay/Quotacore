@@ -78,13 +78,19 @@ are read-only. The sole planned egress of any kind is the signed webhook in v0.3
 | Snapshot cache | Bounded, TTL'd, LRU, generation-versioned | in-process | `internal/snapshot` | data |
 | Cycle engine | Pure anchor-to-boundary calendar arithmetic | Go, no I/O | `internal/cycle` | shared |
 | Rollover worker | Opportunistic pre-advance; optional | Go | `internal/worker` | data |
-| Event buffer | In-memory deque plus channel; drops rather than blocks | Go | `internal/events` | data |
-| Event writer, replica, archiver | Append to the ledger, fan out, prune | Go + `pgx` | `internal/ledger` | control |
+| Event buffer and writer | Bounded channel; drops rather than blocks; batches, retries and dead-letters | Go | `internal/ledger` | data |
+| Ledger SQL and retention | Append to the ledger, keep what it refuses, prune by age | Go + `pgx` | `internal/db` | control |
 | Admin handler | Tenants, plans, features, keys, audit, status | Go | `internal/api/admin` | control |
 | Configuration store | Authoritative configuration, up-only migrations | `pgx`, embedded `goose` | `internal/db` | control |
 | Migrations | Embedded, up-only, applied at start-up | `goose` | `internal/db/migrations` | control |
 | Metrics | Prometheus registry and `/metrics` | Go | `internal/observability` | both |
 | Embedded UI | v0.4 only, behind a build tag | Go `embed` | `internal/ui` | control |
+
+> **Amended 2026-10-20 (`IP-12`).** The two ledger rows read "Event buffer … `internal/events`" and
+> "Event writer, replica, archiver … Go + `pgx` … `internal/ledger`". The buffer and the writer's
+> loop are one package with no SQL, because `internal/store`'s source check refuses a Postgres
+> import anywhere under `internal/` but `internal/db`; the SQL lives there. There is no replica in
+> v0.1: [mvp-scope.md](docs/product/mvp-scope.md) §4c makes the ledger table the interface.
 
 **One binary, one process, three background concerns.** There is no message broker, no job queue
 service, no cache tier and no sidecar. Background work runs in goroutines inside the same process,
@@ -120,7 +126,9 @@ webhooks in v0.3, opt-in. Nothing else, ever.
 
 The `consume` path, in order, with the failure behaviour that matters:
 
-1. **Authenticate and authorise.** Named key, `runtime` scope, constant-time Argon2id verify.
+1. **Authenticate and authorise.** Named key, `runtime` scope, constant-time SHA-256 verify
+   ([ADR-0018](docs/decisions/0018-api-key-format-and-verifier.md); this line said Argon2id until
+   2026-10-19).
 2. **Validate.** Body schema, then `external_id` and `feature_key` against the snapshot. Rejection
    is `422` or `404`, before any state is touched.
 3. **Resolve configuration.** Snapshot lookup, O(1), in memory. A miss triggers one synchronous
@@ -174,7 +182,7 @@ one balance per tenant — a trade that is stated rather than hidden.
 Structured JSON logs with a request ID on every line, Prometheus metrics, and no tracing, because
 there is no cross-service call to trace. Two metrics are treated as money counters and are alerted
 on at zero: `quotacore_event_duplicate_detected_total` and `quotacore_ceiling_violation_total`.
-Every one of the 34 error codes has a counter, and the alert table holds 16 alerts covering the
+Every one of the 35 error codes has a counter, and the alert table holds 16 alerts covering the
 failures worth waking someone for. Full list, cardinality
 discipline and the alert table: [observability.md](docs/architecture/observability.md).
 
@@ -196,6 +204,7 @@ Read in this order to build it, or in this order to review it:
 | 10 | [deployment.md](docs/architecture/deployment.md) | Images, configuration, upgrades, backup |
 | 11 | [performance.md](docs/architecture/performance.md) | Budgets and the measurement plan |
 | 12 | [testing-strategy.md](docs/architecture/testing-strategy.md) | The 15 named correctness tests and the 7 further suites that prove the claims |
+| 13 | [cli.md](docs/architecture/cli.md) | The administration commands, their routes and their exit codes |
 
 Decisions and their reasoning: [TECHNICAL-DECISIONS.md](TECHNICAL-DECISIONS.md). Risk:
 [SECURITY.md](SECURITY.md).

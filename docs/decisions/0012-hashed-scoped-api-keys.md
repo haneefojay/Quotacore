@@ -1,6 +1,6 @@
 # ADR-0012 — Hashed, scoped, rotatable API keys in PostgreSQL, with an environment bootstrap key
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-0018 ([record](0018-api-key-format-and-verifier.md)), 2026-10-19
 - **Date:** 2026-09-27
 - **Deciders:** project owner
 - **Affects:** [SECURITY.md](../../SECURITY.md), [api-conventions](../architecture/api-conventions.md), [data-model](../architecture/data-model.md)

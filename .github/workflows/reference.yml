@@ -1,0 +1,75 @@
+name: reference
+
+# The reference stack, end to end (IP-15): the image built from this commit, the README's
+# quickstart run verbatim on a clean runner, the Compose-stack suite in test/reference (the restore
+# drill, T-13, T-14, stop and kill, egress, upgrade and rollback, the image's hardening), and the
+# SBOM and licence scan over the shipped image. Called by ci.yml on every pull request and by
+# nightly.yml on a schedule.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+      - name: Module sources for the image's licence scan
+        # The scan reads each module's licence from the module cache, and the image is built
+        # inside Docker, so the runner's cache holds only what the tests compile.
+        run: go mod download
+      - name: Build the image from this commit
+        run: docker compose build quotacore
+        env:
+          QUOTACORE_REVISION: ${{ github.sha }}
+      - name: Build the previous image from the merge base
+        # Until v0.1 is tagged, "the previous release" is the previous build (IP-15 DoD 9). A base
+        # older than the Dockerfile is built with this commit's Dockerfile around its own source.
+        run: |
+          if [ -n "${GITHUB_BASE_REF:-}" ]; then
+            base="$(git merge-base HEAD "origin/$GITHUB_BASE_REF")"
+          else
+            base="$(git rev-parse HEAD~1)"
+          fi
+          # The first release into main has a merge base with no code at all, the specification
+          # commit, so there is no build to upgrade from there. The previous build is then the
+          # head branch's own parent.
+          if ! git cat-file -e "$base:go.mod" 2>/dev/null; then
+            base="$(git rev-parse HEAD^2~1 2>/dev/null || git rev-parse HEAD~1)"
+          fi
+          echo "previous build: $base"
+          git worktree add --detach /tmp/previous "$base"
+          for f in Dockerfile .dockerignore; do
+            test -e "/tmp/previous/$f" || cp "$f" "/tmp/previous/$f"
+          done
+          docker build -q -t quotacore:previous --build-arg REVISION="$base" /tmp/previous
+      - name: The README's quickstart, verbatim, on this runner
+        run: tools/quickstart.sh
+      - name: The reference suite
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -count=1 -timeout 50m -json ./test/reference/ | tee reference.json | go run ./tools/testreport -suite reference
+        env:
+          QUOTACORE_REFERENCE: '1'
+          QUOTACORE_REQUIRE_REFERENCE: '1'
+          QUOTACORE_PREVIOUS_IMAGE: quotacore:previous
+      - name: SBOM and licence scan over the shipped image
+        run: |
+          mkdir -p dist
+          make sbom IMAGE=quotacore:local SBOM=dist/sbom.image.cdx.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom-image
+          path: dist/sbom.image.cdx.json
+          if-no-files-found: error

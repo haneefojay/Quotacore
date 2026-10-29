@@ -48,16 +48,20 @@ configuration we prescribe, and a penetration test — see [§6](#6-known-gaps).
 
 ### 4.1 Authentication and authorisation
 
-Opaque 256-bit secrets, Argon2id with a per-key salt, constant-time comparison on every request,
+Opaque 256-bit secrets, stored as a SHA-256 digest, constant-time comparison on every request,
 and a bounded credential cache that holds the hash rather than a boolean. No recovery path, ever —
 a recovery path is a path for an attacker with database read access (INV-K3). Two scopes only:
 `runtime` for the four data-plane endpoints, `admin` for everything including configuration. The
-bootstrap key is printed once, and the service **refuses to start** while an unacknowledged default
-exists (NFR-S9, INV-K2).
+bootstrap key is one the operator mints and supplies, never one the service generates or prints, and
+the service **refuses to start** while a supplied key is unacknowledged (NFR-S9, INV-K2).
+
+> **Amended 2026-10-19 ([ADR-0018](docs/decisions/0018-api-key-format-and-verifier.md)).** This section said Argon2id with a per-key salt.
+> A slow hash defends nothing that a 256-bit random secret has not already defeated, and verifying one
+> on every request cannot fit the first claim's latency budget.
 
 ### 4.2 Secrets management
 
-Connection strings, the bootstrap acknowledgement and the Argon2 parameters come from the
+Connection strings and the bootstrap acknowledgement come from the
 environment and are never baked into an image. Nothing else in the schema is secret. Plaintext
 `redis://` is a startup warning honoured only with an explicit override.
 
@@ -105,6 +109,8 @@ valid key or host access.
 | 5 | No independent penetration test | Medium | No code exists to test | Before the first public release, not before the first pilot |
 | 6 | No per-tenant key issuance without a runtime key per tenant | Low | Deferred deliberately | Post-MVP |
 | 7 | The v0.4 UI's XSS and redirect surface | Unknown | Not built; requirements recorded for when it is | At the start of v0.4 |
+| 8 | `tenants.display_name` is free text, required, and could hold a person's name | Low | It is an operator label for a tenant list, never a lookup key and never logged (NFR-O6). ADR-0013 puts personal names out of scope, and nothing can enforce that on a free-text label, so the position is documentation: it names the account or workspace, not a person | If a deployment needs it enforced, a configurable pattern on the label, not a schema change |
+| 9 | `/metrics` is unauthenticated, and its series carry `key_prefix` labels | Low | Served on its own listener, `127.0.0.1:9090` by default, with a `warn` at start on any other bind; the API port answers it `404`. A prefix identifies a key and is not a credential (DR-043). Added 2026-10-21 (`IP-13`) | If a deployment must scrape across hosts, a scrape credential or mTLS on that listener |
 
 ## 7. Verification
 
