@@ -135,13 +135,19 @@ func (s *Store) TenantVersion(ctx context.Context, tenantID string) (int64, erro
 	return n, nil
 }
 
-// PublishInvalidation publishes `qc:cfg:invalidate` with a version. A control
+// PublishInvalidation publishes `qc:cfg:invalidate` with a version and the
+// moment it was published, in Unix milliseconds, which is what a subscriber
+// measures its invalidation lag from (data-model.md section 3.4). A control
 // plane write publishes after commit, best-effort (request-lifecycle.md
-// section 4); this helper exists so IP-04's tests can drive the channel without
-// a control plane, and IP-09 and IP-10 will call it after their committed
-// writes.
+// section 4).
 func (s *Store) PublishInvalidation(ctx context.Context, version int64) error {
-	return s.client.Publish(ctx, ConfigInvalidateChannel(), "{\"version\":\""+strconv.FormatInt(version, 10)+"\"}").Err()
+	return s.client.Publish(ctx, ConfigInvalidateChannel(), InvalidationPayload(version, time.Now())).Err()
+}
+
+// InvalidationPayload is the channel's message for a version published at at.
+func InvalidationPayload(version int64, at time.Time) string {
+	return "{\"version\":\"" + strconv.FormatInt(version, 10) + "\",\"published_at_ms\":\"" +
+		strconv.FormatInt(at.UnixMilli(), 10) + "\"}"
 }
 
 // InvalidationStream is a subscription to the configuration invalidation

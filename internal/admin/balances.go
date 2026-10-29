@@ -165,7 +165,11 @@ func (s *Service) adjust(w http.ResponseWriter, r *http.Request, fields []string
 				if errors.Is(err, script.ErrInvalidArgument) || isRefusal(err) {
 					return Audit{}, err
 				}
-				return Audit{}, errDataStore{err: err}
+				// The script may have run and its answer been lost, and a
+				// grant or a forced rollover carries no idempotency key, so the
+				// caller is told the change may have applied rather than that
+				// nothing changed.
+				return Audit{}, errDataStore{err: err, uncertain: true}
 			}
 			// The script's transition may have rolled the cycle before the
 			// change was decided. That rollover is in the store whether or not

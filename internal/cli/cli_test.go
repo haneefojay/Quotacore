@@ -299,6 +299,19 @@ func TestARemoteCommandIsOneAdminRequest(t *testing.T) {
 	}
 }
 
+// TestABaseURLWithATrailingSlashIsOneSlash (found by the v0.1 code review):
+// QUOTACORE_URL written as https://host/ must not make //v1.
+func TestABaseURLWithATrailingSlashIsOneSlash(t *testing.T) {
+	f := newFake(t, func(*http.Request, []byte) (int, string) { return 200, `{}` })
+	for _, base := range []string{f.srv.URL + "/", f.srv.URL + "/prefix/"} {
+		run(t, base, false, "", "status")
+	}
+	reqs := f.seen()
+	if len(reqs) != 2 || reqs[0].Path != "/v1/admin/status" || reqs[1].Path != "/prefix/v1/admin/status" {
+		t.Fatalf("requests %+v", reqs)
+	}
+}
+
 // TestExitCodesFollowTheCode (IP-14 DoD 5): each error answer's exit code
 // is its code's, the envelope is on stderr with the request id, and a 2xx
 // is 0.

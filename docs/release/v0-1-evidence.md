@@ -179,9 +179,10 @@ names stops existing.
 
 ## 5. Named gaps
 
-1. **The runbook and restore review.** One human session, carried from `IP-13` and `IP-15`, has not
-   been held. A maintainer walks the runbook and the restore drill and records the result. v0.1 is
-   complete pending that row, and nothing else blocks it.
+1. **The runbook and restore review.** Closed 2026-10-29. Claude followed every runbook and the
+   restore drill on the reference stack with each fault injected, the owner approved the report, and
+   the row is in [the runbooks' review table](../runbooks/README.md#review). Its fixes, and those of
+   the code review that followed, are in CHANGELOG.
 2. **NFR-L6, control-plane p99 ≤ 300 ms, is not measured.** No admin load test exists. Nothing in
    v0.1 depends on the figure, and the NFR says it is irrelevant to correctness. The data-plane side
    of that row, that admin load is not visible on the data plane, is not measured either.

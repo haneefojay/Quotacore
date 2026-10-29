@@ -182,8 +182,10 @@ func Load(getenv Getenv) (Config, error) {
 	}
 	if raw := getenv("QUOTACORE_CONFIG_REFRESH_MISS_RATE_LIMIT"); raw != "" {
 		r, err := strconv.ParseFloat(raw, 64)
-		if err != nil || r < 0 {
-			return c, fmt.Errorf("QUOTACORE_CONFIG_REFRESH_MISS_RATE_LIMIT is %q, which is not a non-negative rate per second", raw)
+		// Zero would be read as the default downstream, so a rate that is
+		// not positive is refused rather than silently becoming 20/s.
+		if err != nil || !(r > 0) {
+			return c, fmt.Errorf("QUOTACORE_CONFIG_REFRESH_MISS_RATE_LIMIT is %q, which is not a positive rate per second", raw)
 		}
 		c.ConfigRefreshMissRate = r
 	}
@@ -431,10 +433,16 @@ func valueOr(getenv Getenv, key, fallback string) string {
 	return fallback
 }
 
+// parseDuration refuses a duration that is not positive: no key has a use for
+// zero or less, and each would otherwise be a timeout that has already passed
+// or a ticker that panics.
 func parseDuration(raw, key string) (time.Duration, error) {
 	d, err := time.ParseDuration(raw)
 	if err != nil {
 		return 0, fmt.Errorf("%s is %q, which is not a duration such as 30s or 24h", key, raw)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s is %q, which is not a positive duration", key, raw)
 	}
 	return d, nil
 }

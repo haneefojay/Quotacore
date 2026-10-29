@@ -118,6 +118,33 @@ func TestAnUncachedTenantWithADeadStoreIs503WithinTheBound(t *testing.T) {
 	}
 }
 
+// TestAGrantWhoseAnswerIsLostSaysItMayHaveApplied (found by the v0.1 code
+// review): a grant carries no idempotency key, so when the store runs the
+// script and the reply is lost, the answer must not say nothing changed or
+// invite a retry, which would grant twice.
+func TestAGrantWhoseAnswerIsLostSaysItMayHaveApplied(t *testing.T) {
+	_, redisURL := integrationURLs(t)
+	p := newProxy(t, hostOf(t, redisURL))
+	s := newStack(t, func(o *stackOptions) { o.redisURL = urlVia(t, redisURL, p.addr()) })
+	tn := s.tenant(externalID("lost"), "UTC", monthlyAnchor, ent{"lost.f", 100, "monthly", false})
+	s.seedCurrent(tn, "lost.f", 100)
+
+	p.set("deaf")
+	r := s.adminDo(http.MethodPost, "/v1/admin/tenants/"+tn.ID+"/grant",
+		`{"feature_key":"lost.f","amount":5,"reason":"lost reply"}`)
+	p.set("pass")
+	if r.Status != 503 || r.code(t) != "service_unavailable" {
+		t.Fatalf("a lost grant reply = %d %s, want 503 service_unavailable", r.Status, r.Body)
+	}
+	if !strings.Contains(string(r.Body), "may have been applied") {
+		t.Errorf("the answer to a lost grant reply does not say it may have applied: %s", r.Body)
+	}
+	if strings.Contains(string(r.Body), "nothing was changed") || r.Header.Get("Retry-After") != "" ||
+		strings.Contains(string(r.Body), `"retry_after_ms":1`) {
+		t.Errorf("the answer to a lost grant reply invites a retry: %s", r.Body)
+	}
+}
+
 func histogramSum(t *testing.T, h interface{ Write(*dto.Metric) error }) float64 {
 	t.Helper()
 	var m dto.Metric

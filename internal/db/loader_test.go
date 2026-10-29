@@ -255,3 +255,25 @@ func TestPostgresLoaderIsOneQuery(t *testing.T) {
 			dbUses, rowLoads, queries)
 	}
 }
+
+// expiredVersions answers as a store read does when its caller's deadline has
+// already passed.
+type expiredVersions struct{}
+
+func (expiredVersions) TenantVersion(ctx context.Context, _ string) (int64, error) {
+	<-ctx.Done()
+	return 0, ctx.Err()
+}
+
+// TestAVersionReadOutOfTheCallersTimeIsNotTheStoreFailing (found by the v0.1
+// code review): a first sight spends part of the control plane's deadline on
+// Postgres before it reads the version, and a read that runs out of that time
+// is the budget, not the data store, so it is not answered as the store's 503.
+func TestAVersionReadOutOfTheCallersTimeIsNotTheStoreFailing(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	_, err := NewLoader(nil, expiredVersions{}).Load(ctx, "00000000-0000-4000-8000-000000000001")
+	if err == nil || errors.Is(err, snapshot.ErrStoreUnavailable) {
+		t.Fatalf("Load = %v, want the deadline and not ErrStoreUnavailable", err)
+	}
+}

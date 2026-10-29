@@ -580,3 +580,61 @@ func TestResolutionPutsMembershipBeforeTheOverride(t *testing.T) {
 		}
 	}
 }
+
+// TestTheLagIsTimedFromThePublish: the invalidation lag runs from the moment
+// the message says it was published, so a change and its apply are what it
+// measures, not the quiet since the previous message.
+func TestTheLagIsTimedFromThePublish(t *testing.T) {
+	at := time.UnixMilli(1761700000123)
+	got, ok := publishedAt(`{"version":"4471","published_at_ms":"1761700000123"}`)
+	if !ok || !got.Equal(at) {
+		t.Fatalf("publishedAt = %v, %v; want %v", got, ok, at)
+	}
+	if v, err := parseInvalidation(`{"version":"4471","published_at_ms":"1761700000123"}`); err != nil || v != 4471 {
+		t.Fatalf("parseInvalidation = %d, %v; want 4471", v, err)
+	}
+	if _, ok := publishedAt(`{"version":"4471"}`); ok {
+		t.Fatal("a message without the moment was given one")
+	}
+}
+
+// TestALoadThatRacedAnInvalidationIsNotCached: a miss that read the tenant
+// before a change and finished after the change's invalidation was applied
+// must not cache the old configuration, which nothing would prune again until
+// the tenant's next change.
+func TestALoadThatRacedAnInvalidationIsNotCached(t *testing.T) {
+	fc := &fakeClient{version: 3, tenants: map[string]int64{tenantID: 3}}
+	loader := &fakeLoader{byID: map[string]*LoadedTenant{tenantID: tenantFixture(tenantID)}} // version 2
+	s := New(Options{Loader: loader, Client: fc, MissRate: 1e9})
+	s.reconcile()
+
+	if _, err := s.Resolve(tenantID, "feature_a"); !errors.Is(err, ErrStaleSnapshot) {
+		t.Fatalf("Resolve = %v, want ErrStaleSnapshot", err)
+	}
+	if s.cache.get(tenantID) != nil {
+		t.Fatal("the configuration the invalidation pruned was cached")
+	}
+
+	fresh := tenantFixture(tenantID)
+	fresh.Version = 3
+	loader.byID[tenantID] = fresh
+	if _, err := s.Resolve(tenantID, "feature_a"); err != nil {
+		t.Fatalf("the retry's load is current and must resolve: %v", err)
+	}
+}
+
+// TestAnOlderLoadDoesNotReplaceANewerEntry: two misses for one tenant can
+// finish out of order, and the later version stands.
+func TestAnOlderLoadDoesNotReplaceANewerEntry(t *testing.T) {
+	c := newTenantCache(10, 1<<20)
+	newer := NewTenant(tenantFixture(tenantID))
+	newer.Version = 5
+	c.add(newer)
+	c.add(NewTenant(tenantFixture(tenantID)))
+	if got := c.get(tenantID); got == nil || got.Version != 5 {
+		t.Fatalf("cached version = %v, want 5", got)
+	}
+	if len(c.plans) != 1 || len(c.pinSets) != 1 {
+		t.Fatalf("a refused add leaked a reference: %d plans, %d pin sets", len(c.plans), len(c.pinSets))
+	}
+}
