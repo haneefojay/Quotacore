@@ -58,7 +58,10 @@ jobs:
           if-no-files-found: error
       - name: Stop here on a dry run
         if: env.PUBLISH != 'true'
-        run: echo "Dry run: the image and its SBOM were built and scanned; nothing was pushed or signed."
+        # A block scalar, because a plain one may not contain ": ", and the whole file failed to
+        # parse, so no run of this workflow ever started a job.
+        run: |
+          echo "Dry run: the image and its SBOM were built and scanned; nothing was pushed or signed."
       - name: Install Cosign
         if: env.PUBLISH == 'true'
         # From the pinned release, checked against its published digest, as promtool is in ci.yml.
