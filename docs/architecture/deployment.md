@@ -494,6 +494,11 @@ docker compose up -d
 > that procedure have no command yet; the configuration refresh interval is the backstop for step 4
 > ([Q-28](../product/assumptions-and-open-questions.md#2-open-questions)). Until v0.1 is tagged,
 > "the previous release" is the previous build, which CI makes from the pull request's merge base.
+>
+> **Amended 2026-10-29 (`IP-16`).** Steps 4 and 6 now have commands, `quotacore config bump` and
+> `quotacore audit note --reason <why>` ([Q-28](../product/assumptions-and-open-questions.md#2-open-questions)),
+> and [the Postgres restore runbook](../runbooks/postgres-restore.md) runs them. Put the new
+> `QUOTACORE_DATABASE_URL` in `.env`, so that a later `docker compose up` keeps it.
 
 Migrations are forward-only in production, so a code rollback against a newer schema is expected
 to work: additive columns and enum values are ignored by the older binary, and a migration that

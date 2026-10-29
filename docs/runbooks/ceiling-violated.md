@@ -42,6 +42,13 @@ Set each affected balance to the correct value with a reason ([security-model.md
 
 `quotacore_ceiling_violation_total` stops rising and `verify-tenant` reports no finding.
 
+> **Amended 2026-10-29 (`IP-16`, the v0.1 runbook review on the reference stack).** The Act step's command is
+> `quotacore set <tenant> --feature <feature> --value <n> --reason <why>`. The script records the
+> violation; it does not refuse the request that observed it. The counter does not reset when the
+> balance is corrected, so Verify means it stops rising. As in
+> [Reconciliation mismatch](reconciliation-mismatch.md), the `identity` finding for the inflated
+> write stays listed for its cycle.
+
 ## Escalate
 
 Always: escalate to the service owner with the tenant, the feature and the window.

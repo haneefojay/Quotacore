@@ -91,6 +91,33 @@ func TestADeadDataStoreIs503WithinTheBound(t *testing.T) {
 	}
 }
 
+// TestAnUncachedTenantWithADeadStoreIs503WithinTheBound (found by the v0.1
+// runbook review): a tenant the snapshot has not seen is loaded on its first
+// request, and the load reads the tenant's version from the data store. With
+// the store silent, that read is bounded by the data-store budget and answered
+// as the store's failure, 503 service_unavailable inside NFR-L4's 250 ms,
+// rather than waiting out the control plane's 3 s and blaming Postgres.
+func TestAnUncachedTenantWithADeadStoreIs503WithinTheBound(t *testing.T) {
+	_, redisURL := integrationURLs(t)
+	p := newProxy(t, hostOf(t, redisURL))
+	s := newStack(t, func(o *stackOptions) { o.redisURL = urlVia(t, redisURL, p.addr()) })
+	tn := s.tenant(externalID("cold"), "UTC", monthlyAnchor, ent{"cold.f", 100, "monthly", false})
+	s.seedCurrent(tn, "cold.f", 100)
+
+	p.set("blackhole")
+	r := s.consume(s.runtime, "cold.f", 1, tn.External, newKey())
+	if r.Status != 503 || r.code(t) != "service_unavailable" {
+		t.Fatalf("an uncached tenant with a silent store = %d %s, want 503 service_unavailable", r.Status, r.Body)
+	}
+	if d := s.logDuration(t, r.Header.Get("X-Request-Id")); d > 260*time.Millisecond {
+		t.Errorf("the server took %v to fail closed on a miss, want at most the 250 ms bound", d)
+	}
+	p.set("pass")
+	if b := s.balance(tn, "cold.f"); b != 100 {
+		t.Errorf("balance after a silent store = %d, want 100", b)
+	}
+}
+
 func histogramSum(t *testing.T, h interface{ Write(*dto.Metric) error }) float64 {
 	t.Helper()
 	var m dto.Metric

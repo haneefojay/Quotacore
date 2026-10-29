@@ -34,4 +34,4 @@ review is recorded here, one row per runbook.
 
 | Runbook | Followed by | Against | Date | Result |
 | --- | --- | --- | --- | --- |
-| Every runbook | Haneef | — | — | Awaiting review |
+| Every runbook | Claude, on Haneef's instruction | The reference Compose stack (`docker compose up`, the README quickstart) at `dev` 98ad1c1, each fault injected for real | 2026-10-29 | Pending Haneef's approval of the review report. All 11 runbooks were followed and their commands work. Eight needed a note, added as dated amendments. One defect was found and fixed: a tenant first seen during a store outage took 3 s and was blamed on Postgres |

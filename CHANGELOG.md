@@ -844,6 +844,26 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Fixed
 
+- **A tenant first seen during a data-store outage waited 3 s and was blamed on Postgres** (found by
+  the v0.1 runbook review, 2026-10-29). A snapshot miss reads the tenant's version from the data
+  store, and that read ran under the control plane's 3 s budget and failed as
+  `control_plane_unavailable`. It now runs under `QUOTACORE_DATASCRIPT_TIMEOUT` (NFR-L4), and
+  fails as `503 service_unavailable`. The new test is
+  `TestAnUncachedTenantWithADeadStoreIs503WithinTheBound`.
+- **The runbooks, as followed on the reference stack** (the v0.1 runbook review, 2026-10-29). All
+  eleven were followed with each fault injected for real. Eight gained a dated note where a step
+  differs on Compose or names the wrong signal:
+  - a rebuild report written to the container's `/tmp` cannot be read;
+  - a read-only restart is unhealthy by design;
+  - a restored database's URL belongs in `.env`;
+  - `/v1/balance` carries no `cycle_index`;
+  - `rate_limited_total` cannot show a revoked key's traffic;
+  - `reconcile-report` does not list duplicates;
+  - a `set` cannot clear a historical finding;
+  - a failed audit insert has already applied a balance change, so it must not be retried.
+
+  Deployment §11's "no command yet" for restore steps 4 and 6 is amended. The review row in
+  `docs/runbooks/README.md` is filled in.
 - **A cycle boundary was rendered up to a second early** (`IP-16`, found by the formatting property).
   An anchor keeps milliseconds and the wire carries seconds, so a `cycle_end` was rounded down to a
   second at which the old cycle was still open, and a client that waited until it was refused again.
