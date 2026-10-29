@@ -844,6 +844,11 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Fixed
 
+- **The reference job could not build the previous image for the first release into `main`** (the
+  `v0.1.0` release, 2026-10-29). The merge base of `dev` and `main` is the specification commit, which
+  has no `go.mod`, so the upgrade test had nothing to start from. A base with no code now falls back
+  to the head branch's parent, the previous build, which is what "the previous release" means until
+  a tag exists (IP-15 DoD 9).
 - **Nine defects found by the v0.1 code review** (2026-10-29, before the `v0.1.0` tag). Each has a
   test that fails without the fix.
   - The tenant cache's prune moved every surviving tenant to the front in map order, so eviction no
