@@ -59,7 +59,7 @@ close enough to meet NFR-L2.
 The first-run experience is a product requirement, not a convenience (JTBD-7, NFR-OPS1).
 
 ```bash
-git clone https://github.com/quotacore/quotacore.git
+git clone https://github.com/haneefojay/Quotacore.git quotacore
 cd quotacore
 export QUOTACORE_BOOTSTRAP_ADMIN_KEY="$(docker compose run --rm --no-deps quotacore key mint)"
 export QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK=yes
