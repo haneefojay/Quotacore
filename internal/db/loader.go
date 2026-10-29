@@ -74,15 +74,16 @@ type loadedRow struct {
 
 // Load implements snapshot.Loader. A tenant that provably does not exist,
 // including an identifier that cannot be one, is snapshot.ErrTenantUnknown;
-// any other failure is returned for the snapshot to answer as
-// control_plane_unavailable.
+// a failed read of the tenant's version, which lives in the data store, is
+// snapshot.ErrStoreUnavailable; any other failure is returned for the
+// snapshot to answer as control_plane_unavailable.
 func (l *Loader) Load(ctx context.Context, tenantID string) (*snapshot.LoadedTenant, error) {
 	if !uuidShape.MatchString(tenantID) {
 		return nil, snapshot.ErrTenantUnknown
 	}
 	version, err := l.versions.TenantVersion(ctx, tenantID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", snapshot.ErrStoreUnavailable, err)
 	}
 	t, err := loadTenantRow(ctx, l.db, tenantID, "")
 	if err != nil {

@@ -46,6 +46,15 @@ quotacore audit note --reason "restored from the backup of <time>; history after
 
 `quotacore_controlplane_up` is `1` on every instance, `verify-all` reports only differences after the truncation point, and the truncation is recorded in the audit log.
 
+> **Amended 2026-10-29 (`IP-16`, the v0.1 runbook review on the reference stack).** On Compose, set
+> `QUOTACORE_DATABASE_URL` to the new database in the `.env` file beside `docker-compose.yml`, not
+> only in your shell. Otherwise the next `docker compose up` silently points the service back at
+> the old database. [Deployment §11](../architecture/deployment.md#11-upgrade-and-rollback) has the restore commands. After
+> the restore, `verify-all` reports each tenant with activity after the backup as `hash_balance` or
+> `chain` in its current cycle, with the balance it holds against where the ledger ends. That
+> difference is the truncation the audit note records. A finding in a cycle that ended before the
+> backup is the incident.
+
 ## Escalate
 
 Differences before the truncation point: escalate to the service owner.

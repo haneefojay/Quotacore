@@ -112,7 +112,15 @@ func (s *Store) TenantVersions(ctx context.Context) (map[string]int64, error) {
 // rows so a concurrent change can only leave a load stale-and-pruned rather
 // than fresh-looking and wrong. An absent entry is version zero, which the
 // prune treats as stale; the control-plane writer (IP-09) creates entries.
+// It runs on a request's snapshot miss, so it is bounded by DataScriptTimeout
+// like a script (NFR-L4): a store that accepts and never answers must not
+// hold the request for the control plane's longer budget.
 func (s *Store) TenantVersion(ctx context.Context, tenantID string) (int64, error) {
+	if s.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.timeout)
+		defer cancel()
+	}
 	v, err := s.client.HGet(ctx, ConfigTenantsKey(), tenantID).Result()
 	if err == redis.Nil {
 		return 0, nil
