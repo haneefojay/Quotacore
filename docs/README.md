@@ -47,7 +47,7 @@ Read in order; the documents build on each other. Start with
 | [state-machines.md](product/state-machines.md) | Every state, its transitions, guards and invariants | You are implementing transitions or reasoning about an edge case |
 | [error-catalog.md](product/error-catalog.md) | 35 error codes and 22 failure scenarios (`FS-01`–`FS-22`), with a client action for each | You are handling errors, or writing an SDK |
 | [user-journeys.md](product/user-journeys.md) | 10 end-to-end journeys (`J-1`–`J-10`), including the sceptical evaluator | You are validating that the product solves a real problem |
-| [assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) | 23 assumptions (`A-01`–`A-23`) with validation methods, a dated accepted-risk table and a corrections log, and 30 questions: 21 answered, 3 deferred, 6 open | You are about to build on an unverified assumption |
+| [assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) | 23 assumptions (`A-01`–`A-23`) with validation methods, a dated accepted-risk table and a corrections log, and 31 questions: 21 answered, 3 deferred, 7 open | You are about to build on an unverified assumption |
 | [glossary.md](product/glossary.md) | Every term, with the ones that are easy to confuse marked | Any time a word is ambiguous |
 
 ## Architecture — how it is built and proven
@@ -171,7 +171,7 @@ documents themselves and fails if this table disagrees, so a stale count cannot 
 | Error codes | 35 | [product/error-catalog.md](product/error-catalog.md) |
 | Failure scenarios | 22 | [product/error-catalog.md](product/error-catalog.md) |
 | Assumptions | 23 | [product/assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) |
-| Open questions | 30 | [product/assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) |
+| Open questions | 31 | [product/assumptions-and-open-questions.md](product/assumptions-and-open-questions.md) |
 | Journeys | 10 | [product/user-journeys.md](product/user-journeys.md) |
 | Non-functional requirements | 63 | [architecture/non-functional-requirements.md](architecture/non-functional-requirements.md) |
 | Invariants | 43 | [product/state-machines.md](product/state-machines.md), [architecture/data-model.md](architecture/data-model.md) |
