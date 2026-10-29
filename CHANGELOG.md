@@ -849,6 +849,11 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Fixed
 
+- **`release.yml` was not valid YAML, so it never ran** (the `v0.1.0` tag, 2026-10-29). Its dry-run
+  step was a plain scalar that contained `": "`, so GitHub refused the file. Every push since `IP-16`
+  showed a failed run with no jobs, and pushing the `v0.1.0` tag published nothing: no image, no
+  signature and no attestation. The step is now a block scalar. The pull request that fixes it runs
+  the dry run, which no earlier change ever did.
 - **The README's status still said "implementation started"** (the `v0.1.0` release,
   2026-10-29). It now says v0.1 is complete, and points to the roadmap and the v0.1 evidence.
 - **The reference job could not build the previous image for the first release into `main`** (the
