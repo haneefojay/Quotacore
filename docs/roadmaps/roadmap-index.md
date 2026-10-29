@@ -198,7 +198,7 @@ answer.
 | `IP-13` | Observability | `Q-25`, `Q-26` | `IN PROGRESS` — opened 2026-10-21, 7 of 8 DoD items met; item 7 waits on the runbook review |
 | `IP-14` | The `quotacore` CLI | — | `COMPLETE` — opened and closed 2026-10-27, 7 of 7 DoD items met, with item 7's image half handed to `IP-15` |
 | `IP-15` | Reference deployment and restore rehearsal | ADR-0009, `Q-21`, ADR-0017 | `IN PROGRESS` — opened 2026-10-27 by a dated amendment to its dependency on `IP-13`, whose item 7 it carries |
-| `IP-16` | Full suite, the three claims, v0.1 exit | — | `IN PROGRESS` — opened 2026-10-28 by a dated amendment to its dependency on `IP-15`, whose runbook and restore review it carries |
+| `IP-16` | Full suite, the three claims, v0.1 exit | — | `IN PROGRESS` — opened 2026-10-28 by a dated amendment to its dependency on `IP-15`; 9 of 10 DoD items met on 2026-10-29, and item 9 waits on the runbook and restore review it carries |
 | `IP-17` | Boolean entitlements | — | `BLOCKED` on `IP-16` |
 | `IP-18` | `set` and `grant` as first-class operations | — | `BLOCKED` on `IP-17` |
 | `IP-19` | Rolling windows | — | `BLOCKED` on `IP-05` |

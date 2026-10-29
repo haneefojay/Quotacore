@@ -90,80 +90,83 @@ why the MVP can ship without SDKs, and it is why the API is honest about `check`
 This is the checklist the implementation is held to. It is deliberately specific, because
 "working" is not a definition anyone can agree on.
 
+Every box was ticked on 2026-10-29 (`IP-16`). The test behind each tick is in
+[v0-1-evidence.md](../release/v0-1-evidence.md#4-the-v01-scope-line-by-line) §4.
+
 ### Metered consumption
-- [ ] A single Lua script execution performs the idempotency check, the cycle rollover, the
+- [x] A single Lua script execution performs the idempotency check, the cycle rollover, the
       ceiling check and the deduction. Verified by reading the script: no interleaving is
       possible.
-- [ ] Under 200 concurrent requests for a balance of 100 and a cost of 1, exactly 100 succeed and
+- [x] Under 200 concurrent requests for a balance of 100 and a cost of 1, exactly 100 succeed and
       exactly 100 are denied. Asserted automatically.
-- [ ] The same idempotency key sent 50 times concurrently deducts once and returns one stored
+- [x] The same idempotency key sent 50 times concurrently deducts once and returns one stored
       response for all 50.
-- [ ] A reused key with a different amount returns `409 idempotency_key_reuse` and changes no
+- [x] A reused key with a different amount returns `409 idempotency_key_reuse` and changes no
       state.
-- [ ] `check` performs no mutation, proven by asserting the balance and the event count are
+- [x] `check` performs no mutation, proven by asserting the balance and the event count are
       unchanged across a `check` call.
 
 ### Cycle and rollover
-- [ ] A tenant idle across three boundaries is placed in the current window, not reset three
+- [x] A tenant idle across three boundaries is placed in the current window, not reset three
       times, and does not receive three allowances.
-- [ ] The request path and the worker, both racing on the same boundary, produce the same result
+- [x] The request path and the worker, both racing on the same boundary, produce the same result
       regardless of the interleaving. Asserted with a deterministic race harness.
-- [ ] A rollover that is already behind is rejected rather than applied, so an out-of-order
+- [x] A rollover that is already behind is rejected rather than applied, so an out-of-order
       worker can never re-grant a stale allowance.
-- [ ] Boundaries match a table of expected wall-clock times for: month-end clamping, 29 February,
+- [x] Boundaries match a table of expected wall-clock times for: month-end clamping, 29 February,
       a spring-forward gap, a fall-back repeat, and `never`.
-- [ ] `GET /v1/balance` returns `cycle_start` and `cycle_end` as RFC 3339 in the tenant's zone,
+- [x] `GET /v1/balance` returns `cycle_start` and `cycle_end` as RFC 3339 in the tenant's zone,
       with the offset included.
 
 ### Money-touching operations
-- [ ] A refund above the DR-019 ceiling is refused with `409 refund_exceeds_grant` and leaves
+- [x] A refund above the DR-019 ceiling is refused with `409 refund_exceeds_grant` and leaves
       the balance unchanged.
-- [ ] A refund on a `never` entitlement is applied and never expires.
-- [ ] Every applied mutation appends exactly one event whose delta reconciles to the balance.
+- [x] A refund on a `never` entitlement is applied and never expires.
+- [x] Every applied mutation appends exactly one event whose delta reconciles to the balance.
 
 ### Control plane
-- [ ] A plan limit edit changes no current balance and takes effect at each tenant's next
+- [x] A plan limit edit changes no current balance and takes effect at each tenant's next
       boundary.
-- [ ] `apply-now` re-anchors every assigned tenant, is audited with a required reason, and is
+- [x] `apply-now` re-anchors every assigned tenant, is audited with a required reason, and is
       visible in the audit log with before and after values.
-- [ ] `apply-now` above the threshold applies nothing, returns `409 confirmation_required` with a
+- [x] `apply-now` above the threshold applies nothing, returns `409 confirmation_required` with a
       token, and applies on the single use of that token; a replayed token is rejected (T-12).
-- [ ] `GET /v1/admin/plans/{id}/impact` reports the affected tenant count and the earliest affected
+- [x] `GET /v1/admin/plans/{id}/impact` reports the affected tenant count and the earliest affected
       `cycle_end` without mutating anything, and an empty plan returns zero rather than `404`.
-- [ ] A plan change on an individual tenant hard-resets that tenant's cycle (DR-013) and emits a
+- [x] A plan change on an individual tenant hard-resets that tenant's cycle (DR-013) and emits a
       `plan_changed` event.
-- [ ] A suspended tenant is denied with `403 tenant_suspended` and resumes with its balance
+- [x] A suspended tenant is denied with `403 tenant_suspended` and resumes with its balance
       intact.
-- [ ] An archived feature denies new consumption with `403 feature_archived` and preserves
+- [x] An archived feature denies new consumption with `403 feature_archived` and preserves
       balances.
-- [ ] A delete is refused with `409 plan_in_use` while any tenant references the plan.
+- [x] A delete is refused with `409 plan_in_use` while any tenant references the plan.
 
 ### Auth
-- [ ] No API key is recoverable in plaintext from the database, logs, or metrics.
-- [ ] `runtime` scope cannot call any `/v1/admin` path; `admin` scope can call the data plane.
-- [ ] A revoked key is rejected on the next request to the instance that revoked it, and on every
+- [x] No API key is recoverable in plaintext from the database, logs, or metrics.
+- [x] `runtime` scope cannot call any `/v1/admin` path; `admin` scope can call the data plane.
+- [x] A revoked key is rejected on the next request to the instance that revoked it, and on every
       other instance within the propagation bound (NFR-D3). (Amended 2026-10-19, `IP-07`: this said
       "with no cache delay", which no per-instance cache can promise across instances without a
       second round trip on every request.)
-- [ ] Bootstrap admin key creation is logged at `warn` with the key's prefix, never its value.
+- [x] Bootstrap admin key creation is logged at `warn` with the key's prefix, never its value.
 
 ### Operations
-- [ ] `docker compose up` yields a working service with no manual step, no account, no signup.
-- [ ] The data plane is unaffected by a control-plane outage for tenants already in the snapshot
+- [x] `docker compose up` yields a working service with no manual step, no account, no signup.
+- [x] The data plane is unaffected by a control-plane outage for tenants already in the snapshot
       cache.
-- [ ] A Redis outage produces `503` inside the latency budget, with no partial deduction and no
+- [x] A Redis outage produces `503` inside the latency budget, with no partial deduction and no
       silent allow.
-- [ ] A Postgres outage does not affect enforcement for cached tenants.
-- [ ] `/healthz` and `/readyz` are correct and distinct; readiness is false when enforcement
+- [x] A Postgres outage does not affect enforcement for cached tenants.
+- [x] `/healthz` and `/readyz` are correct and distinct; readiness is false when enforcement
       cannot serve.
-- [ ] Every metric listed in [observability](../architecture/observability.md) is emitted.
+- [x] Every metric listed in [observability](../architecture/observability.md) is emitted.
 
 ### Contract and documentation
-- [ ] `api/openapi.yaml` is the single source of truth; the binary serves the same document at
+- [x] `api/openapi.yaml` is the single source of truth; the binary serves the same document at
       `/openapi.json`.
-- [ ] Every error code in [error-catalog.md](error-catalog.md) exists in the OpenAPI document
+- [x] Every error code in [error-catalog.md](error-catalog.md) exists in the OpenAPI document
       with a documented status, code, and remedy.
-- [ ] The README's quickstart is executed by a script in CI against a real stack.
+- [x] The README's quickstart is executed by a script in CI against a real stack.
 
 ## 4. Out of scope for the MVP
 

@@ -12,6 +12,17 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **v0.1 is complete, pending the runbook review row (`IP-16`).** [docs/release/v0-1-evidence.md](docs/release/v0-1-evidence.md)
+  is filled in from the run of record at `a6b093e`. It holds each of the three claims with its
+  measurement, each measured NFR with its figure, the run and the environment, and each line of
+  mvp-scope §3 with its test. Its named gaps are the maintainer's runbook and restore review, NFR-L6
+  unmeasured (`Q-31`, new, with a default), the burst run's latency as information (`Q-30`), the
+  soak's 5 h 30 m, and the release acts. Every mvp-scope §3 box and the ROADMAP v0.1 list are ticked.
+  PROJECT.md and ROADMAP.md say "complete, pending the runbook review row", and IP-16 stays
+  `IN PROGRESS` with 9 of 10 DoD items met until that session is recorded.
+  `TestEveryTestTheEvidenceNamesExists` fails CI if the document cites a test that does not exist.
+  `TestAPlanHoldsAtMostAHundredFeatures` is NFR-T5's test, which had none: a plan of 100 features
+  is created, and one of 101 is `400 validation_failed` and writes nothing.
 - **The v0.1 evidence and the named-test report (`IP-16`).** [docs/release/v0-1-evidence.md](docs/release/v0-1-evidence.md)
   holds, in one place, each claim, NFR, named test and scope line with what proves it. Its table of
   named tests is the catalogue `tools/testreport` reads from `go test -json`: the integration suite

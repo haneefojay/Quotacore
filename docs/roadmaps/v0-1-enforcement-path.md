@@ -1910,7 +1910,10 @@ following a document rather than by someone who remembered the commands.
 ## IP-16 — Full suite, the three claims, v0.1 exit
 
 **Status** `IN PROGRESS` — opened 2026-10-28, before any file it owns was written; `IP-15`'s code
-merged the same day.
+merged the same day. On 2026-10-29, 9 of 10 DoD items are met, each with its proof in
+[v0-1-evidence.md](../release/v0-1-evidence.md). Item 9 says v0.1 is complete pending the runbook
+and restore review, and becomes "done" when [the runbooks' review table](../runbooks/README.md#review)
+records that session.
 
 > **Amended 2026-10-28 — the dependency on `IP-15`.** `IP-15`'s code is merged and its one open item
 > is the human session it carries for `IP-13`: a person follows the README, two runbooks and

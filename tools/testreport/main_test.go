@@ -1,7 +1,10 @@
 package main
 
 import (
+	"io/fs"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -79,6 +82,50 @@ func TestTheCatalogueNamesAllFifteenRows(t *testing.T) {
 		id := "T-" + string(rune('0'+i/10)) + string(rune('0'+i%10))
 		if !seen[id] {
 			t.Errorf("%s has no row", id)
+		}
+	}
+}
+
+// TestEveryTestTheEvidenceNamesExists reads the whole evidence document, not
+// only its catalogue: every test function it cites as proof is declared in some
+// _test.go file, so a renamed or deleted test cannot leave a claim citing
+// nothing (IP-16 D13).
+func TestEveryTestTheEvidenceNamesExists(t *testing.T) {
+	doc, err := os.ReadFile("../../docs/release/v0-1-evidence.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := map[string]bool{}
+	decl := regexp.MustCompile(`(?m)^func (Test\w+)\(`)
+	err = filepath.WalkDir("../..", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && (d.Name() == ".git" || d.Name() == "node_modules") {
+			return filepath.SkipDir
+		}
+		if d.IsDir() || !strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range decl.FindAllStringSubmatch(string(src), -1) {
+			declared[m[1]] = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cited := regexp.MustCompile("`(Test\\w+)`").FindAllStringSubmatch(string(doc), -1)
+	if len(cited) == 0 {
+		t.Fatal("the evidence document names no test")
+	}
+	for _, m := range cited {
+		if !declared[m[1]] {
+			t.Errorf("the evidence document cites %s, which no _test.go declares", m[1])
 		}
 	}
 }
