@@ -34,4 +34,4 @@ review is recorded here, one row per runbook.
 
 | Runbook | Followed by | Against | Date | Result |
 | --- | --- | --- | --- | --- |
-| Every runbook | Claude, on Haneef's instruction | The reference Compose stack (`docker compose up`, the README quickstart) at `dev` 98ad1c1, each fault injected for real | 2026-10-29 | Approved by Haneef on 2026-10-29, from [the review report](https://claude.ai/artifact/8vCkvqTMy8TVsESdTXVkq5). All 11 runbooks were followed and their commands work. Eight needed a note, added as dated amendments. One defect was found and fixed: a tenant first seen during a store outage took 3 s and was blamed on Postgres |
+| Every runbook | Claude, on Haneef's instruction | The reference Compose stack (`docker compose up`, the README quickstart) at `dev` 5b81d38, each fault injected for real | 2026-10-29 | Approved by Haneef on 2026-10-29, from [the review report](https://claude.ai/artifact/8vCkvqTMy8TVsESdTXVkq5). All 11 runbooks were followed and their commands work. Eight needed a note, added as dated amendments. One defect was found and fixed: a tenant first seen during a store outage took 3 s and was blamed on Postgres |

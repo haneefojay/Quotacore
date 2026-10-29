@@ -4,7 +4,7 @@ Every claim v0.1 makes, the measurement or test behind it, and where that was ta
 (`IP-16`'s exit criterion). A reader who doubts the product starts here. Each row names the test that
 proves it, so the claim can be re-run rather than believed.
 
-The run of record is the `IP-16` pull request at commit `a6b093e`: the
+The run of record is the `IP-16` pull request at commit `01ddb7d`: the
 [full suite](https://github.com/haneefojay/Quotacore/actions/runs/40801904335) (load, soak, chaos,
 clock and the deep suites) and [CI](https://github.com/haneefojay/Quotacore/actions/runs/40801903578)
 (build, unit, race, integration, reference, SBOM). Both were green. The commits after it on that
