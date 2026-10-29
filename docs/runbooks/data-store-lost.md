@@ -52,6 +52,17 @@ and restart in normal mode. The `--reason` is required whenever the rebuild writ
 
 `quotacore_balance_key_missing_total` stops rising, `/readyz` is `200` on every instance, and `quotacore verify-all` reports no finding for the rebuilt tenants. Watch *Double charge detected* for the next reconciliation pass: a reversal is the expected remedy (DR-049).
 
+> **Amended 2026-10-29 (`IP-16`, the v0.1 runbook review on the reference stack).** Two steps differ on
+> Compose. First, a `--report` file is written inside the container, where `/tmp` is in memory and
+> `docker compose cp` cannot read it. Leave `--report` out and redirect the output on the host:
+> `docker compose exec -T quotacore quotacore rebuild > rebuild-report.json`. A dry run exits `1`
+> while anything it found is still unwritten, which is expected. Second, restart in read-only mode
+> with `QUOTACORE_STARTUP_MODE=readonly docker compose up -d quotacore`, without `--wait`. A
+> read-only instance is not ready by design, so Compose reports it unhealthy. Wait until
+> `quotacore status` shows `"mode": "readonly"`, then run the rebuild. After a Postgres restore,
+> expect `unreconcilable` for any tenant with activity after the backup. The estimate is the
+> runtime balance, and `--accept <tenant>:<feature>` writes it.
+
 ## Escalate
 
 Any tenant the rebuild cannot reconcile and nobody can decide, or a second loss: escalate to the service owner before switching to normal mode.

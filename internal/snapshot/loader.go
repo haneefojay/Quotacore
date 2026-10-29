@@ -20,14 +20,19 @@ import (
 )
 
 // Typed miss outcomes. The mapping to the HTTP catalogue is the data plane's
-// (IP-07): ErrTenantUnknown → 404 tenant_not_found, ErrMissRefused →
-// 503 service_unavailable, ErrRefreshFailed → 503 control_plane_unavailable.
-// No other error escapes Resolve.
+// (IP-07): ErrTenantUnknown → 404 tenant_not_found, ErrMissRefused and
+// ErrStoreUnavailable → 503 service_unavailable, ErrRefreshFailed → 503
+// control_plane_unavailable. No other error escapes Resolve.
 var (
 	ErrTenantUnknown = errors.New("snapshot: tenant unknown")
 	ErrMissRefused   = errors.New("snapshot: miss refused by the bounded-miss limiter")
 	ErrRefreshFailed = errors.New("snapshot: control plane unreachable on a miss")
 	ErrStaleSnapshot = errors.New("snapshot: the snapshot predates the configuration, retry")
+	// ErrStoreUnavailable is a miss whose data-store read failed: the
+	// tenant's version lives in the store, so a dead store is not a
+	// control-plane outage, and the read is bounded by the data-store budget
+	// (NFR-L4), not by the control plane's.
+	ErrStoreUnavailable = errors.New("snapshot: the data store did not answer on a miss")
 )
 
 // Loader is the single bounded control-plane read the data plane may perform,
