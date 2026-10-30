@@ -25,8 +25,8 @@ runbook and restore review carried from `IP-13` and `IP-15` was held on 2026-10-
 the owner. Each of the three claims, each measured NFR and
 each line of [mvp-scope.md](docs/product/mvp-scope.md#3-definition-of-done-per-capability) §3 is
 in [the v0.1 evidence](docs/release/v0-1-evidence.md), with the test that proves it, the run it was
-measured in, and the named gaps. Merging `dev` into `main`, the `v0.1.0` tag and the signed image
-are a maintainer's steps.
+measured in, and the named gaps. `v0.1.0` was tagged on `main` on 2026-10-29, and its signed image is
+`ghcr.io/haneefojay/quotacore:0.1.0`.
 
 **How it began.** The specification is complete and internally consistent, and every blocking
 question is now answered: [Q-01, Q-02, Q-04, Q-14](docs/product/assumptions-and-open-questions.md#2-open-questions)

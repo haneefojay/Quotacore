@@ -194,6 +194,10 @@ names stops existing.
    answered, and this run is the figure it will be compared against.
 4. **The soak ran for 5 h 30 m, not 24 h.** A hosted job ends at 6 h. `QUOTACORE_SOAK_DURATION`
    runs the same test for 24 h on a self-hosted runner, with nothing else changed (IP-16 Q2).
-5. **The release acts are not taken.** v0.1 does not yet have a merge of `dev` into `main`, a `v0.1.0`
-   tag, or the signed image that `release.yml` publishes from that tag. Those are a maintainer's
-   steps (IP-16 D19).
+5. **The release acts.** Closed 2026-10-29. `dev` was merged into `main`, and the maintainer tagged
+   `v0.1.0` on `main` at `7d30caa` (IP-16 D19).
+   [The release run](https://github.com/haneefojay/Quotacore/actions/runs/40902916154) pushed
+   `ghcr.io/haneefojay/quotacore:0.1.0`, digest `sha256:0cbdbcf3839f315c3e139d41fff2caaec9f89cff335ed94eb72021341a0b8f43`. It signed that digest with Cosign keyless and
+   attached the image's SBOM as a signed attestation. Both are in the public transparency log, at
+   entries 3570533510 and 3570537073. The tag's first push published nothing, because `release.yml`
+   was not valid YAML. The fix is in CHANGELOG, and the tag was recreated on the fixed commit.
