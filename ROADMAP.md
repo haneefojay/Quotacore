@@ -66,7 +66,8 @@ else ships.
 
 **Status (2026-10-29): complete.** The items are built, the exit criteria are met, and the runbook
 and restore review was held and approved on 2026-10-29. The proof is in
-[the v0.1 evidence](docs/release/v0-1-evidence.md), whose §5 names what is left: the release acts.
+[the v0.1 evidence](docs/release/v0-1-evidence.md), whose §5 records the named gaps
+and the release: `v0.1.0` was tagged and its signed image published on 2026-10-29.
 
 - [x] `api/openapi.yaml`, spec-first, with validation generated from it
 - [x] Cycle engine and its boundary test matrix — the component most likely to hide a silent,

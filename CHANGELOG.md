@@ -849,6 +849,9 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Fixed
 
+- **The v0.1 evidence said `v0.1.0` had not shipped** (2026-10-30). Its §5 gap 5 now records the
+  tag on `main`, the release run, and the signed image's digest. ROADMAP.md and PROJECT.md now say
+  the same.
 - **`release.yml` was not valid YAML, so it never ran** (the `v0.1.0` tag, 2026-10-29). Its dry-run
   step was a plain scalar that contained `": "`, so GitHub refused the file. Every push since `IP-16`
   showed a failed run with no jobs, and pushing the `v0.1.0` tag published nothing: no image, no
