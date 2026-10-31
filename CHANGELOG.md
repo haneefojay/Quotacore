@@ -935,6 +935,20 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Fixed
 
+- **`TestBooleanCostsNoMoreThanMetered` failed on a boolean path that does less work** (2026-10-31,
+  PR #27's first CI run). There were two causes. First, it compared the client's wall-clock p99, but
+  the scripts differ by about 20µs inside a round trip of 0.3 to 3ms, so under load the result
+  depended on which call landed in a slow stretch. The test now compares the store's own execution
+  time of each script, read from the slow log and matched to the test by its key. Second, the store
+  runs a Lua garbage-collection step of about 25µs inside every fiftieth script call. Because the
+  test called its four scripts in a fixed order, 50 mod 4 = 2 put every step on the same two
+  positions, and from some starting counts those were both boolean calls. A 2µs boolean check then
+  carried the collector in its p99 and lost to a 14µs metered check. That is why the slow-log form
+  still failed in a full package run. Each round now runs in a shuffled order, so every script
+  carries the same share of the collector. The test passed 10 of 10 full package runs (boolean check
+  p99 about 31µs against 46µs metered, consume about 39µs against 55µs). It also passed 12 of 12
+  race-build runs under CPU and store load, each on its first attempt. The claim of `IP-17` DoD 4 is
+  unchanged.
 - **The v0.1 evidence said `v0.1.0` had not shipped** (2026-10-30). Its §5 gap 5 now records the
   tag on `main`, the release run, and the signed image's digest. ROADMAP.md and PROJECT.md now say
   the same.
