@@ -1,0 +1,36 @@
+{
+  "name": "@quotacore/sdk",
+  "version": "0.1.0",
+  "description": "The TypeScript client for Quotacore: typed errors, safe retries and idempotency handled for the caller.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist/src",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haneefojay/Quotacore.git",
+    "directory": "sdk/typescript"
+  },
+  "scripts": {
+    "generate": "node scripts/generate.mjs",
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test \"dist/test/*.test.js\" \"dist/test/live/*.test.js\" && node scripts/readme-examples.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "js-yaml": "4.3.2",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}

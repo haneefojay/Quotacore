@@ -9,7 +9,7 @@ SCAN = $(if $(IMAGE),-Image $(IMAGE),-Binary $(BINARY))
 OGEN_VERSION ?= v1.24.0
 OGEN ?= go run github.com/ogen-go/ogen/cmd/ogen@$(OGEN_VERSION)
 
-.PHONY: build binary test race vet lint check-docs license-check sbom ci \
+.PHONY: build binary test race vet lint check-docs license-check sbom ci sdk-ts \
         generate generate-check docs docs-check ogen ogen-check
 
 build:
@@ -118,3 +118,8 @@ sbom: $(if $(IMAGE),,binary)
 	fi
 
 ci: check-docs generate-check lint test license-check
+
+# The TypeScript SDK (IP-26): install from the lockfile, then the unit tests and the README's
+# examples against the in-process fake. CI also runs the live suite against the reference stack.
+sdk-ts:
+	cd sdk/typescript && npm ci --no-audit --no-fund && npm test

@@ -65,6 +65,16 @@ dominant cost is a Redis round trip.
 up with a document that has drifted from the binary, and then the drift is invisible until a
 customer files a bug against documentation that was never accurate.
 
+> **Note 2026-10-31 (`IP-26`).** The `ogen` row says it "generates a matching specification for
+> TypeScript and Python", and the `oapi-codegen` row is rejected partly for not generating them.
+> Neither generates a TypeScript or a Python client: `ogen` emits Go only
+> (https://github.com/ogen-go/ogen, read 2026-10-31), which
+> [api-conventions.md](../architecture/api-conventions.md#13-contract-tests) §13 item 6 already
+> said. The choice of `ogen` stands on R5 and its other reasons. The TypeScript SDK generates its
+> types with `openapi-typescript` 7.13.0 (MIT, https://github.com/openapi-ts/openapi-typescript),
+> a development dependency of [sdk/typescript/](../../sdk/typescript/BOUNDARY.md) only, so the
+> package ships with no runtime dependency. Re-check when `IP-27` chooses Python's generator.
+
 ### Database access and migrations
 
 | Candidate | Verdict | Reasoning |

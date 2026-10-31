@@ -1,0 +1,4 @@
+# Dependencies and build output. The lockfile is committed.
+node_modules/
+dist/
+.readme-examples/
