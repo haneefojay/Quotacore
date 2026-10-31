@@ -135,7 +135,7 @@ paths:
         '404':
           $ref: '#/components/responses/ErrorTenantNotFound'
         '409':
-          $ref: '#/components/responses/ErrorIdempotencyKeyReuse'
+          $ref: '#/components/responses/ErrorConsumeConflict'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
         '429':
@@ -246,6 +246,8 @@ paths:
           $ref: '#/components/responses/ErrorForbiddenEntitlement'
         '404':
           $ref: '#/components/responses/ErrorTenantNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorFeatureNotMetered'
         '429':
           $ref: '#/components/responses/ErrorRateLimited'
         '500':
@@ -309,6 +311,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/FeatureKindQuery'
       responses:
         '200':
           $ref: '#/components/responses/FeatureListOK'
@@ -330,8 +333,8 @@ paths:
       summary: Create a feature
       description: |
         `key` is immutable always and `unit` once the feature is referenced, because reinterpreting a
-        historical amount is not allowed (INV-F2, INV-F3). `kind: boolean` is a v0.2 surface and is
-        `501 not_implemented` on a v0.1 build (F-5).
+        historical amount is not allowed (INV-F2, INV-F3). `kind` is fixed here and never changes
+        afterwards (F-5, DR-050).
       security:
         - bearerAuth: []
       x-required-scope: admin
@@ -366,8 +369,6 @@ paths:
           $ref: '#/components/responses/ErrorRateLimited'
         '500':
           $ref: '#/components/responses/ErrorInternal'
-        '501':
-          $ref: '#/components/responses/ErrorNotImplemented'
         '503':
           $ref: '#/components/responses/ErrorUnavailable'
 
@@ -1973,6 +1974,15 @@ components:
         tenant's full set, which is bounded by the plan's entitlement count (NFR-T5).
       schema:
         $ref: '#/components/schemas/FeatureKey'
+    FeatureKindQuery:
+      name: kind
+      in: query
+      required: false
+      description: |
+        Restrict the catalogue to one kind. The values are `FeatureKind`'s, which are the database
+        enum's, exactly.
+      schema:
+        $ref: '#/components/schemas/FeatureKind'
     PlanKeyQuery:
       name: plan_key
       in: query
@@ -2392,6 +2402,20 @@ components:
           details:
             feature_key: api.requests
             interval: never
+    FeatureNotMetered:
+      summary: A counted operation on a boolean entitlement
+      description: |
+        A boolean entitlement is present or absent, with no counter, so there is nothing to deduct
+        more than one of, refund, grant, set, roll over or override (DR-050). The response names
+        the mismatch rather than reporting insufficient units.
+      value:
+        error:
+          code: feature_not_metered
+          message: feature sso is boolean, which has no counter
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            feature_key: sso
+            kind: boolean
     FeatureUnitImmutable:
       summary: A unit change on an assigned feature
       description: |
@@ -2561,6 +2585,7 @@ components:
               value:
                 tenant_external_id: acme-prod-01
                 feature_key: llm.tokens.output
+                kind: metered
                 balance: 41250
                 limit: 1000000
                 bonus: 0
@@ -2573,6 +2598,7 @@ components:
               value:
                 tenant_external_id: acme-prod-01
                 feature_key: llm.tokens.output
+                kind: metered
                 balance: 41250
                 limit: 1000000
                 bonus: 0
@@ -2580,6 +2606,19 @@ components:
                 cycle_start: '2026-09-01T00:00:00+02:00'
                 cycle_end: '2026-10-01T00:00:00+02:00'
                 replayed: true
+            boolean:
+              summary: A boolean entitlement, which has no counter
+              value:
+                tenant_external_id: acme-prod-01
+                feature_key: sso
+                kind: boolean
+                balance: null
+                limit: null
+                bonus: null
+                consumed: 1
+                cycle_start: null
+                cycle_end: null
+                replayed: false
 
     CheckOK:
       x-status: 200
@@ -2598,6 +2637,7 @@ components:
               summary: It would fit
               value:
                 allowed: true
+                kind: metered
                 balance: 5000
                 limit: 1000000
                 bonus: 0
@@ -2607,11 +2647,22 @@ components:
               summary: It would not, and this is still a 200
               value:
                 allowed: false
+                kind: metered
                 balance: 50
                 limit: 1000
                 bonus: 0
                 requested: 100
                 cycle_end: '2026-10-01T00:00:00+02:00'
+            boolean:
+              summary: An included boolean entitlement is always allowed
+              value:
+                allowed: true
+                kind: boolean
+                balance: null
+                limit: null
+                bonus: null
+                requested: 1
+                cycle_end: null
 
     BalanceOK:
       x-status: 200
@@ -2628,11 +2679,12 @@ components:
             $ref: '#/components/schemas/BalanceResponse'
           examples:
             full:
-              summary: A tenant on a two-feature plan
+              summary: A tenant on a three-feature plan, one of them boolean
               value:
                 tenant_external_id: acme-prod-01
                 entries:
                   - feature_key: llm.tokens.output
+                    kind: metered
                     balance: 41250
                     limit: 1000000
                     bonus: 0
@@ -2640,10 +2692,19 @@ components:
                     cycle_start: '2026-09-01T00:00:00+02:00'
                     cycle_end: '2026-10-01T00:00:00+02:00'
                   - feature_key: api.requests
+                    kind: metered
                     balance: 100000
                     limit: 100000
                     bonus: 0
                     consumed: 0
+                    cycle_start: null
+                    cycle_end: null
+                  - feature_key: sso
+                    kind: boolean
+                    balance: null
+                    limit: null
+                    bonus: null
+                    consumed: null
                     cycle_start: null
                     cycle_end: null
 
@@ -2665,6 +2726,7 @@ components:
               summary: A grant of 50000 applied
               value:
                 feature_key: llm.tokens.output
+                kind: metered
                 balance: 91250
                 limit: 1000000
                 bonus: 50000
@@ -3411,13 +3473,15 @@ components:
             tenant_not_found:
               $ref: '#/components/examples/TenantNotFound'
 
-    ErrorIdempotencyKeyReuse:
+    ErrorConsumeConflict:
       x-status: 409
-      x-codes: [idempotency_key_reuse]
+      x-codes: [idempotency_key_reuse, feature_not_metered]
       description: |
-        The key was first used for a different operation. No state changed and the original record
-        is preserved (DR-028, INV-I2). Retry with a **new** key only if the new operation is
-        genuinely a new one.
+        A consume conflict, and no state changed. `idempotency_key_reuse` is a key first used for a
+        different operation; the original record is preserved (DR-028, INV-I2), and a retry with a
+        **new** key is right only if the new operation is genuinely a new one.
+        `feature_not_metered` is an amount above 1 against a boolean entitlement, which has no
+        counter to deduct from (DR-050).
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'
@@ -3428,13 +3492,34 @@ components:
           examples:
             idempotency_key_reuse:
               $ref: '#/components/examples/IdempotencyKeyReuse'
+            feature_not_metered:
+              $ref: '#/components/examples/FeatureNotMetered'
+
+    ErrorFeatureNotMetered:
+      x-status: 409
+      x-codes: [feature_not_metered]
+      description: |
+        An amount above 1 asked of a boolean entitlement. `check` answers what `consume` would, so
+        it refuses the same amount rather than calling it allowed (DR-024, DR-050).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            feature_not_metered:
+              $ref: '#/components/examples/FeatureNotMetered'
 
     ErrorRefundConflict:
       x-status: 409
-      x-codes: [idempotency_key_reuse, refund_exceeds_grant]
+      x-codes: [idempotency_key_reuse, refund_exceeds_grant, feature_not_metered]
       description: |
         A refund conflict. It never returns `quota_exceeded`: a refund cannot exceed a balance,
-        and the bound it can break is `balance <= limit + bonus` (DR-019).
+        and the bound it can break is `balance <= limit + bonus` (DR-019). A refund against a
+        boolean entitlement is `feature_not_metered`, because there is no counter to restore
+        (DR-050).
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'
@@ -3447,6 +3532,8 @@ components:
               $ref: '#/components/examples/IdempotencyKeyReuse'
             refund_exceeds_grant:
               $ref: '#/components/examples/RefundExceedsGrant'
+            feature_not_metered:
+              $ref: '#/components/examples/FeatureNotMetered'
 
     ErrorConflictFeature:
       x-status: 409
@@ -3556,10 +3643,11 @@ components:
 
     ErrorConflictQuota:
       x-status: 409
-      x-codes: [grant_exceeds_ceiling, reset_not_supported, resource_version_conflict, tenant_deleted]
+      x-codes: [grant_exceeds_ceiling, reset_not_supported, feature_not_metered, resource_version_conflict, tenant_deleted]
       description: |
-        A refused administrative change to a balance. Nothing was applied in any of the four
-        cases. `tenant_deleted` is a tenant whose deletion is terminal (T-7).
+        A refused administrative change to a balance. Nothing was applied in any of the five
+        cases. `tenant_deleted` is a tenant whose deletion is terminal (T-7), and
+        `feature_not_metered` is a feature with no counter to change (DR-050).
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'
@@ -3572,6 +3660,8 @@ components:
               $ref: '#/components/examples/GrantExceedsCeiling'
             reset_not_supported:
               $ref: '#/components/examples/ResetNotSupported'
+            feature_not_metered:
+              $ref: '#/components/examples/FeatureNotMetered'
             resource_version_conflict:
               $ref: '#/components/examples/ResourceVersionConflict'
 
@@ -3678,7 +3768,8 @@ components:
       x-codes: [not_implemented]
       description: |
         A later-release surface called on an MVP build. Not transient: retrying does not help.
-        Upgrade, or use the MVP equivalent.
+        Upgrade, or use the MVP equivalent. Reserved: no route of this build raises it, because
+        boolean features, its last surface, shipped in v0.2 (Q-34).
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'
@@ -3916,8 +4007,9 @@ components:
     FeatureKind:
       type: string
       description: |
-        `metered` in v0.1. `boolean` exists in the schema with no v0.1 use, because adding an enum
-        value later is a schema change and v0.2's design is already known.
+        `metered` is counted in a unit, with an allowance per cycle. `boolean` is present or
+        absent, with no counter: no balance, no limit, no bonus and no exhaustion (DR-050). A
+        feature's kind is chosen when it is created and never changes.
       enum: [metered, boolean]
 
     EventSource:
@@ -3997,6 +4089,7 @@ components:
         - refund_exceeds_grant
         - grant_exceeds_ceiling
         - reset_not_supported
+        - feature_not_metered
         - feature_unit_immutable
         - resource_version_conflict
         - confirmation_required
@@ -4112,22 +4205,33 @@ components:
         tell a replay from a second charge by its shape alone (DR-049).
       type: object
       additionalProperties: false
-      required: [tenant_external_id, feature_key, balance, limit, bonus, consumed, cycle_start, cycle_end, replayed]
+      required: [tenant_external_id, feature_key, kind, balance, limit, bonus, consumed, cycle_start, cycle_end, replayed]
       properties:
         tenant_external_id:
           $ref: '#/components/schemas/ExternalId'
         feature_key:
           $ref: '#/components/schemas/FeatureKey'
+        kind:
+          allOf:
+            - $ref: '#/components/schemas/FeatureKind'
+          description: |
+            The feature's kind. For `boolean`, `balance`, `limit` and `bonus` are `null` and the
+            cycle fields are `null`, because an inclusion has no counter and no cycle (DR-050).
         balance:
-          allOf:
+          oneOf:
             - $ref: '#/components/schemas/Amount'
-          description: The remaining balance **after** the deduction.
+            - type: 'null'
+          description: The remaining balance **after** the deduction. Null for a boolean entitlement.
         limit:
-          $ref: '#/components/schemas/Limit'
+          oneOf:
+            - $ref: '#/components/schemas/Limit'
+            - type: 'null'
+          description: The cycle allowance. Null for a boolean entitlement, which has no ceiling.
         bonus:
-          allOf:
+          oneOf:
             - $ref: '#/components/schemas/Amount'
-          description: Cycle-scoped granted quota. It does not survive the boundary (DR-020).
+            - type: 'null'
+          description: Cycle-scoped granted quota. It does not survive the boundary (DR-020). Null for a boolean entitlement.
         consumed:
           allOf:
             - $ref: '#/components/schemas/Amount'
@@ -4156,19 +4260,33 @@ components:
       type: object
       description: The answer to "would this be allowed", which is always a `200` when answerable.
       additionalProperties: false
-      required: [allowed, balance, limit, bonus, requested, cycle_end]
+      required: [allowed, kind, balance, limit, bonus, requested, cycle_end]
       properties:
         allowed:
           type: boolean
           description: |
             A denial is `allowed: false` at `200`, **not** a `429` (DR-024). A `429` from this
-            route means the service is rate-limiting you.
+            route means the service is rate-limiting you. An included boolean entitlement is
+            always `allowed: true` (DR-050).
+        kind:
+          allOf:
+            - $ref: '#/components/schemas/FeatureKind'
+          description: The feature's kind. For `boolean`, `balance`, `limit`, `bonus` and `cycle_end` are `null`.
         balance:
-          $ref: '#/components/schemas/Amount'
+          oneOf:
+            - $ref: '#/components/schemas/Amount'
+            - type: 'null'
+          description: The balance now. Null for a boolean entitlement.
         limit:
-          $ref: '#/components/schemas/Limit'
+          oneOf:
+            - $ref: '#/components/schemas/Limit'
+            - type: 'null'
+          description: The cycle allowance. Null for a boolean entitlement.
         bonus:
-          $ref: '#/components/schemas/Amount'
+          oneOf:
+            - $ref: '#/components/schemas/Amount'
+            - type: 'null'
+          description: Cycle-scoped granted quota. Null for a boolean entitlement.
         requested:
           $ref: '#/components/schemas/Amount'
         cycle_end:
@@ -4183,24 +4301,41 @@ components:
         absent rather than zero, so a caller can tell an omission from an exhausted allowance.
       type: object
       additionalProperties: false
-      required: [feature_key, balance, limit, bonus, consumed, cycle_start, cycle_end]
+      required: [feature_key, kind, balance, limit, bonus, consumed, cycle_start, cycle_end]
       properties:
         feature_key:
           $ref: '#/components/schemas/FeatureKey'
-        balance:
-          $ref: '#/components/schemas/Amount'
-        limit:
-          $ref: '#/components/schemas/Limit'
-        bonus:
-          $ref: '#/components/schemas/Amount'
-        consumed:
+        kind:
           allOf:
+            - $ref: '#/components/schemas/FeatureKind'
+          description: |
+            The feature's kind. An included boolean entitlement is an entry whose `balance`,
+            `limit`, `bonus`, `consumed`, `cycle_start` and `cycle_end` are all `null`: present,
+            with no counter (DR-050). Its presence is the answer.
+        balance:
+          oneOf:
             - $ref: '#/components/schemas/Amount'
+            - type: 'null'
+          description: The balance now. Null for a boolean entitlement.
+        limit:
+          oneOf:
+            - $ref: '#/components/schemas/Limit'
+            - type: 'null'
+          description: The cycle allowance. Null for a boolean entitlement.
+        bonus:
+          oneOf:
+            - $ref: '#/components/schemas/Amount'
+            - type: 'null'
+          description: Cycle-scoped granted quota. Null for a boolean entitlement.
+        consumed:
+          oneOf:
+            - $ref: '#/components/schemas/Amount'
+            - type: 'null'
           description: |
             Net consumption in the stored cycle, derived as `limit + bonus - balance`. A refund
             lowers it and an administrative `set` shows through it. It is computed from the balance
             hash rather than read from the ledger, because this route never reads the control
-            plane (DR-039).
+            plane (DR-039). Null for a boolean entitlement, whose use is not counted.
         cycle_start:
           oneOf:
             - $ref: '#/components/schemas/Timestamp'
@@ -4309,8 +4444,8 @@ components:
           allOf:
             - $ref: '#/components/schemas/FeatureKind'
           description: |
-            Optional, `metered` by default. `boolean` is a v0.2 surface and is `501 not_implemented`
-            on a v0.1 build (F-5).
+            Optional, `metered` by default. Fixed at creation: no route changes it, so a boolean
+            feature never has a metered assignment to conflict with (F-5, DR-050).
           default: metered
 
     FeatureUpdate:
@@ -4365,16 +4500,28 @@ components:
 
     PlanEntitlement:
       type: object
-      description: One feature's allowance in a plan.
+      description: |
+        One feature's allowance in a plan. `limit` and `reset_interval` are both required and both
+        nullable, by the convention in api-conventions.md section 7.4: a metered feature takes a
+        number and an interval, and a boolean feature takes `null` for both, because an inclusion
+        has no ceiling and no cycle (UC-02, DR-050). A number for either on a boolean feature, or a
+        `null` on a metered one, is `400 validation_failed` naming the field, rather than being
+        ignored.
       additionalProperties: false
       required: [feature_key, limit, reset_interval]
       properties:
         feature_key:
           $ref: '#/components/schemas/FeatureKey'
         limit:
-          $ref: '#/components/schemas/Limit'
+          oneOf:
+            - $ref: '#/components/schemas/Limit'
+            - type: 'null'
+          description: The cycle allowance of a metered feature; `null` for a boolean one.
         reset_interval:
-          $ref: '#/components/schemas/ResetInterval'
+          oneOf:
+            - $ref: '#/components/schemas/ResetInterval'
+            - type: 'null'
+          description: The cadence of a metered feature; `null` for a boolean one.
 
     Plan:
       description: |

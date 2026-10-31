@@ -59,6 +59,11 @@ func (s *Service) resolve(t *snapshot.LoadedTenant, feature string) (held, error
 	if !ok || e.Archived {
 		return held{}, invalidField("feature_key", "is not an entitlement the tenant holds, or is archived")
 	}
+	if e.Boolean {
+		// A boolean entitlement has no balance to grant to, set, roll over or
+		// re-limit (DR-050).
+		return held{}, refuse(dataplane.NotMetered(feature))
+	}
 	loc, err := time.LoadLocation(tenant.Timezone)
 	if err != nil {
 		return held{}, fmt.Errorf("load zone: %w", err)
@@ -258,10 +263,11 @@ func entry(feature string, out script.AdminOutcome, loc *time.Location) *contrac
 	}
 	e := &contract.BalanceEntry{
 		FeatureKey: contract.FeatureKey(feature),
-		Balance:    contract.Amount(out.Balance),
-		Limit:      contract.Limit(out.Limit),
-		Bonus:      contract.Amount(out.Bonus),
-		Consumed:   contract.Amount(consumed),
+		Kind:       contract.FeatureKindMetered,
+		Balance:    contract.NewNilAmount(contract.Amount(out.Balance)),
+		Limit:      contract.NewNilLimit(contract.Limit(out.Limit)),
+		Bonus:      contract.NewNilAmount(contract.Amount(out.Bonus)),
+		Consumed:   contract.NewNilAmount(contract.Amount(consumed)),
 		CycleStart: contract.NilTimestamp{Null: true},
 		CycleEnd:   contract.NilTimestamp{Null: true},
 	}
@@ -278,6 +284,20 @@ func (b *body) nullable(name string) (json.RawMessage, bool) {
 	raw, ok := b.fields[name]
 	if !ok {
 		b.add(name, "is required, and null means inherit from the plan")
+		return nil, false
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, true
+	}
+	return raw, true
+}
+
+// presentOrNull is nullable for a field whose null does not mean inherit: a
+// plan entitlement's limit and reset_interval, null for a boolean feature.
+func (b *body) presentOrNull(name string) (json.RawMessage, bool) {
+	raw, ok := b.fields[name]
+	if !ok {
+		b.add(name, "is required, and null for a boolean feature")
 		return nil, false
 	}
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {

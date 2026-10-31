@@ -268,8 +268,26 @@ func (s *BalanceEntry) Validate() error {
 		})
 	}
 	if err := func() error {
-		if err := s.Balance.Validate(); err != nil {
+		if err := s.Kind.Validate(); err != nil {
 			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "kind",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.Balance.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
 		}
 		return nil
 	}(); err != nil {
@@ -279,8 +297,15 @@ func (s *BalanceEntry) Validate() error {
 		})
 	}
 	if err := func() error {
-		if err := s.Limit.Validate(); err != nil {
-			return err
+		if value, ok := s.Limit.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
 		}
 		return nil
 	}(); err != nil {
@@ -290,8 +315,15 @@ func (s *BalanceEntry) Validate() error {
 		})
 	}
 	if err := func() error {
-		if err := s.Bonus.Validate(); err != nil {
-			return err
+		if value, ok := s.Bonus.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
 		}
 		return nil
 	}(); err != nil {
@@ -301,8 +333,15 @@ func (s *BalanceEntry) Validate() error {
 		})
 	}
 	if err := func() error {
-		if err := s.Consumed.Validate(); err != nil {
-			return err
+		if value, ok := s.Consumed.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
 		}
 		return nil
 	}(); err != nil {
@@ -573,8 +612,26 @@ func (s *CheckResponse) Validate() error {
 
 	var failures []validate.FieldError
 	if err := func() error {
-		if err := s.Balance.Validate(); err != nil {
+		if err := s.Kind.Validate(); err != nil {
 			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "kind",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.Balance.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
 		}
 		return nil
 	}(); err != nil {
@@ -584,8 +641,15 @@ func (s *CheckResponse) Validate() error {
 		})
 	}
 	if err := func() error {
-		if err := s.Limit.Validate(); err != nil {
-			return err
+		if value, ok := s.Limit.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
 		}
 		return nil
 	}(); err != nil {
@@ -595,8 +659,15 @@ func (s *CheckResponse) Validate() error {
 		})
 	}
 	if err := func() error {
-		if err := s.Bonus.Validate(); err != nil {
-			return err
+		if value, ok := s.Bonus.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
 		}
 		return nil
 	}(); err != nil {
@@ -952,6 +1023,8 @@ func (s ErrorCode) Validate() error {
 		return nil
 	case "reset_not_supported":
 		return nil
+	case "feature_not_metered":
+		return nil
 	case "feature_unit_immutable":
 		return nil
 	case "resource_version_conflict":
@@ -1179,6 +1252,40 @@ func (s *ErrorConflictTenantHeaders) Validate() error {
 	return nil
 }
 
+func (s *ErrorConsumeConflictHeaders) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.XRequestID.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "XRequestID",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if err := s.Response.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "Response",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
 func (s *ErrorControlPlaneUnavailableHeaders) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer
@@ -1275,6 +1382,40 @@ func (s *ErrorFeatureNotFoundHeaders) Validate() error {
 	return nil
 }
 
+func (s *ErrorFeatureNotMeteredHeaders) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.XRequestID.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "XRequestID",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if err := s.Response.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "Response",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
 func (s *ErrorForbiddenEntitlementHeaders) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer
@@ -1310,40 +1451,6 @@ func (s *ErrorForbiddenEntitlementHeaders) Validate() error {
 }
 
 func (s *ErrorForbiddenScopeHeaders) Validate() error {
-	if s == nil {
-		return validate.ErrNilPointer
-	}
-
-	var failures []validate.FieldError
-	if err := func() error {
-		if err := s.XRequestID.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "XRequestID",
-			Error: err,
-		})
-	}
-	if err := func() error {
-		if err := s.Response.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "Response",
-			Error: err,
-		})
-	}
-	if len(failures) > 0 {
-		return &validate.Error{Fields: failures}
-	}
-	return nil
-}
-
-func (s *ErrorIdempotencyKeyReuseHeaders) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer
 	}
@@ -1446,40 +1553,6 @@ func (s *ErrorKeyNotFoundHeaders) Validate() error {
 }
 
 func (s *ErrorNotFoundResourceHeaders) Validate() error {
-	if s == nil {
-		return validate.ErrNilPointer
-	}
-
-	var failures []validate.FieldError
-	if err := func() error {
-		if err := s.XRequestID.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "XRequestID",
-			Error: err,
-		})
-	}
-	if err := func() error {
-		if err := s.Response.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "Response",
-			Error: err,
-		})
-	}
-	if len(failures) > 0 {
-		return &validate.Error{Fields: failures}
-	}
-	return nil
-}
-
-func (s *ErrorNotImplementedHeaders) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer
 	}
@@ -3218,8 +3291,26 @@ func (s *MeteredResponse) Validate() error {
 		})
 	}
 	if err := func() error {
-		if err := s.Balance.Validate(); err != nil {
+		if err := s.Kind.Validate(); err != nil {
 			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "kind",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.Balance.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
 		}
 		return nil
 	}(); err != nil {
@@ -3229,8 +3320,15 @@ func (s *MeteredResponse) Validate() error {
 		})
 	}
 	if err := func() error {
-		if err := s.Limit.Validate(); err != nil {
-			return err
+		if value, ok := s.Limit.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
 		}
 		return nil
 	}(); err != nil {
@@ -3240,8 +3338,15 @@ func (s *MeteredResponse) Validate() error {
 		})
 	}
 	if err := func() error {
-		if err := s.Bonus.Validate(); err != nil {
-			return err
+		if value, ok := s.Bonus.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
 		}
 		return nil
 	}(); err != nil {
@@ -4025,8 +4130,15 @@ func (s *PlanEntitlement) Validate() error {
 		})
 	}
 	if err := func() error {
-		if err := s.Limit.Validate(); err != nil {
-			return err
+		if value, ok := s.Limit.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
 		}
 		return nil
 	}(); err != nil {
@@ -4036,8 +4148,15 @@ func (s *PlanEntitlement) Validate() error {
 		})
 	}
 	if err := func() error {
-		if err := s.ResetInterval.Validate(); err != nil {
-			return err
+		if value, ok := s.ResetInterval.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
 		}
 		return nil
 	}(); err != nil {

@@ -177,7 +177,7 @@ func TestBalanceRendersTheCycleInTheTenantsZone(t *testing.T) {
 		body := string(r.Body)
 		for _, want := range []string{
 			`"cycle_start":"` + c.start + `"`, `"cycle_end":"` + c.end + `"`, `"consumed":50`,
-			`"feature_key":"zone.n","balance":5,"limit":5,"bonus":0,"consumed":0,"cycle_start":null,"cycle_end":null`,
+			`"feature_key":"zone.n","kind":"metered","balance":5,"limit":5,"bonus":0,"consumed":0,"cycle_start":null,"cycle_end":null`,
 		} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: body %s lacks %s", c.zone, body, want)

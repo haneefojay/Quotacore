@@ -117,10 +117,22 @@ func (b *body) entitlements() []Entitlement {
 		}
 		e := Entitlement{}
 		e.Feature, _ = sub.str("feature_key", true, featureKeyShape, 1, 64)
-		e.Limit, _ = sub.integer("limit", true, 0, limitCeiling)
-		e.Interval, _ = sub.str("reset_interval", true, nil, 1, 16)
-		if e.Interval != "" && !intervals[e.Interval] {
-			sub.add("reset_interval", "must be hourly, daily, weekly, monthly, yearly or never")
+		// Both are required and both nullable (api-conventions.md section
+		// 7.4): null for a boolean feature, a value for a metered one. Which
+		// one the feature is, is read in the transaction that writes the row,
+		// and a mismatch is refused there naming the field (DR-050).
+		if raw, present := sub.presentOrNull("limit"); present && raw != nil {
+			if v, ok := sub.integer("limit", true, 0, limitCeiling); ok {
+				e.Limit = &v
+			}
+		}
+		if raw, present := sub.presentOrNull("reset_interval"); present && raw != nil {
+			if v, ok := sub.str("reset_interval", true, nil, 1, 16); ok {
+				if !intervals[v] {
+					sub.add("reset_interval", "must be hourly, daily, weekly, monthly, yearly or never")
+				}
+				e.Interval = &v
+			}
 		}
 		if e.Feature != "" {
 			if seen[e.Feature] {

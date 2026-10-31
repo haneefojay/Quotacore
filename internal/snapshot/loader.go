@@ -104,10 +104,14 @@ func (p Pin) activeAt(at time.Time) bool {
 // Archived is the referenced feature's state: an archived feature is refused
 // with 403 feature_archived before the tenant's state is considered
 // (state-machines.md section 5, step 1), and its balance stays readable.
+//
+// Boolean marks an inclusion with no counter (DR-050): Limit and Interval are
+// then zero and mean nothing, and no balance exists to enforce against.
 type Entitlement struct {
 	Limit    int64
 	Interval cycle.Interval
 	Archived bool
+	Boolean  bool
 }
 
 // LoadedOverride is one tenant_entitlement_overrides row, resolved to concrete
@@ -136,6 +140,9 @@ type Resolution struct {
 	// InPlan is true. Interval Never carries a limit of its own meaning.
 	Limit    int64
 	Interval cycle.Interval
+	// Boolean is true when the entitlement is an inclusion with no counter
+	// (DR-050); Limit, Interval and Anchor then mean nothing.
+	Boolean bool
 	// Anchor is the tenant's cycle anchor, the one per-tenant cycle state
 	// (DR-002), valid when InPlan is true.
 	Anchor time.Time

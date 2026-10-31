@@ -134,6 +134,11 @@ export class ResetNotSupportedError extends QuotacoreError {
   declare readonly code: "reset_not_supported";
 }
 
+/** `409 feature_not_metered`. The feature is included or not and has no counter. Consume or check 1, or make the feature metered by creating a new one (DR-050) */
+export class FeatureNotMeteredError extends QuotacoreError {
+  declare readonly code: "feature_not_metered";
+}
+
 /** `409 feature_unit_immutable`. Create a new feature. Reinterpreting historical amounts is not allowed (INV-F2) */
 export class FeatureUnitImmutableError extends QuotacoreError {
   declare readonly code: "feature_unit_immutable";
@@ -207,6 +212,7 @@ export const errorClasses: { readonly [C in ErrorCode]: typeof QuotacoreError } 
   refund_exceeds_grant: RefundExceedsGrantError,
   grant_exceeds_ceiling: GrantExceedsCeilingError,
   reset_not_supported: ResetNotSupportedError,
+  feature_not_metered: FeatureNotMeteredError,
   feature_unit_immutable: FeatureUnitImmutableError,
   resource_version_conflict: ResourceVersionConflictError,
   confirmation_required: ConfirmationRequiredError,

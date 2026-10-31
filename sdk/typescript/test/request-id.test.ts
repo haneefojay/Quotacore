@@ -42,5 +42,5 @@ test("on a non-envelope response, when one was sent", async () => {
 test("the result stays the contract's shape: requestId is not serialised", async () => {
   const r = await qc().check(request);
   assert.equal("requestId" in JSON.parse(JSON.stringify(r)), false);
-  assert.deepEqual(Object.keys(r).sort(), ["allowed", "balance", "bonus", "cycle_end", "limit", "requested"]);
+  assert.deepEqual(Object.keys(r).sort(), ["allowed", "balance", "bonus", "cycle_end", "kind", "limit", "requested"]);
 });

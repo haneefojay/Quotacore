@@ -55,6 +55,13 @@ func (s *stack) createFeature(key string) map[string]any {
 		`{"feature_key":"`+key+`","name":"F","unit":"token"}`), http.StatusCreated)
 }
 
+// createBooleanFeature creates a boolean feature through the admin API.
+func (s *stack) createBooleanFeature(key string) map[string]any {
+	s.t.Helper()
+	return mustStatus(s.t, s.adminDo(http.MethodPost, "/v1/admin/features",
+		`{"feature_key":"`+key+`","name":"F","unit":"flag","kind":"boolean"}`), http.StatusCreated)
+}
+
 // createPlan creates a plan with one entitlement per feature at limit.
 func (s *stack) createPlan(key string, limit int64, interval string, features ...string) map[string]any {
 	s.t.Helper()

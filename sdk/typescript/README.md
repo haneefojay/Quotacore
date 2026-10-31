@@ -71,6 +71,11 @@ const { entries } = await qc.balance({ tenant_external_id: "local-dev" });
 for (const e of entries) console.log(e.feature_key, e.balance, "of", e.limit);
 ```
 
+Every answer carries a `kind`. A `boolean` feature is on or off: it has no counter, so `balance`,
+`limit` and `bonus` are `null`, a consume takes an amount of 0 or 1, and anything else throws
+`FeatureNotMeteredError`. A feature the plan does not include throws `FeatureNotInPlanError`, which
+is not the same as `QuotaExceededError` on a metered feature with nothing left.
+
 ## When the outcome is unknown
 
 If every attempt of a `consume` or `refund` fails in a way that might have been applied, such as

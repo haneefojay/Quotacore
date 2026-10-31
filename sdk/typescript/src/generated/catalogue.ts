@@ -29,6 +29,7 @@ export const errorCodes = [
   "refund_exceeds_grant",
   "grant_exceeds_ceiling",
   "reset_not_supported",
+  "feature_not_metered",
   "feature_unit_immutable",
   "resource_version_conflict",
   "confirmation_required",
@@ -182,6 +183,11 @@ export const catalogue: { readonly [C in ErrorCode]: CatalogueEntry } = {
     status: 409,
     retryable: "no",
     clientAction: "Grant explicitly. There is no cycle to roll (DR-008)",
+  },
+  feature_not_metered: {
+    status: 409,
+    retryable: "no",
+    clientAction: "The feature is included or not and has no counter. Consume or check 1, or make the feature metered by creating a new one (DR-050)",
   },
   feature_unit_immutable: {
     status: 409,

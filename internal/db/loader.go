@@ -132,6 +132,14 @@ func loadTenantRow(ctx context.Context, q querier, tenantID, lock string) (*snap
 	}
 	plan.Entitlements = make(map[string]snapshot.Entitlement, len(ents))
 	for _, e := range ents {
+		if e.Limit == nil && e.Interval == nil {
+			// A boolean entitlement: an inclusion, with no counter and no
+			// cadence (DR-050). plan_entitlements_limit_pair keeps the two
+			// null together, and internal/db writes a null pair only for a
+			// boolean feature.
+			plan.Entitlements[e.Feature] = snapshot.Entitlement{Boolean: true, Archived: e.Archived}
+			continue
+		}
 		if e.Limit == nil || e.Interval == nil {
 			return nil, fmt.Errorf("entitlement for %s has no limit or interval", e.Feature)
 		}

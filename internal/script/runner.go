@@ -289,3 +289,75 @@ func (r Request) validate(op Operation) error {
 	}
 	return nil
 }
+
+// ConsumeBoolean is a consume against a boolean entitlement (DR-050). There is
+// no counter, so the decision is Applied, Replayed or an error: the amount is
+// 0 or 1, an amount above 1 is the caller's feature_not_metered before this
+// runs and ErrInvalidArgument here, and the one state written is the
+// idempotency record, so a retry replays and a reused key is
+// ErrIdempotencyKeyReuse exactly as for a metered consume. One round trip.
+func (r *Runner) ConsumeBoolean(ctx context.Context, req Request) (Decision, error) {
+	if req.IdempotencyKey == "" {
+		return "", fmt.Errorf("the %s script: %w", ConsumeBoolean, ErrMissingIdempotencyKey)
+	}
+	if req.Amount < 0 || req.Amount > 1 {
+		return "", fmt.Errorf("the %s script: %w: amount %d is not 0 or 1", ConsumeBoolean, ErrInvalidArgument, req.Amount)
+	}
+	key, err := store.BalanceKey(req.TenantID, req.FeatureKey)
+	if err != nil {
+		return "", fmt.Errorf("the %s script: %w", ConsumeBoolean, err)
+	}
+	idem, err := store.IdempotencyKey(req.TenantID, req.IdempotencyKey)
+	if err != nil {
+		return "", fmt.Errorf("the %s script: %w", ConsumeBoolean, err)
+	}
+	// The fingerprint is a consume's, so the same key on a metered consume of
+	// the same feature and amount would read as the same operation; a
+	// feature's kind never changes, so that pair cannot both exist.
+	argv := []any{strconv.FormatInt(req.Amount, 10), "", "", "", "", "",
+		Fingerprint(Consume, req.TenantID, req.FeatureKey, req.Amount)}
+	return r.include(ctx, consumeBooleanBody, []string{key, idem}, argv)
+}
+
+// CheckBoolean is a check against a boolean entitlement: Applied, always, once
+// the store has answered. It still costs the one round trip a metered check
+// costs, so a boolean check fails with the same 503 a metered one does when
+// the store is unreachable (DR-037, IP-17 DoD 4).
+func (r *Runner) CheckBoolean(ctx context.Context, req Request) (Decision, error) {
+	key, err := store.BalanceKey(req.TenantID, req.FeatureKey)
+	if err != nil {
+		return "", fmt.Errorf("the %s script: %w", CheckBoolean, err)
+	}
+	return r.include(ctx, checkBooleanBody, []string{key}, nil)
+}
+
+// include runs one of the two boolean scripts, reloading once on NOSCRIPT as
+// run does, and reads the decision from the reply's first field.
+func (r *Runner) include(ctx context.Context, b body, keys []string, argv []any) (Decision, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+	raw, err := r.client.EvalSha(ctx, b.digest, keys, argv...).Result()
+	if isNoScript(err) {
+		if loadErr := Load(ctx, r.client); loadErr != nil {
+			return "", fmt.Errorf("the %s script was not in the store and could not be put back: %w", b.op, loadErr)
+		}
+		raw, err = r.client.EvalSha(ctx, b.digest, keys, argv...).Result()
+	}
+	if err != nil {
+		return "", err
+	}
+	table, ok := raw.([]any)
+	if !ok || len(table) == 0 {
+		return "", fmt.Errorf("the %s script answered %T rather than a table", b.op, raw)
+	}
+	d, _ := table[0].(string)
+	switch Decision(d) {
+	case Applied, Replayed:
+		return Decision(d), nil
+	case Reused:
+		return "", fmt.Errorf("the %s script: %w", b.op, ErrIdempotencyKeyReuse)
+	case Invalid:
+		return "", fmt.Errorf("the %s script: %w", b.op, ErrInvalidArgument)
+	}
+	return "", fmt.Errorf("the %s script answered the decision %q, which it cannot", b.op, d)
+}

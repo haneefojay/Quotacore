@@ -61,6 +61,11 @@ A boolean entitlement answers "is this capability included", with no counter.
 **Postcondition:** inclusion and exhaustion are distinguishable by error code, which is the whole
 reason boolean entitlements are a separate model and not a limit of infinity (DR-012).
 
+> **Amended 2026-10-31 (`IP-17`).** The behaviour is DR-050's. Step 2's limit of `null` is the
+> entitlement's `limit` and `reset_interval`, both `null`; a number for either is
+> `400 validation_failed`. Step 3's removal takes effect at once, because a boolean entitlement has
+> no cycle to retire it at the end of. A counted operation against it is `409 feature_not_metered`.
+
 **Acceptance**
 - *Given* a tenant on a plan that does not include a feature
 - *When* it calls `consume` for that feature

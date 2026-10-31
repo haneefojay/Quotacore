@@ -36,7 +36,7 @@ describe("against a real Quotacore", { skip }, () => {
   let tenantUuid: string;
 
   const request = (amount: number): MeteredRequest => ({ tenant_external_id: tenantId, feature_key: featureKey, amount });
-  const balance = async () => (await direct.balance({ tenant_external_id: tenantId, feature_key: featureKey })).entries[0]!.balance;
+  const balance = async () => (await direct.balance({ tenant_external_id: tenantId, feature_key: featureKey })).entries[0]!.balance!; // metered, so never null (DR-050)
   const viaProxy = (maxAttempts: number) =>
     new Quotacore({ baseUrl: proxied, apiKey: runtimeKey, maxAttempts, baseDelayMs: 10 });
 

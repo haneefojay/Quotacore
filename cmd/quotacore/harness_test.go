@@ -314,11 +314,22 @@ func (s *stack) key(scope auth.Scope) string {
 }
 
 // ent is one entitlement a seeded plan grants.
+// ent is one seeded entitlement. An interval of "boolean" seeds a boolean
+// feature, whose entitlement has no limit and no interval (DR-050).
 type ent struct {
 	feature  string
 	limit    int64
 	interval string
 	archived bool
+}
+
+const booleanEnt = "boolean"
+
+func (e ent) row() (kind string, limit, interval any) {
+	if e.interval == booleanEnt {
+		return "boolean", nil, nil
+	}
+	return "metered", e.limit, e.interval
 }
 
 type tenant struct {
@@ -341,6 +352,7 @@ func (s *stack) tenant(external, zone string, anchor time.Time, ents ...ent) ten
 	}
 	tn := tenant{External: external, Zone: zone, Anchor: anchor, ents: map[string]ent{}}
 	for _, e := range ents {
+		kind, limit, interval := e.row()
 		var fid string
 		err := s.seedDB.QueryRowContext(ctx, `SELECT id FROM features WHERE key = $1`, e.feature).Scan(&fid)
 		if err == sql.ErrNoRows {
@@ -348,14 +360,14 @@ func (s *stack) tenant(external, zone string, anchor time.Time, ents ...ent) ten
 			if e.archived {
 				state = "archived"
 			}
-			err = s.seedDB.QueryRowContext(ctx, `INSERT INTO features (key, name, unit, state) VALUES ($1, 'F', 'token', $2) RETURNING id`,
-				e.feature, state).Scan(&fid)
+			err = s.seedDB.QueryRowContext(ctx, `INSERT INTO features (key, name, unit, state, kind) VALUES ($1, 'F', 'token', $2, $3) RETURNING id`,
+				e.feature, state, kind).Scan(&fid)
 		}
 		if err != nil {
 			s.t.Fatal(err)
 		}
 		if _, err := s.seedDB.ExecContext(ctx, `INSERT INTO plan_entitlements (plan_id, feature_id, limit_value, interval) VALUES ($1, $2, $3, $4)`,
-			planID, fid, e.limit, e.interval); err != nil {
+			planID, fid, limit, interval); err != nil {
 			s.t.Fatal(err)
 		}
 		tn.ents[e.feature] = e
@@ -367,7 +379,7 @@ func (s *stack) tenant(external, zone string, anchor time.Time, ents ...ent) ten
 	// The tenant is pinned to its plan's cadences, as provisioning pins it
 	// (IP-10, D1).
 	if _, err := s.seedDB.ExecContext(ctx, `INSERT INTO tenant_entitlement_pins (tenant_id, feature_id, interval)
-		SELECT $1, feature_id, interval FROM plan_entitlements WHERE plan_id = $2`, tn.ID, planID); err != nil {
+		SELECT $1, feature_id, interval FROM plan_entitlements WHERE plan_id = $2 AND interval IS NOT NULL`, tn.ID, planID); err != nil {
 		s.t.Fatal(err)
 	}
 	if err := s.rdb.HSet(ctx, store.ConfigTenantsKey(), tn.ID, 1).Err(); err != nil {

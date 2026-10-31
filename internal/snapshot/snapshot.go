@@ -360,11 +360,22 @@ func (s *Snapshot) Decide(t *Tenant, featureKey string, at time.Time) Resolution
 // retired one whose window has closed. An override cannot add a feature
 // (DR-015), and a feature added to the plan since the anchor is not the
 // tenant's until its next re-anchor (IP-10, D1).
+//
+// A boolean feature is never pinned, because it has no cadence to keep: it is
+// the tenant's while the plan includes it (DR-050), and it is listed with
+// Boolean set so a caller that enforces a counter skips it.
 func (t *Tenant) Features(at time.Time) map[string]Entitlement {
 	out := make(map[string]Entitlement, len(t.Pins))
 	for f := range t.Pins {
 		if e, held := t.Entitlement(f, at); held {
 			out[f] = e
+		}
+	}
+	if t.Plan != nil {
+		for f, e := range t.Plan.Entitlements {
+			if e.Boolean {
+				out[f] = e
+			}
 		}
 	}
 	return out
@@ -376,6 +387,11 @@ func (t *Tenant) Features(at time.Time) map[string]Entitlement {
 // use it, because a suspended tenant can still be granted to or re-anchored.
 func (t *Tenant) Entitlement(featureKey string, at time.Time) (Entitlement, bool) {
 	pin, pinned := t.Pins[featureKey]
+	if !pinned && t.Plan != nil {
+		if e, ok := t.Plan.Entitlements[featureKey]; ok && e.Boolean {
+			return e, true
+		}
+	}
 	if !pinned || !pin.activeAt(at) {
 		return Entitlement{}, false
 	}
@@ -486,6 +502,10 @@ func Effective(t *Tenant, featureKey string, at time.Time) Resolution {
 		return r
 	}
 	r.InPlan = true
+	if e.Boolean {
+		r.Boolean = true
+		return r
+	}
 	r.Limit = e.Limit
 	r.Interval = e.Interval
 	r.Anchor = t.Anchor

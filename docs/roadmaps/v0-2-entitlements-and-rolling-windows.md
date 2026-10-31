@@ -13,7 +13,7 @@ Read [roadmap-index.md](roadmap-index.md) first.
 
 | ID | Phase | Depends on | Status |
 | --- | --- | --- | --- |
-| `IP-17` | Boolean entitlements | `IP-16` | `BLOCKED` |
+| `IP-17` | Boolean entitlements | `IP-16` | `COMPLETE` |
 | `IP-18` | `set` and `grant` as first-class operations | `IP-17` | `BLOCKED` |
 | `IP-19` | Rolling windows | `IP-16` | `BLOCKED` |
 | `IP-20` | Per-tenant runtime keys and cap reporting | `IP-18`, `IP-19` | `BLOCKED` |
@@ -25,7 +25,7 @@ and touches a different keyspace.
 
 ## IP-17 — Boolean entitlements
 
-**Status** `BLOCKED`, gated on `IP-16`.
+**Status** `COMPLETE`. Opened and closed 2026-10-31, 7 of 7 DoD items met.
 
 **Objective.** An entitlement that is present or absent, with no counter, so the API can say
 `feature_not_in_plan` and `quota_exceeded` distinctly rather than collapsing both into zero.
@@ -71,6 +71,26 @@ and touches a different keyspace.
 out.
 
 **Deferred.** Rolling allocation of a shared pool, which is not a boolean question.
+
+> **Closed 2026-10-31.** The behaviour is [DR-050](../product/domain-rules.md), and T-16 in
+> [testing-strategy.md](../architecture/testing-strategy.md) proves items 1, 2, 3 and 5.
+>
+> | Item | Met by |
+> | --- | --- |
+> | 1 | `TestT16BooleanEntitlementHasNoCounter`: fifty of each `check` and `consume 1` allowed, `null` balance, limit and bonus, no balance hash, a retry replays |
+> | 2 | The same test: `consume 5000`, `check 5000` and a `refund` are `409 feature_not_metered`, a new code, and record nothing; the endpoint matrix provokes it on every route that lists it |
+> | 3 | `TestT16NotInPlanIsNotExhausted`: `403 feature_not_in_plan` against `429 quota_exceeded` in the response, in `quotacore_errors_total{code}` and in the ledger. Neither refusal writes a row (DR-025), so the ledger tells them apart by history: the exhausted feature has the consumption that exhausted it and the absent one has none. No new metric: the errors counter's `code` label is the distinguishing metric, and observability.md §1.2 says so |
+> | 4 | `TestABooleanCallIsOneCall` counts one evaluation per boolean `check` and `consume` in the client, beside `TestOneConsumeIsOneCall`; `TestBooleanCostsNoMoreThanMetered` compares interleaved p99s against the real store. The boolean check makes its round trip on purpose, so it fails with `503` when a metered check does (DR-050) |
+> | 5 | `TestT16MixedPlanEnforcesEachByItsType`: one boolean and three metered entitlements on monthly, daily and `never` cadences |
+> | 6 | `feature_kind` is a Postgres enum and `FeatureKind` the contract's, held equal by `internal/db`'s enum test; `GET /v1/admin/features?kind=` takes `FeatureKind` by reference |
+> | 7 | The admin error matrix: a plan entitlement with `limit: 5` on a boolean feature is `400 validation_failed` naming `entitlements[0].limit`. `PlanEntitlement`'s `limit` and `reset_interval` are required and nullable (api-conventions §7.4), and the feature's kind decides which is valid in the transaction that writes the row, with `plan_entitlements_limit_pair` keeping the two null together |
+>
+> Two questions were added and answered with their defaults: `Q-33`, no ledger row for a boolean
+> consume, and `Q-34`, `not_implemented` kept as a reserved code now that its only surface has
+> shipped. The data plane's boolean path is two new scripts, `consume_boolean.lua`, which holds
+> `consume.lua`'s idempotency block byte for byte, and `check_boolean.lua`. A boolean feature is
+> never pinned and has no balance hash, so provisioning, re-anchors, the reset worker, rebuild and
+> reconciliation skip it, and removing it from a plan removes it at once.
 
 ---
 

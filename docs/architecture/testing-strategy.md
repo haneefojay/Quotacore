@@ -244,6 +244,20 @@ stands; the consume is denied with `404 tenant_not_found`; or the consume is den
 tenant deleted before the request, is a failure. Assert the audit log shows the delete and the
 completion in commit order.
 
+### T-16 — Inclusion is not exhaustion
+
+One tenant on a plan with a boolean feature and three metered ones on three cadences, one of them a
+limit of `0` (DR-012, DR-050, UC-02). Assert that every `check` and every `consume 1` of the
+boolean feature is allowed with `null` balance, limit and bonus, that no balance hash exists for it,
+that a retried `consume` replays, and that `consume 5000`, `check 5000` and any `refund` are
+`409 feature_not_metered` and record nothing. Assert that a feature absent from the plan is
+`403 feature_not_in_plan` and an exhausted one `429 quota_exceeded`, that
+`quotacore_errors_total{code}` moves on the two codes separately, that neither refusal writes a
+ledger row, and that the ledger holds the exhausted feature's consumption and nothing for the absent
+one. Assert that the balance route reports all four entitlements by their own kind. The boolean
+path's cost is asserted beside it: one store call per boolean `check` and `consume`, counted in the
+client, and a p99 at or below the metered path's against the real store.
+
 ---
 
 ## 3. Property tests

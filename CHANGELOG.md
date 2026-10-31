@@ -12,6 +12,27 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **Boolean entitlements (`IP-17`), the first v0.2 phase.** A feature created with `kind: boolean`
+  is included in a plan or absent from it, with no counter (DR-050, new). An included one allows
+  every `check` and every `consume` of `0` or `1`, answers `kind: boolean` with `null` balance,
+  limit, bonus and cycle, and a retried `consume` replays under its `Idempotency-Key`. A larger
+  amount, any `refund`, and an admin `grant`, `set`, `force-rollover` or override against one are
+  `409 feature_not_metered` (new code), which names the mismatch instead of reporting units that
+  were never counted. A feature absent from the plan is still `403 feature_not_in_plan` and an
+  exhausted one `429 quota_exceeded`, and T-16 (new) asserts the two apart in the response, in
+  `quotacore_errors_total{code}` and in the ledger. A plan entitlement's `limit` and
+  `reset_interval` are now required-and-nullable: `null` for a boolean feature, set for a metered
+  one, and a number on a boolean feature is `400 validation_failed` naming the field. Migration
+  `00013` makes the two columns nullable as a pair. Metered responses, `check` responses and balance
+  entries gain a required `kind`, and their counter fields become nullable, which changes the
+  contract's shapes before the SDK is published (`Q-32`). `GET /v1/admin/features` gains
+  `?kind=`. The data plane runs two new scripts, one round trip each; a boolean entitlement is never
+  pinned, never materialised as a balance hash, and skipped by provisioning, the reset worker,
+  rebuild and reconciliation. The CLI takes a bare `--entitlement <feature_key>` for a boolean
+  feature and `feature list --kind`, and the TypeScript SDK's types and error classes follow the
+  contract. `Q-33` (no ledger row for a boolean consume) and `Q-34` (`not_implemented` kept as a
+  reserved code, which F1 and the endpoint matrix test now exempt by name) are new and answered.
+
 - **The TypeScript SDK (`IP-26`), built ahead of v0.2 and not yet published.** [sdk/typescript/](sdk/typescript/README.md)
   is `@quotacore/sdk`: types generated from `api/openapi.yaml` by `openapi-typescript`, and a
   hand-written layer for the four data-plane calls and every admin operation, with no runtime

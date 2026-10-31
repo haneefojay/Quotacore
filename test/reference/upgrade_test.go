@@ -137,6 +137,14 @@ func sameBalance(a, b string) bool {
 		return false
 	}
 	for i := range x.Entries {
+		// The v0.2 body adds kind; every feature a v0.1 build served is
+		// metered, so "metered" on one side and nothing on the other is the
+		// same balance (DR-050).
+		for _, e := range []map[string]any{x.Entries[i], y.Entries[i]} {
+			if e["kind"] == "metered" {
+				delete(e, "kind")
+			}
+		}
 		for k, v := range x.Entries[i] {
 			w := y.Entries[i][k]
 			if k == "cycle_start" || k == "cycle_end" {

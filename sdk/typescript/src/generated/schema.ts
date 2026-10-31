@@ -139,8 +139,8 @@ export interface paths {
         /**
          * Create a feature
          * @description `key` is immutable always and `unit` once the feature is referenced, because reinterpreting a
-         *     historical amount is not allowed (INV-F2, INV-F3). `kind: boolean` is a v0.2 surface and is
-         *     `501 not_implemented` on a v0.1 build (F-5).
+         *     historical amount is not allowed (INV-F2, INV-F3). `kind` is fixed here and never changes
+         *     afterwards (F-5, DR-050).
          */
         post: operations["createFeature"];
         delete?: never;
@@ -1156,8 +1156,9 @@ export interface components {
          */
         ArchiveState: "active" | "archived";
         /**
-         * @description `metered` in v0.1. `boolean` exists in the schema with no v0.1 use, because adding an enum
-         *     value later is a schema change and v0.2's design is already known.
+         * @description `metered` is counted in a unit, with an allowance per cycle. `boolean` is present or
+         *     absent, with no counter: no balance, no limit, no bonus and no exhaustion (DR-050). A
+         *     feature's kind is chosen when it is created and never changes.
          * @enum {string}
          */
         FeatureKind: "metered" | "boolean";
@@ -1188,7 +1189,7 @@ export interface components {
          *     [error-catalog.md](../../docs/product/error-catalog.md).
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "invalid_amount" | "invalid_window" | "invalid_timezone" | "missing_idempotency_key" | "unauthorized" | "api_key_invalid" | "insufficient_scope" | "feature_not_in_plan" | "feature_archived" | "tenant_suspended" | "tenant_not_found" | "feature_not_found" | "plan_not_found" | "api_key_not_found" | "payload_too_large" | "idempotency_key_reuse" | "plan_in_use" | "feature_in_use" | "feature_key_exists" | "tenant_exists" | "tenant_deleted" | "plan_key_exists" | "refund_exceeds_grant" | "grant_exceeds_ceiling" | "reset_not_supported" | "feature_unit_immutable" | "resource_version_conflict" | "confirmation_required" | "quota_exceeded" | "rate_limited" | "service_unavailable" | "control_plane_unavailable" | "internal_error" | "not_implemented";
+        ErrorCode: "validation_failed" | "invalid_amount" | "invalid_window" | "invalid_timezone" | "missing_idempotency_key" | "unauthorized" | "api_key_invalid" | "insufficient_scope" | "feature_not_in_plan" | "feature_archived" | "tenant_suspended" | "tenant_not_found" | "feature_not_found" | "plan_not_found" | "api_key_not_found" | "payload_too_large" | "idempotency_key_reuse" | "plan_in_use" | "feature_in_use" | "feature_key_exists" | "tenant_exists" | "tenant_deleted" | "plan_key_exists" | "refund_exceeds_grant" | "grant_exceeds_ceiling" | "reset_not_supported" | "feature_not_metered" | "feature_unit_immutable" | "resource_version_conflict" | "confirmation_required" | "quota_exceeded" | "rate_limited" | "service_unavailable" | "control_plane_unavailable" | "internal_error" | "not_implemented";
         /**
          * @description The one error shape, everywhere, and it is non-negotiable. No endpoint returns a bare
          *     `400` or a bare `500` without it.
@@ -1262,11 +1263,17 @@ export interface components {
         MeteredResponse: {
             tenant_external_id: components["schemas"]["ExternalId"];
             feature_key: components["schemas"]["FeatureKey"];
-            /** @description The remaining balance **after** the deduction. */
-            balance: components["schemas"]["Amount"];
-            limit: components["schemas"]["Limit"];
-            /** @description Cycle-scoped granted quota. It does not survive the boundary (DR-020). */
-            bonus: components["schemas"]["Amount"];
+            /**
+             * @description The feature's kind. For `boolean`, `balance`, `limit` and `bonus` are `null` and the
+             *     cycle fields are `null`, because an inclusion has no counter and no cycle (DR-050).
+             */
+            kind: components["schemas"]["FeatureKind"];
+            /** @description The remaining balance **after** the deduction. Null for a boolean entitlement. */
+            balance: components["schemas"]["Amount"] | null;
+            /** @description The cycle allowance. Null for a boolean entitlement, which has no ceiling. */
+            limit: components["schemas"]["Limit"] | null;
+            /** @description Cycle-scoped granted quota. It does not survive the boundary (DR-020). Null for a boolean entitlement. */
+            bonus: components["schemas"]["Amount"] | null;
             /**
              * @description The amount the **original** call applied, returned unchanged on a replay because a
              *     replay reads the recorded state (DR-027). On `consume`, `balance` minus `consumed` is
@@ -1288,12 +1295,18 @@ export interface components {
         CheckResponse: {
             /**
              * @description A denial is `allowed: false` at `200`, **not** a `429` (DR-024). A `429` from this
-             *     route means the service is rate-limiting you.
+             *     route means the service is rate-limiting you. An included boolean entitlement is
+             *     always `allowed: true` (DR-050).
              */
             allowed: boolean;
-            balance: components["schemas"]["Amount"];
-            limit: components["schemas"]["Limit"];
-            bonus: components["schemas"]["Amount"];
+            /** @description The feature's kind. For `boolean`, `balance`, `limit`, `bonus` and `cycle_end` are `null`. */
+            kind: components["schemas"]["FeatureKind"];
+            /** @description The balance now. Null for a boolean entitlement. */
+            balance: components["schemas"]["Amount"] | null;
+            /** @description The cycle allowance. Null for a boolean entitlement. */
+            limit: components["schemas"]["Limit"] | null;
+            /** @description Cycle-scoped granted quota. Null for a boolean entitlement. */
+            bonus: components["schemas"]["Amount"] | null;
             requested: components["schemas"]["Amount"];
             /** @description When a currently-denied amount would become available. */
             cycle_end: components["schemas"]["Timestamp"] | null;
@@ -1304,16 +1317,25 @@ export interface components {
          */
         BalanceEntry: {
             feature_key: components["schemas"]["FeatureKey"];
-            balance: components["schemas"]["Amount"];
-            limit: components["schemas"]["Limit"];
-            bonus: components["schemas"]["Amount"];
+            /**
+             * @description The feature's kind. An included boolean entitlement is an entry whose `balance`,
+             *     `limit`, `bonus`, `consumed`, `cycle_start` and `cycle_end` are all `null`: present,
+             *     with no counter (DR-050). Its presence is the answer.
+             */
+            kind: components["schemas"]["FeatureKind"];
+            /** @description The balance now. Null for a boolean entitlement. */
+            balance: components["schemas"]["Amount"] | null;
+            /** @description The cycle allowance. Null for a boolean entitlement. */
+            limit: components["schemas"]["Limit"] | null;
+            /** @description Cycle-scoped granted quota. Null for a boolean entitlement. */
+            bonus: components["schemas"]["Amount"] | null;
             /**
              * @description Net consumption in the stored cycle, derived as `limit + bonus - balance`. A refund
              *     lowers it and an administrative `set` shows through it. It is computed from the balance
              *     hash rather than read from the ledger, because this route never reads the control
-             *     plane (DR-039).
+             *     plane (DR-039). Null for a boolean entitlement, whose use is not counted.
              */
-            consumed: components["schemas"]["Amount"];
+            consumed: components["schemas"]["Amount"] | null;
             cycle_start: components["schemas"]["Timestamp"] | null;
             cycle_end: components["schemas"]["Timestamp"] | null;
         };
@@ -1378,8 +1400,8 @@ export interface components {
              */
             description: string;
             /**
-             * @description Optional, `metered` by default. `boolean` is a v0.2 surface and is `501 not_implemented`
-             *     on a v0.1 build (F-5).
+             * @description Optional, `metered` by default. Fixed at creation: no route changes it, so a boolean
+             *     feature never has a metered assignment to conflict with (F-5, DR-050).
              * @default metered
              */
             kind: components["schemas"]["FeatureKind"];
@@ -1415,11 +1437,20 @@ export interface components {
             /** @description Null on the last page. An empty page is an empty array, never `null`. */
             next_cursor?: components["schemas"]["Cursor"] | null;
         };
-        /** @description One feature's allowance in a plan. */
+        /**
+         * @description One feature's allowance in a plan. `limit` and `reset_interval` are both required and both
+         *     nullable, by the convention in api-conventions.md section 7.4: a metered feature takes a
+         *     number and an interval, and a boolean feature takes `null` for both, because an inclusion
+         *     has no ceiling and no cycle (UC-02, DR-050). A number for either on a boolean feature, or a
+         *     `null` on a metered one, is `400 validation_failed` naming the field, rather than being
+         *     ignored.
+         */
         PlanEntitlement: {
             feature_key: components["schemas"]["FeatureKey"];
-            limit: components["schemas"]["Limit"];
-            reset_interval: components["schemas"]["ResetInterval"];
+            /** @description The cycle allowance of a metered feature; `null` for a boolean one. */
+            limit: components["schemas"]["Limit"] | null;
+            /** @description The cadence of a metered feature; `null` for a boolean one. */
+            reset_interval: components["schemas"]["ResetInterval"] | null;
         };
         /**
          * @description One plan: the offer a tenant is assigned to. A plan is a bounded set of entitlements and
@@ -2652,11 +2683,26 @@ export interface components {
             };
         };
         /**
-         * @description The key was first used for a different operation. No state changed and the original record
-         *     is preserved (DR-028, INV-I2). Retry with a **new** key only if the new operation is
-         *     genuinely a new one.
+         * @description A consume conflict, and no state changed. `idempotency_key_reuse` is a key first used for a
+         *     different operation; the original record is preserved (DR-028, INV-I2), and a retry with a
+         *     **new** key is right only if the new operation is genuinely a new one.
+         *     `feature_not_metered` is an amount above 1 against a boolean entitlement, which has no
+         *     counter to deduct from (DR-050).
          */
-        ErrorIdempotencyKeyReuse: {
+        ErrorConsumeConflict: {
+            headers: {
+                "X-Request-Id": components["headers"]["XRequestId"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /**
+         * @description An amount above 1 asked of a boolean entitlement. `check` answers what `consume` would, so
+         *     it refuses the same amount rather than calling it allowed (DR-024, DR-050).
+         */
+        ErrorFeatureNotMetered: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
                 [name: string]: unknown;
@@ -2667,7 +2713,9 @@ export interface components {
         };
         /**
          * @description A refund conflict. It never returns `quota_exceeded`: a refund cannot exceed a balance,
-         *     and the bound it can break is `balance <= limit + bonus` (DR-019).
+         *     and the bound it can break is `balance <= limit + bonus` (DR-019). A refund against a
+         *     boolean entitlement is `feature_not_metered`, because there is no counter to restore
+         *     (DR-050).
          */
         ErrorRefundConflict: {
             headers: {
@@ -2747,8 +2795,9 @@ export interface components {
             };
         };
         /**
-         * @description A refused administrative change to a balance. Nothing was applied in any of the four
-         *     cases. `tenant_deleted` is a tenant whose deletion is terminal (T-7).
+         * @description A refused administrative change to a balance. Nothing was applied in any of the five
+         *     cases. `tenant_deleted` is a tenant whose deletion is terminal (T-7), and
+         *     `feature_not_metered` is a feature with no counter to change (DR-050).
          */
         ErrorConflictQuota: {
             headers: {
@@ -2835,7 +2884,8 @@ export interface components {
         };
         /**
          * @description A later-release surface called on an MVP build. Not transient: retrying does not help.
-         *     Upgrade, or use the MVP equivalent.
+         *     Upgrade, or use the MVP equivalent. Reserved: no route of this build raises it, because
+         *     boolean features, its last surface, shipped in v0.2 (Q-34).
          */
         ErrorNotImplemented: {
             headers: {
@@ -2913,6 +2963,11 @@ export interface components {
          *     tenant's full set, which is bounded by the plan's entitlement count (NFR-T5).
          */
         FeatureKeyQuery: components["schemas"]["FeatureKey"];
+        /**
+         * @description Restrict the catalogue to one kind. The values are `FeatureKind`'s, which are the database
+         *     enum's, exactly.
+         */
+        FeatureKindQuery: components["schemas"]["FeatureKind"];
         /** @description Restrict the tenant list to one plan. */
         PlanKeyQuery: components["schemas"]["PlanKey"];
         /** @description The feature key, as in the catalogue. */
@@ -3007,7 +3062,7 @@ export interface operations {
             401: components["responses"]["ErrorUnauthorized"];
             403: components["responses"]["ErrorForbiddenEntitlement"];
             404: components["responses"]["ErrorTenantNotFound"];
-            409: components["responses"]["ErrorIdempotencyKeyReuse"];
+            409: components["responses"]["ErrorConsumeConflict"];
             413: components["responses"]["ErrorPayloadTooLarge"];
             429: components["responses"]["ErrorQuotaAndRate"];
             500: components["responses"]["ErrorInternal"];
@@ -3070,6 +3125,7 @@ export interface operations {
             401: components["responses"]["ErrorUnauthorized"];
             403: components["responses"]["ErrorForbiddenEntitlement"];
             404: components["responses"]["ErrorTenantNotFound"];
+            409: components["responses"]["ErrorFeatureNotMetered"];
             429: components["responses"]["ErrorRateLimited"];
             500: components["responses"]["ErrorInternal"];
             503: components["responses"]["ErrorUnavailable"];
@@ -3115,6 +3171,11 @@ export interface operations {
                 cursor?: components["parameters"]["Cursor"];
                 /** @description Page size. An empty page returns an empty array, never `null`. */
                 limit?: components["parameters"]["Limit"];
+                /**
+                 * @description Restrict the catalogue to one kind. The values are `FeatureKind`'s, which are the database
+                 *     enum's, exactly.
+                 */
+                kind?: components["parameters"]["FeatureKindQuery"];
             };
             header?: never;
             path?: never;
@@ -3152,7 +3213,6 @@ export interface operations {
             413: components["responses"]["ErrorPayloadTooLarge"];
             429: components["responses"]["ErrorRateLimited"];
             500: components["responses"]["ErrorInternal"];
-            501: components["responses"]["ErrorNotImplemented"];
             503: components["responses"]["ErrorUnavailable"];
         };
     };

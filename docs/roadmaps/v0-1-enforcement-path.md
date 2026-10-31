@@ -365,7 +365,7 @@ generator is pinned so the artefacts cannot be produced by a different version.
 | 6 | `TestMatrixAndContractAgree` | A matrix cell and the contract disagreeing about which code a route returns |
 | 7 | `TestDocsPageIsUpToDate`, `TestDocsPageIsSelfContained`, `TestServedDocsIsTheCommittedPage`, `make generate-check` | A stale page, a page needing the network, or a served page that is not the committed one |
 
-The contract is `api/openapi.yaml`: 41 operations, 67 named schemas, 35 error codes, 5,361 lines.
+The contract is `api/openapi.yaml`: 41 operations, 67 named schemas, the error catalogue's codes at the time, 5,361 lines.
 It declares no product behaviour — `TestNoProductBehaviour` and `TestOgenEmitsNoRoutes` assert that
 `disable_all` produced no router and no unimplemented handler, and an enforcement call still returns
 `404`, because `IP-07` owns the routes.

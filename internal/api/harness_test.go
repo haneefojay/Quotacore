@@ -118,6 +118,23 @@ func (s *scripted) Refund(_ context.Context, r script.Request) (script.Outcome, 
 func (s *scripted) Check(_ context.Context, r script.Request) (script.Outcome, error) {
 	return s.call("check", r)
 }
+func (s *scripted) ConsumeBoolean(_ context.Context, r script.Request) (script.Decision, error) {
+	out, err := s.call("consume_boolean", r)
+	if err != nil {
+		return "", err
+	}
+	if out.Decision == script.Replayed {
+		return script.Replayed, nil
+	}
+	return script.Applied, nil
+}
+func (s *scripted) CheckBoolean(_ context.Context, r script.Request) (script.Decision, error) {
+	_, err := s.call("check_boolean", r)
+	if err != nil {
+		return "", err
+	}
+	return script.Applied, nil
+}
 
 type memBalances struct {
 	stored map[string]store.Stored

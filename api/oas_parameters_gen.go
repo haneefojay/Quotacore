@@ -144,6 +144,9 @@ type ListFeaturesParams struct {
 	Cursor OptString `json:",omitempty,omitzero"`
 	// Page size. An empty page returns an empty array, never `null`.
 	Limit OptInt32 `json:",omitempty,omitzero"`
+	// Restrict the catalogue to one kind. The values are `FeatureKind`'s, which are the database enum's,
+	// exactly.
+	Kind OptFeatureKind `json:",omitempty,omitzero"`
 }
 
 // ListKeysParams is parameters of listKeys operation.

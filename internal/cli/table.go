@@ -83,7 +83,7 @@ func isGroup(word string) bool {
 
 var commands = []Command{
 	// Features.
-	{Name: "feature list", Op: "listFeatures", List: true, Summary: "List features"},
+	{Name: "feature list", Op: "listFeatures", List: true, Summary: "List features", setup: featureList},
 	{Name: "feature get", Op: "getFeature", Args: []string{"feature_key"}, Summary: "Show one feature"},
 	{Name: "feature create", Op: "createFeature", Writes: true, Summary: "Create a feature", setup: featureCreate},
 	{Name: "feature update", Op: "updateFeature", Args: []string{"feature_key"}, Writes: true,
@@ -248,7 +248,7 @@ func (i invalid) Validate() error              { return i.err }
 
 func planCreate(f *flags) build {
 	key, name, desc := f.str("key", "the plan key, such as starter"), f.str("name", "a display name"), f.str("description", "free text")
-	ents := f.list("entitlement", "<feature_key>=<limit>/<interval>; repeat for each feature")
+	ents := f.list("entitlement", "<feature_key>=<limit>/<interval>, or a bare <feature_key> for a boolean feature; repeat for each feature")
 	f.need("key", "name", "entitlement")
 	return func([]string) (request, error) {
 		es, err := entitlements(*ents)
@@ -266,7 +266,7 @@ func planCreate(f *flags) build {
 func planUpdate(f *flags) build {
 	version := f.str("version", "the version the last read showed")
 	name, desc := f.str("name", "a new display name"), f.str("description", "new free text; '' clears it")
-	ents := f.list("entitlement", "<feature_key>=<limit>/<interval>; the set given replaces the whole set")
+	ents := f.list("entitlement", "<feature_key>=<limit>/<interval>, or a bare <feature_key> for a boolean feature; the set given replaces the whole set")
 	f.need("version")
 	return func([]string) (request, error) {
 		v, err := parseInt("version", *version)
@@ -299,6 +299,15 @@ func planApply(f *flags) build {
 			b.ConfirmationToken = contract.NewOptString(*token)
 		}
 		return send(b)
+	}
+}
+
+func featureList(f *flags) build {
+	kind := f.str("kind", "only features of this kind: metered or boolean")
+	return func([]string) (request, error) {
+		q := url.Values{}
+		f.query(q, map[string]*string{"kind": kind})
+		return request{query: q}, nil
 	}
 }
 
