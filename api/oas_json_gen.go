@@ -782,9 +782,21 @@ func (s *BalanceEntry) encodeFields(e *jx.Encoder) {
 		e.FieldStart("cycle_end")
 		s.CycleEnd.Encode(e)
 	}
+	{
+		if s.Window.Set {
+			e.FieldStart("window")
+			s.Window.Encode(e)
+		}
+	}
+	{
+		if s.WindowPrecisionSeconds.Set {
+			e.FieldStart("window_precision_seconds")
+			s.WindowPrecisionSeconds.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfBalanceEntry = [8]string{
+var jsonFieldsNameOfBalanceEntry = [10]string{
 	0: "feature_key",
 	1: "kind",
 	2: "balance",
@@ -793,6 +805,8 @@ var jsonFieldsNameOfBalanceEntry = [8]string{
 	5: "consumed",
 	6: "cycle_start",
 	7: "cycle_end",
+	8: "window",
+	9: "window_precision_seconds",
 }
 
 // Decode decodes BalanceEntry from json.
@@ -800,7 +814,7 @@ func (s *BalanceEntry) Decode(d *jx.Decoder) error {
 	if s == nil {
 		return errors.New("invalid: unable to decode BalanceEntry to nil")
 	}
-	var requiredBitSet [1]uint8
+	var requiredBitSet [2]uint8
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
@@ -884,6 +898,26 @@ func (s *BalanceEntry) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"cycle_end\"")
 			}
+		case "window":
+			if err := func() error {
+				s.Window.Reset()
+				if err := s.Window.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"window\"")
+			}
+		case "window_precision_seconds":
+			if err := func() error {
+				s.WindowPrecisionSeconds.Reset()
+				if err := s.WindowPrecisionSeconds.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"window_precision_seconds\"")
+			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
 		}
@@ -893,8 +927,9 @@ func (s *BalanceEntry) Decode(d *jx.Decoder) error {
 	}
 	// Validate required fields.
 	var failures []validate.FieldError
-	for i, mask := range [1]uint8{
+	for i, mask := range [2]uint8{
 		0b11111111,
+		0b00000000,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -1245,9 +1280,21 @@ func (s *CheckResponse) encodeFields(e *jx.Encoder) {
 		e.FieldStart("cycle_end")
 		s.CycleEnd.Encode(e)
 	}
+	{
+		if s.Window.Set {
+			e.FieldStart("window")
+			s.Window.Encode(e)
+		}
+	}
+	{
+		if s.WindowPrecisionSeconds.Set {
+			e.FieldStart("window_precision_seconds")
+			s.WindowPrecisionSeconds.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfCheckResponse = [7]string{
+var jsonFieldsNameOfCheckResponse = [9]string{
 	0: "allowed",
 	1: "kind",
 	2: "balance",
@@ -1255,6 +1302,8 @@ var jsonFieldsNameOfCheckResponse = [7]string{
 	4: "bonus",
 	5: "requested",
 	6: "cycle_end",
+	7: "window",
+	8: "window_precision_seconds",
 }
 
 // Decode decodes CheckResponse from json.
@@ -1262,7 +1311,7 @@ func (s *CheckResponse) Decode(d *jx.Decoder) error {
 	if s == nil {
 		return errors.New("invalid: unable to decode CheckResponse to nil")
 	}
-	var requiredBitSet [1]uint8
+	var requiredBitSet [2]uint8
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
@@ -1338,6 +1387,26 @@ func (s *CheckResponse) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"cycle_end\"")
 			}
+		case "window":
+			if err := func() error {
+				s.Window.Reset()
+				if err := s.Window.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"window\"")
+			}
+		case "window_precision_seconds":
+			if err := func() error {
+				s.WindowPrecisionSeconds.Reset()
+				if err := s.WindowPrecisionSeconds.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"window_precision_seconds\"")
+			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
 		}
@@ -1347,8 +1416,9 @@ func (s *CheckResponse) Decode(d *jx.Decoder) error {
 	}
 	// Validate required fields.
 	var failures []validate.FieldError
-	for i, mask := range [1]uint8{
+	for i, mask := range [2]uint8{
 		0b01111111,
+		0b00000000,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -1781,6 +1851,8 @@ func (s *ErrorCode) Decode(d *jx.Decoder) error {
 		*s = ErrorCodeResetNotSupported
 	case ErrorCodeFeatureNotMetered:
 		*s = ErrorCodeFeatureNotMetered
+	case ErrorCodeFeatureNotAnchored:
+		*s = ErrorCodeFeatureNotAnchored
 	case ErrorCodeFeatureUnitImmutable:
 		*s = ErrorCodeFeatureUnitImmutable
 	case ErrorCodeResourceVersionConflict:
@@ -2695,6 +2767,8 @@ func (s *FeatureCreateKind) Decode(d *jx.Decoder) error {
 		*s = FeatureCreateKindMetered
 	case FeatureCreateKindBoolean:
 		*s = FeatureCreateKindBoolean
+	case FeatureCreateKindRolling:
+		*s = FeatureCreateKindRolling
 	default:
 		*s = FeatureCreateKind(v)
 	}
@@ -2775,6 +2849,8 @@ func (s *FeatureKind) Decode(d *jx.Decoder) error {
 		*s = FeatureKindMetered
 	case FeatureKindBoolean:
 		*s = FeatureKindBoolean
+	case FeatureKindRolling:
+		*s = FeatureKindRolling
 	default:
 		*s = FeatureKind(v)
 	}
@@ -4491,56 +4567,6 @@ func (s *MeteredRequest) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
-// Encode encodes MeteredRequestWindow as json.
-func (s MeteredRequestWindow) Encode(e *jx.Encoder) {
-	e.Str(string(s))
-}
-
-// Decode decodes MeteredRequestWindow from json.
-func (s *MeteredRequestWindow) Decode(d *jx.Decoder) error {
-	if s == nil {
-		return errors.New("invalid: unable to decode MeteredRequestWindow to nil")
-	}
-	v, err := d.StrBytes()
-	if err != nil {
-		return err
-	}
-	// Try to use constant string.
-	switch MeteredRequestWindow(v) {
-	case MeteredRequestWindowRolling5m:
-		*s = MeteredRequestWindowRolling5m
-	case MeteredRequestWindowRolling15m:
-		*s = MeteredRequestWindowRolling15m
-	case MeteredRequestWindowRolling1h:
-		*s = MeteredRequestWindowRolling1h
-	case MeteredRequestWindowRolling6h:
-		*s = MeteredRequestWindowRolling6h
-	case MeteredRequestWindowRolling24h:
-		*s = MeteredRequestWindowRolling24h
-	case MeteredRequestWindowRolling7d:
-		*s = MeteredRequestWindowRolling7d
-	case MeteredRequestWindowRolling30d:
-		*s = MeteredRequestWindowRolling30d
-	default:
-		*s = MeteredRequestWindow(v)
-	}
-
-	return nil
-}
-
-// MarshalJSON implements stdjson.Marshaler.
-func (s MeteredRequestWindow) MarshalJSON() ([]byte, error) {
-	e := jx.Encoder{}
-	s.Encode(&e)
-	return e.Bytes(), nil
-}
-
-// UnmarshalJSON implements stdjson.Unmarshaler.
-func (s *MeteredRequestWindow) UnmarshalJSON(data []byte) error {
-	d := jx.DecodeBytes(data)
-	return s.Decode(d)
-}
-
 // Encode implements json.Marshaler.
 func (s *MeteredResponse) Encode(e *jx.Encoder) {
 	e.ObjStart()
@@ -4587,22 +4613,36 @@ func (s *MeteredResponse) encodeFields(e *jx.Encoder) {
 		s.CycleEnd.Encode(e)
 	}
 	{
+		if s.Window.Set {
+			e.FieldStart("window")
+			s.Window.Encode(e)
+		}
+	}
+	{
+		if s.WindowPrecisionSeconds.Set {
+			e.FieldStart("window_precision_seconds")
+			s.WindowPrecisionSeconds.Encode(e)
+		}
+	}
+	{
 		e.FieldStart("replayed")
 		e.Bool(s.Replayed)
 	}
 }
 
-var jsonFieldsNameOfMeteredResponse = [10]string{
-	0: "tenant_external_id",
-	1: "feature_key",
-	2: "kind",
-	3: "balance",
-	4: "limit",
-	5: "bonus",
-	6: "consumed",
-	7: "cycle_start",
-	8: "cycle_end",
-	9: "replayed",
+var jsonFieldsNameOfMeteredResponse = [12]string{
+	0:  "tenant_external_id",
+	1:  "feature_key",
+	2:  "kind",
+	3:  "balance",
+	4:  "limit",
+	5:  "bonus",
+	6:  "consumed",
+	7:  "cycle_start",
+	8:  "cycle_end",
+	9:  "window",
+	10: "window_precision_seconds",
+	11: "replayed",
 }
 
 // Decode decodes MeteredResponse from json.
@@ -4704,8 +4744,28 @@ func (s *MeteredResponse) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"cycle_end\"")
 			}
+		case "window":
+			if err := func() error {
+				s.Window.Reset()
+				if err := s.Window.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"window\"")
+			}
+		case "window_precision_seconds":
+			if err := func() error {
+				s.WindowPrecisionSeconds.Reset()
+				if err := s.WindowPrecisionSeconds.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"window_precision_seconds\"")
+			}
 		case "replayed":
-			requiredBitSet[1] |= 1 << 1
+			requiredBitSet[1] |= 1 << 3
 			if err := func() error {
 				v, err := d.Bool()
 				s.Replayed = bool(v)
@@ -4727,7 +4787,7 @@ func (s *MeteredResponse) Decode(d *jx.Decoder) error {
 	var failures []validate.FieldError
 	for i, mask := range [2]uint8{
 		0b11111111,
-		0b00000011,
+		0b00001001,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -5492,39 +5552,6 @@ func (s *OptMetadata) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
-// Encode encodes MeteredRequestWindow as json.
-func (o OptMeteredRequestWindow) Encode(e *jx.Encoder) {
-	if !o.Set {
-		return
-	}
-	e.Str(string(o.Value))
-}
-
-// Decode decodes MeteredRequestWindow from json.
-func (o *OptMeteredRequestWindow) Decode(d *jx.Decoder) error {
-	if o == nil {
-		return errors.New("invalid: unable to decode OptMeteredRequestWindow to nil")
-	}
-	o.Set = true
-	if err := o.Value.Decode(d); err != nil {
-		return err
-	}
-	return nil
-}
-
-// MarshalJSON implements stdjson.Marshaler.
-func (s OptMeteredRequestWindow) MarshalJSON() ([]byte, error) {
-	e := jx.Encoder{}
-	s.Encode(&e)
-	return e.Bytes(), nil
-}
-
-// UnmarshalJSON implements stdjson.Unmarshaler.
-func (s *OptMeteredRequestWindow) UnmarshalJSON(data []byte) error {
-	d := jx.DecodeBytes(data)
-	return s.Decode(d)
-}
-
 // Encode encodes Cursor as json.
 func (o OptNilCursor) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -5570,6 +5597,55 @@ func (s OptNilCursor) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptNilCursor) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes RollingWindow as json.
+func (o OptNilRollingWindow) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	if o.Null {
+		e.Null()
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes RollingWindow from json.
+func (o *OptNilRollingWindow) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptNilRollingWindow to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v RollingWindow
+		o.Value = v
+		o.Set = true
+		o.Null = true
+		return nil
+	}
+	o.Set = true
+	o.Null = false
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptNilRollingWindow) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptNilRollingWindow) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -5636,6 +5712,39 @@ func (s OptPlanKey) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptPlanKey) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes RollingWindow as json.
+func (o OptRollingWindow) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes RollingWindow from json.
+func (o *OptRollingWindow) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptRollingWindow to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptRollingWindow) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptRollingWindow) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -6982,12 +7091,19 @@ func (s *PlanEntitlement) encodeFields(e *jx.Encoder) {
 		e.FieldStart("reset_interval")
 		s.ResetInterval.Encode(e)
 	}
+	{
+		if s.Window.Set {
+			e.FieldStart("window")
+			s.Window.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfPlanEntitlement = [3]string{
+var jsonFieldsNameOfPlanEntitlement = [4]string{
 	0: "feature_key",
 	1: "limit",
 	2: "reset_interval",
+	3: "window",
 }
 
 // Decode decodes PlanEntitlement from json.
@@ -7028,6 +7144,16 @@ func (s *PlanEntitlement) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"reset_interval\"")
+			}
+		case "window":
+			if err := func() error {
+				s.Window.Reset()
+				if err := s.Window.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"window\"")
 			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
@@ -7742,6 +7868,56 @@ func (s ResetInterval) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *ResetInterval) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes RollingWindow as json.
+func (s RollingWindow) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes RollingWindow from json.
+func (s *RollingWindow) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode RollingWindow to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch RollingWindow(v) {
+	case RollingWindowRolling5m:
+		*s = RollingWindowRolling5m
+	case RollingWindowRolling15m:
+		*s = RollingWindowRolling15m
+	case RollingWindowRolling1h:
+		*s = RollingWindowRolling1h
+	case RollingWindowRolling6h:
+		*s = RollingWindowRolling6h
+	case RollingWindowRolling24h:
+		*s = RollingWindowRolling24h
+	case RollingWindowRolling7d:
+		*s = RollingWindowRolling7d
+	case RollingWindowRolling30d:
+		*s = RollingWindowRolling30d
+	default:
+		*s = RollingWindow(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s RollingWindow) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *RollingWindow) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

@@ -565,6 +565,17 @@ and the API says so.
   request's events age out of the window
 - *And* the response states the window and its precision
 
+> **Amended 2026-10-31 (`IP-19`).** DR-052 is the rule this use case is built to. Three readings
+> are fixed by it. The window is configured on a `rolling` feature's plan entitlement and the call
+> names it, so step 1's feature "configured for rolling windows" is that kind, and a request that
+> names another window cannot shorten the lookback it is held to. A rolling feature has no cycle
+> (ADR-0008), so step 2's "current cycle's buckets" and the second alternative flow's attribution
+> to a cycle do not arise: the buckets are the window's own. The first alternative flow's
+> mismatch is `400 invalid_window`, which the error catalogue names for it, not
+> `validation_failed`. And the acceptance's `Then` is read as: the 3 is **denied**, because 8 + 3
+> is above 10, and allowed once the 8 have aged out of the window, which is within one bucket of
+> five minutes after they were consumed; T-18 asserts both halves.
+
 ---
 
 ### UC-18 — Receive a threshold webhook

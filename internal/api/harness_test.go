@@ -136,6 +136,25 @@ func (s *scripted) CheckBoolean(_ context.Context, r script.Request) (script.Dec
 	return script.Applied, nil
 }
 
+func (s *scripted) rolling(op string, r script.RollingRequest) (script.RollingOutcome, error) {
+	out, err := s.call(op, script.Request{TenantID: r.TenantID, FeatureKey: r.FeatureKey,
+		IdempotencyKey: r.IdempotencyKey, Amount: r.Amount, Limit: r.Limit, At: r.At})
+	if err != nil {
+		return script.RollingOutcome{}, err
+	}
+	return script.RollingOutcome{Decision: out.Decision, Remaining: out.Balance, Limit: out.Limit,
+		Sum: out.Limit - out.Balance, Start: out.Start, NextRelease: out.End}, nil
+}
+func (s *scripted) ConsumeRolling(_ context.Context, r script.RollingRequest) (script.RollingOutcome, error) {
+	return s.rolling("consume_rolling", r)
+}
+func (s *scripted) CheckRolling(_ context.Context, r script.RollingRequest) (script.RollingOutcome, error) {
+	return s.rolling("check_rolling", r)
+}
+func (s *scripted) RefundRolling(_ context.Context, r script.RollingRequest) (script.RollingOutcome, error) {
+	return s.rolling("refund_rolling", r)
+}
+
 type memBalances struct {
 	stored map[string]store.Stored
 	err    error

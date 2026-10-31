@@ -2124,18 +2124,18 @@ components:
     InvalidWindow:
       summary: A window that disagrees with the cadence
       description: |
-        Either the window is not valid for the feature's cadence, or it is a v0.2 feature called
-        on a v0.1 build. The two cadences are never silently mixed, because a silent mix makes
+        The window is absent, unknown, or not the one the feature's entitlement configures, or it
+        was sent to an anchored or boolean feature (DR-052). The two cadences are never silently mixed, because a silent mix makes
         the balance a lie.
       value:
         error:
           code: invalid_window
-          message: 'window: rolling_1h is not available in v0.1'
+          message: 'window: feature api.calls is rolling_1h, not rolling_5m'
           request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
           details:
             field: window
-            requested: rolling_1h
-            supported: anchored
+            requested: rolling_5m
+            supported: rolling_1h
     InvalidTimezone:
       summary: An abbreviation where an IANA name is required
       description: |
@@ -2420,6 +2420,20 @@ components:
           details:
             feature_key: sso
             kind: boolean
+    FeatureNotAnchored:
+      summary: A balance operation on a rolling feature
+      description: |
+        A rolling feature is counted over a sliding window and has no cycle balance, so there is
+        no balance to grant to, set, roll over or override (DR-052). Per-window overrides are
+        deferred.
+      value:
+        error:
+          code: feature_not_anchored
+          message: feature api.calls is rolling, which has no cycle balance
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            feature_key: api.calls
+            kind: rolling
     FeatureUnitImmutable:
       summary: A unit change on an assigned feature
       description: |
@@ -2485,6 +2499,23 @@ components:
             requested: 100
             limit: 1000
             cycle_end: '2026-10-01T00:00:00+02:00'
+    QuotaExceededRolling:
+      summary: Not enough in this window
+      description: |
+        A rolling feature has no cycle end. `next_release_at` is when the oldest counted bucket
+        leaves the window, which frees its units; it may not free enough for this amount (DR-052).
+      value:
+        error:
+          code: quota_exceeded
+          message: 'the window sum plus the amount would exceed the limit'
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
+          details:
+            feature_key: api.calls
+            balance: 2
+            requested: 3
+            limit: 10
+            window: rolling_5m
+            next_release_at: '2026-10-01T09:04:05Z'
     RateLimited:
       summary: The service protecting itself
       description: |
@@ -3647,11 +3678,12 @@ components:
 
     ErrorConflictQuota:
       x-status: 409
-      x-codes: [grant_exceeds_ceiling, reset_not_supported, feature_not_metered, resource_version_conflict, tenant_deleted]
+      x-codes: [grant_exceeds_ceiling, reset_not_supported, feature_not_metered, feature_not_anchored, resource_version_conflict, tenant_deleted]
       description: |
-        A refused administrative change to a balance. Nothing was applied in any of the five
-        cases. `tenant_deleted` is a tenant whose deletion is terminal (T-7), and
-        `feature_not_metered` is a feature with no counter to change (DR-050).
+        A refused administrative change to a balance. Nothing was applied in any of the six
+        cases. `tenant_deleted` is a tenant whose deletion is terminal (T-7),
+        `feature_not_metered` is a feature with no counter to change (DR-050), and
+        `feature_not_anchored` is a rolling feature, which has no cycle balance (DR-052).
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'
@@ -3666,6 +3698,8 @@ components:
               $ref: '#/components/examples/ResetNotSupported'
             feature_not_metered:
               $ref: '#/components/examples/FeatureNotMetered'
+            feature_not_anchored:
+              $ref: '#/components/examples/FeatureNotAnchored'
             resource_version_conflict:
               $ref: '#/components/examples/ResourceVersionConflict'
 
@@ -3725,6 +3759,8 @@ components:
           examples:
             quota_exceeded:
               $ref: '#/components/examples/QuotaExceeded'
+            quota_exceeded_rolling:
+              $ref: '#/components/examples/QuotaExceededRolling'
             rate_limited:
               $ref: '#/components/examples/RateLimited'
 
@@ -4012,9 +4048,18 @@ components:
       type: string
       description: |
         `metered` is counted in a unit, with an allowance per cycle. `boolean` is present or
-        absent, with no counter: no balance, no limit, no bonus and no exhaustion (DR-050). A
-        feature's kind is chosen when it is created and never changes.
-      enum: [metered, boolean]
+        absent, with no counter: no balance, no limit, no bonus and no exhaustion (DR-050).
+        `rolling` is counted in a unit against a limit over a sliding lookback window, with no
+        calendar cycle (DR-052). A feature's kind is chosen when it is created and never changes.
+      enum: [metered, boolean, rolling]
+
+    RollingWindow:
+      type: string
+      description: |
+        The lookback of a `rolling` entitlement (DR-052). A string, never a number of seconds, so
+        a unit mistake cannot reach the service (Q-11). Each window is counted in 60 buckets, so
+        its precision is one sixtieth of it: 5 s for `rolling_5m`, 12 h for `rolling_30d`.
+      enum: [rolling_5m, rolling_15m, rolling_1h, rolling_6h, rolling_24h, rolling_7d, rolling_30d]
 
     EventSource:
       type: string
@@ -4094,6 +4139,7 @@ components:
         - grant_exceeds_ceiling
         - reset_not_supported
         - feature_not_metered
+        - feature_not_anchored
         - feature_unit_immutable
         - resource_version_conflict
         - confirmation_required
@@ -4185,13 +4231,13 @@ components:
         metadata:
           $ref: '#/components/schemas/Metadata'
         window:
-          type: string
+          allOf:
+            - $ref: '#/components/schemas/RollingWindow'
           description: |
-            v0.2. Omitted means the anchored cycle, which is the only cadence in v0.1
-            (ADR-0008). A window that disagrees with the feature's cadence is
-            `400 invalid_window`, and supplying any window on a v0.1 build is also
-            `invalid_window`, because the two cadences are never silently mixed.
-          enum: [rolling_5m, rolling_15m, rolling_1h, rolling_6h, rolling_24h, rolling_7d, rolling_30d]
+            Omitted means the anchored cycle (ADR-0008). A `rolling` feature must name the window
+            its plan entitlement configures, and any other feature must omit it: a window that is
+            absent, different, unknown or sent to an anchored feature is `400 invalid_window`,
+            because the two cadences are never silently mixed (DR-052).
       examples:
         metered:
           value:
@@ -4221,6 +4267,8 @@ components:
           description: |
             The feature's kind. For `boolean`, `balance`, `limit` and `bonus` are `null` and the
             cycle fields are `null`, because an inclusion has no counter and no cycle (DR-050).
+            For `rolling`, `balance` is what remains in the window, `bonus` and the cycle fields
+            are `null`, and `window` and `window_precision_seconds` are present (DR-052).
         balance:
           oneOf:
             - $ref: '#/components/schemas/Amount'
@@ -4253,6 +4301,18 @@ components:
           oneOf:
             - $ref: '#/components/schemas/Timestamp'
             - type: 'null'
+        window:
+          allOf:
+            - $ref: '#/components/schemas/RollingWindow'
+          description: Present only for a `rolling` feature, the window the numbers describe (DR-052).
+        window_precision_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          description: |
+            Present only for a `rolling` feature: the width of one bucket, which is the precision
+            of the window sum. A unit counts for at least the window less this and at most the
+            window (DR-052).
         replayed:
           type: boolean
           description: |
@@ -4275,7 +4335,10 @@ components:
         kind:
           allOf:
             - $ref: '#/components/schemas/FeatureKind'
-          description: The feature's kind. For `boolean`, `balance`, `limit`, `bonus` and `cycle_end` are `null`.
+          description: |
+            The feature's kind. For `boolean`, `balance`, `limit`, `bonus` and `cycle_end` are
+            `null`. For `rolling`, `bonus` and `cycle_end` are `null`, `balance` is what remains in
+            the window, and `window` and `window_precision_seconds` are present (DR-052).
         balance:
           oneOf:
             - $ref: '#/components/schemas/Amount'
@@ -4297,7 +4360,19 @@ components:
           oneOf:
             - $ref: '#/components/schemas/Timestamp'
             - type: 'null'
-          description: When a currently-denied amount would become available.
+          description: When a currently-denied amount would become available. Null for a `rolling` feature, which has no cycle.
+        window:
+          allOf:
+            - $ref: '#/components/schemas/RollingWindow'
+          description: Present only for a `rolling` feature, the window the numbers describe (DR-052).
+        window_precision_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          description: |
+            Present only for a `rolling` feature: the width of one bucket, which is the precision
+            of the window sum. A unit counts for at least the window less this and at most the
+            window (DR-052).
 
     BalanceEntry:
       description: |
@@ -4315,7 +4390,8 @@ components:
           description: |
             The feature's kind. An included boolean entitlement is an entry whose `balance`,
             `limit`, `bonus`, `consumed`, `cycle_start` and `cycle_end` are all `null`: present,
-            with no counter (DR-050). Its presence is the answer.
+            with no counter (DR-050). Its presence is the answer. A `rolling` entry has a
+            `window`, a `window_precision_seconds`, a null `bonus` and null cycle fields (DR-052).
         balance:
           oneOf:
             - $ref: '#/components/schemas/Amount'
@@ -4339,7 +4415,8 @@ components:
             Net consumption in the stored cycle, derived as `limit + bonus - balance`. A refund
             lowers it and an administrative `set` shows through it. It is computed from the balance
             hash rather than read from the ledger, because this route never reads the control
-            plane (DR-039). Null for a boolean entitlement, whose use is not counted.
+            plane (DR-039). Null for a boolean entitlement, whose use is not counted. For a
+            `rolling` feature it is the window sum, and `balance` is `limit` minus it.
         cycle_start:
           oneOf:
             - $ref: '#/components/schemas/Timestamp'
@@ -4348,6 +4425,18 @@ components:
           oneOf:
             - $ref: '#/components/schemas/Timestamp'
             - type: 'null'
+        window:
+          allOf:
+            - $ref: '#/components/schemas/RollingWindow'
+          description: Present only for a `rolling` feature, the window the numbers describe (DR-052).
+        window_precision_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          description: |
+            Present only for a `rolling` feature: the width of one bucket, which is the precision
+            of the window sum. A unit counts for at least the window less this and at most the
+            window (DR-052).
 
     BalanceResponse:
       description: |
@@ -4510,7 +4599,8 @@ components:
         number and an interval, and a boolean feature takes `null` for both, because an inclusion
         has no ceiling and no cycle (UC-02, DR-050). A number for either on a boolean feature, or a
         `null` on a metered one, is `400 validation_failed` naming the field, rather than being
-        ignored.
+        ignored. A rolling feature takes a `limit`, a `null` `reset_interval` and a `window`, and
+        `window` is absent or `null` for any other kind (DR-052).
       additionalProperties: false
       required: [feature_key, limit, reset_interval]
       properties:
@@ -4520,12 +4610,17 @@ components:
           oneOf:
             - $ref: '#/components/schemas/Limit'
             - type: 'null'
-          description: The cycle allowance of a metered feature; `null` for a boolean one.
+          description: The cycle allowance of a metered feature, or the window allowance of a rolling one; `null` for a boolean one.
         reset_interval:
           oneOf:
             - $ref: '#/components/schemas/ResetInterval'
             - type: 'null'
-          description: The cadence of a metered feature; `null` for a boolean one.
+          description: The cadence of a metered feature; `null` for a boolean or rolling one.
+        window:
+          oneOf:
+            - $ref: '#/components/schemas/RollingWindow'
+            - type: 'null'
+          description: The lookback of a rolling feature; absent or `null` for any other kind (DR-052).
 
     Plan:
       description: |

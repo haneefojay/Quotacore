@@ -44,6 +44,10 @@ func sameSet(a, b []string) bool {
 var createType = regexp.MustCompile(`(?s)CREATE TYPE\s+(\w+)\s+AS ENUM\s*\(([^)]*)\)`)
 var quoted = regexp.MustCompile(`'([a-z0-9_]+)'`)
 
+// addValue is a later migration extending an enum, as 00014 extends
+// feature_kind with rolling (IP-19).
+var addValue = regexp.MustCompile(`ALTER TYPE\s+(\w+)\s+ADD VALUE\s+(?:IF NOT EXISTS\s+)?'([a-z0-9_]+)'`)
+
 // migrationEnums reads every enum out of the embedded migration text.
 func migrationEnums(t *testing.T) map[string][]string {
 	t.Helper()
@@ -61,6 +65,9 @@ func migrationEnums(t *testing.T) map[string][]string {
 			for _, v := range quoted.FindAllStringSubmatch(m[2], -1) {
 				out[m[1]] = append(out[m[1]], v[1])
 			}
+		}
+		for _, m := range addValue.FindAllStringSubmatch(string(body), -1) {
+			out[m[1]] = append(out[m[1]], m[2])
 		}
 	}
 	return out

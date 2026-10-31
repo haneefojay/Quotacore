@@ -350,6 +350,52 @@ func (s *BalanceEntry) Validate() error {
 			Error: err,
 		})
 	}
+	if err := func() error {
+		if value, ok := s.Window.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "window",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.WindowPrecisionSeconds.Get(); ok {
+			if err := func() error {
+				if err := (validate.Int{
+					MinSet:        true,
+					Min:           1,
+					MaxSet:        false,
+					Max:           0,
+					MinExclusive:  false,
+					MaxExclusive:  false,
+					MultipleOfSet: false,
+					MultipleOf:    0,
+					Pattern:       nil,
+				}).Validate(int64(value)); err != nil {
+					return errors.Wrap(err, "int")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "window_precision_seconds",
+			Error: err,
+		})
+	}
 	if len(failures) > 0 {
 		return &validate.Error{Fields: failures}
 	}
@@ -684,6 +730,52 @@ func (s *CheckResponse) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "requested",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.Window.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "window",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.WindowPrecisionSeconds.Get(); ok {
+			if err := func() error {
+				if err := (validate.Int{
+					MinSet:        true,
+					Min:           1,
+					MaxSet:        false,
+					Max:           0,
+					MinExclusive:  false,
+					MaxExclusive:  false,
+					MultipleOfSet: false,
+					MultipleOf:    0,
+					Pattern:       nil,
+				}).Validate(int64(value)); err != nil {
+					return errors.Wrap(err, "int")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "window_precision_seconds",
 			Error: err,
 		})
 	}
@@ -1024,6 +1116,8 @@ func (s ErrorCode) Validate() error {
 	case "reset_not_supported":
 		return nil
 	case "feature_not_metered":
+		return nil
+	case "feature_not_anchored":
 		return nil
 	case "feature_unit_immutable":
 		return nil
@@ -2305,6 +2399,8 @@ func (s FeatureCreateKind) Validate() error {
 		return nil
 	case "boolean":
 		return nil
+	case "rolling":
+		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
@@ -2369,6 +2465,8 @@ func (s FeatureKind) Validate() error {
 	case "metered":
 		return nil
 	case "boolean":
+		return nil
+	case "rolling":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
@@ -3241,27 +3339,6 @@ func (s *MeteredRequest) Validate() error {
 	return nil
 }
 
-func (s MeteredRequestWindow) Validate() error {
-	switch s {
-	case "rolling_5m":
-		return nil
-	case "rolling_15m":
-		return nil
-	case "rolling_1h":
-		return nil
-	case "rolling_6h":
-		return nil
-	case "rolling_24h":
-		return nil
-	case "rolling_7d":
-		return nil
-	case "rolling_30d":
-		return nil
-	default:
-		return errors.Errorf("invalid value: %v", s)
-	}
-}
-
 func (s *MeteredResponse) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer
@@ -3363,6 +3440,52 @@ func (s *MeteredResponse) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "consumed",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.Window.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "window",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.WindowPrecisionSeconds.Get(); ok {
+			if err := func() error {
+				if err := (validate.Int{
+					MinSet:        true,
+					Min:           1,
+					MaxSet:        false,
+					Max:           0,
+					MinExclusive:  false,
+					MaxExclusive:  false,
+					MultipleOfSet: false,
+					MultipleOf:    0,
+					Pattern:       nil,
+				}).Validate(int64(value)); err != nil {
+					return errors.Wrap(err, "int")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "window_precision_seconds",
 			Error: err,
 		})
 	}
@@ -4165,6 +4288,24 @@ func (s *PlanEntitlement) Validate() error {
 			Error: err,
 		})
 	}
+	if err := func() error {
+		if value, ok := s.Window.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "window",
+			Error: err,
+		})
+	}
 	if len(failures) > 0 {
 		return &validate.Error{Fields: failures}
 	}
@@ -4650,6 +4791,27 @@ func (s ResetInterval) Validate() error {
 	case "yearly":
 		return nil
 	case "never":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s RollingWindow) Validate() error {
+	switch s {
+	case "rolling_5m":
+		return nil
+	case "rolling_15m":
+		return nil
+	case "rolling_1h":
+		return nil
+	case "rolling_6h":
+		return nil
+	case "rolling_24h":
+		return nil
+	case "rolling_7d":
+		return nil
+	case "rolling_30d":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)

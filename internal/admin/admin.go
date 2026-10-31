@@ -83,9 +83,12 @@ type NewPlan struct {
 type Entitlement struct {
 	Feature string
 	// Limit and Interval are nil together for a boolean feature, which has no
-	// counter and no cadence, and set together for a metered one (DR-050).
+	// counter and no cadence, and set together for a metered one (DR-050). A
+	// rolling feature has a Limit and a Window and no Interval (DR-052); Window
+	// is a wire name such as rolling_1h, and nil for every other kind.
 	Limit    *int64
 	Interval *string
+	Window   *string
 }
 
 type NewTenant struct {

@@ -14,7 +14,7 @@ export class InvalidAmountError extends QuotacoreError {
   declare readonly code: "invalid_amount";
 }
 
-/** `400 invalid_window`. Omit window for anchored cycles, or use a valid rolling window (v0.2) */
+/** `400 invalid_window`. Omit window for anchored cycles; on a rolling feature name the window its plan configures */
 export class InvalidWindowError extends QuotacoreError {
   declare readonly code: "invalid_window";
 }
@@ -139,6 +139,11 @@ export class FeatureNotMeteredError extends QuotacoreError {
   declare readonly code: "feature_not_metered";
 }
 
+/** `409 feature_not_anchored`. Raise the window's limit in the plan. Per-window overrides are deferred */
+export class FeatureNotAnchoredError extends QuotacoreError {
+  declare readonly code: "feature_not_anchored";
+}
+
 /** `409 feature_unit_immutable`. Create a new feature. Reinterpreting historical amounts is not allowed (INV-F2) */
 export class FeatureUnitImmutableError extends QuotacoreError {
   declare readonly code: "feature_unit_immutable";
@@ -154,7 +159,7 @@ export class ConfirmationRequiredError extends QuotacoreError {
   declare readonly code: "confirmation_required";
 }
 
-/** `429 quota_exceeded`. Wait for the reset, or ask for a grant. details.cycle_end is authoritative */
+/** `429 quota_exceeded`. Wait for the reset, or ask for a grant. details.cycle_end is authoritative; a rolling feature's details.next_release_at is when the oldest counted bucket leaves the window (DR-052) */
 export class QuotaExceededError extends QuotacoreError {
   declare readonly code: "quota_exceeded";
 }
@@ -213,6 +218,7 @@ export const errorClasses: { readonly [C in ErrorCode]: typeof QuotacoreError } 
   grant_exceeds_ceiling: GrantExceedsCeilingError,
   reset_not_supported: ResetNotSupportedError,
   feature_not_metered: FeatureNotMeteredError,
+  feature_not_anchored: FeatureNotAnchoredError,
   feature_unit_immutable: FeatureUnitImmutableError,
   resource_version_conflict: ResourceVersionConflictError,
   confirmation_required: ConfirmationRequiredError,

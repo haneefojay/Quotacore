@@ -13,7 +13,8 @@ func (s *Service) listFeatures(w http.ResponseWriter, r *http.Request) {
 	l, ok := s.startList(w, r, "features", func(q *query) []string {
 		// The values are the FeatureKind enum's, which are the database's
 		// (IP-17 DoD 6).
-		kind = q.str("kind", nil, string(contract.FeatureKindMetered), string(contract.FeatureKindBoolean))
+		kind = q.str("kind", nil, string(contract.FeatureKindMetered), string(contract.FeatureKindBoolean),
+			string(contract.FeatureKindRolling))
 		return []string{kind}
 	})
 	if !ok {
@@ -70,8 +71,8 @@ func (s *Service) createFeature(w http.ResponseWriter, r *http.Request) {
 	unit, _ := b.str("unit", true, unitShape, 1, 32)
 	desc, _ := b.str("description", false, nil, 0, textMax)
 	kind, given := b.str("kind", false, nil, 0, 0)
-	if given && kind != "metered" && kind != "boolean" {
-		b.add("kind", "must be metered or boolean")
+	if given && kind != "metered" && kind != "boolean" && kind != "rolling" {
+		b.add("kind", "must be metered, boolean or rolling")
 	}
 	if p := b.check(&contract.FeatureCreate{}); p != nil {
 		problem(w, r, p)

@@ -163,14 +163,15 @@ var constraints = map[string]constraintRule{
 	"usage_events_idem_idx": {err: ErrDuplicateEvent},
 
 	// Checks.
-	"features_key_format":            validation("feature_key"),
-	"features_unit_format":           validation("unit"),
-	"plans_key_format":               validation("plan_key"),
-	"tenants_external_id_format":     validation("external_id"),
-	"plan_entitlements_limit_nonneg": validation("limit"),
-	"plan_entitlements_limit_range":  validation("limit"),
-	"plan_entitlements_limit_pair":   validation("limit"),
-	"tenant_overrides_limit_range":   validation("limit_value"),
+	"features_key_format":                            validation("feature_key"),
+	"features_unit_format":                           validation("unit"),
+	"plans_key_format":                               validation("plan_key"),
+	"tenants_external_id_format":                     validation("external_id"),
+	"plan_entitlements_limit_nonneg":                 validation("limit"),
+	"plan_entitlements_limit_range":                  validation("limit"),
+	"plan_entitlements_shape":                        validation("limit"),
+	"plan_entitlements_rolling_window_seconds_check": validation("window"),
+	"tenant_overrides_limit_range":                   validation("limit_value"),
 	// Both aspects null: the one constraint the store, not the schema,
 	// enforces (api-conventions.md section 7.4).
 	"tenant_overrides_not_empty": validation("limit_value"),

@@ -465,3 +465,48 @@ func TestPostgresOutageUnderLoad(t *testing.T) {
 		t.Errorf("D16: the pool waited %.3f s with Postgres stopped", wait)
 	}
 }
+
+// TestRollingSustainedThroughput is IP-19 DoD 6 and its exit criterion: a
+// rolling allowance at NFR-T1's 2,000 consumes a second, measured on the same
+// stack and in the same run as the metered consume IP-16 measured, so the
+// comparison is between two figures one machine produced. The service's own
+// p99 for the rolling run stays within NFR-L2's 5 ms and within a millisecond
+// of the metered run's, nothing fails, and the round trip is still one,
+// which the script tests assert in the client (TestARollingCallIsOneCall).
+func TestRollingSustainedThroughput(t *testing.T) {
+	harness.Require(t, "LOAD")
+	s := harness.New(t)
+	fixed := s.Seed("rsf", 4, 200, keysFor(2000), unlimited, 16)
+	sliding := s.SeedRolling("rss", 4, 200, keysFor(2000), unlimited, "rolling_1h")
+	measure := func(seeded harness.Seeded) (harness.Result, harness.Percentiles) {
+		s.Prime(seeded)
+		l := harness.Load{URL: s.Direct(), Keys: seeded.Keys, Tenants: seeded.Tenants, Features: seeded.Features,
+			Op: "consume", Amount: 1, Rate: 2000, Concurrency: 1024, Window: seeded.Window,
+			RunID: seeded.Plan + strconv.FormatInt(time.Now().UnixNano(), 36)}
+		l.Duration = duration(t, 30*time.Second)
+		if warm := harness.Run(context.Background(), l); warm.OK == 0 {
+			t.Fatalf("the warm-up had no success: %v", warm.Outcomes)
+		}
+		l.Duration = duration(t, 10*time.Minute)
+		l.RunID += "m"
+		start := time.Now()
+		r := harness.Run(context.Background(), l)
+		return r, s.ServerLatency("POST /v1/consume", start)
+	}
+	metered, meteredServer := measure(fixed)
+	rolling, rollingServer := measure(sliding)
+	record(t, map[string]any{"metered": latency{Client: metered, Server: meteredServer},
+		"rolling": latency{Client: rolling, Server: rollingServer}})
+	noErrors(t, metered)
+	noErrors(t, rolling)
+	if rolling.Achieved < 1900 {
+		t.Errorf("rolling: achieved %.0f a second, not NFR-T1's 2,000", rolling.Achieved)
+	}
+	if rollingServer.P99 > 5*ms {
+		t.Errorf("rolling: p99 %d µs at 2,000 a second, above NFR-L2's 5 ms (client %d µs)", rollingServer.P99, rolling.Latency.P99)
+	}
+	if rollingServer.P99 > meteredServer.P99+ms {
+		t.Errorf("rolling: p99 %d µs regresses on the metered %d µs by more than a millisecond (IP-19 DoD 6)",
+			rollingServer.P99, meteredServer.P99)
+	}
+}

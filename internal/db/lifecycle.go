@@ -31,12 +31,13 @@ type currentEntitlement struct {
 	kind      string
 	limit     *int64 // nil, with interval, for a boolean feature (DR-050)
 	interval  *string
+	window    *int64 // seconds, for a rolling feature only (DR-052)
 }
 
 func sameEntitlement(was currentEntitlement, e admin.Entitlement) bool {
 	eq := func(a, b *int64) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }
 	es := func(a, b *string) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }
-	return eq(was.limit, e.Limit) && es(was.interval, e.Interval)
+	return eq(was.limit, e.Limit) && es(was.interval, e.Interval) && eq(was.window, windowSeconds(e))
 }
 
 func (a *Admin) UpdatePlan(ctx context.Context, actor admin.Actor, id string, c admin.PlanChange) (api.Plan, []string, error) {
@@ -89,7 +90,7 @@ func (a *Admin) UpdatePlan(ctx context.Context, actor admin.Actor, id string, c 
 // drops the ones past it; a tenant with no pin gets the feature at its next
 // re-anchor (E-1, DR-045).
 func replaceEntitlements(ctx context.Context, tx *sql.Tx, planID string, ents []admin.Entitlement, at time.Time) error {
-	rows, err := tx.QueryContext(ctx, `SELECT f.key, e.feature_id, f.kind, e.limit_value, e.interval
+	rows, err := tx.QueryContext(ctx, `SELECT f.key, e.feature_id, f.kind, e.limit_value, e.interval, e.rolling_window_seconds
   FROM plan_entitlements e JOIN features f ON f.id = e.feature_id WHERE e.plan_id = $1`, planID)
 	if err != nil {
 		return Classify(OpWrite, err)
@@ -100,7 +101,7 @@ func replaceEntitlements(ctx context.Context, tx *sql.Tx, planID string, ents []
 			key string
 			e   currentEntitlement
 		)
-		err := r.Scan(&key, &e.featureID, &e.kind, &e.limit, &e.interval)
+		err := r.Scan(&key, &e.featureID, &e.kind, &e.limit, &e.interval, &e.window)
 		current[key] = e
 		return struct{}{}, err
 	}); err != nil {
@@ -119,8 +120,8 @@ func replaceEntitlements(ctx context.Context, tx *sql.Tx, planID string, ents []
 			if sameEntitlement(was, e) {
 				continue
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE plan_entitlements SET limit_value = $3, interval = $4
- WHERE plan_id = $1 AND feature_id = $2`, planID, was.featureID, e.Limit, e.Interval); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE plan_entitlements SET limit_value = $3, interval = $4, rolling_window_seconds = $5
+ WHERE plan_id = $1 AND feature_id = $2`, planID, was.featureID, e.Limit, e.Interval, windowSeconds(e)); err != nil {
 				return entitlementError(err, i)
 			}
 			continue
@@ -137,8 +138,8 @@ func replaceEntitlements(ctx context.Context, tx *sql.Tx, planID string, ents []
 		if err := entitlementKind(kind, e, i); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO plan_entitlements (plan_id, feature_id, limit_value, interval)
- VALUES ($1, $2, $3, $4)`, planID, featureID, e.Limit, e.Interval); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO plan_entitlements (plan_id, feature_id, limit_value, interval, rolling_window_seconds)
+ VALUES ($1, $2, $3, $4, $5)`, planID, featureID, e.Limit, e.Interval, windowSeconds(e)); err != nil {
 			return entitlementError(err, i)
 		}
 		// Re-added inside the window it was retired in: the tenant never
@@ -610,9 +611,14 @@ func (a *Admin) UpsertOverride(ctx context.Context, actor admin.Actor, id string
 		if err != nil {
 			return Classify(OpWrite, err)
 		}
-		// A boolean entitlement has no limit or cadence to override (DR-050).
+		// A boolean entitlement has no limit or cadence to override (DR-050),
+		// and a rolling one has no cycle balance; per-window overrides are
+		// deferred (DR-052).
 		if kind == "boolean" {
 			return &Error{Code: api.ErrorCodeFeatureNotMetered, Field: "feature_key"}
+		}
+		if kind == "rolling" {
+			return &Error{Code: api.ErrorCodeFeatureNotAnchored, Field: "feature_key"}
 		}
 		before, err := getOverride(ctx, tx, tenantID, in.Feature)
 		if err != nil {

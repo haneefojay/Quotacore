@@ -39,7 +39,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// The eleven bodies. They are package-level constants, not files opened at
+// The fourteen bodies. They are package-level constants, not files opened at
 // runtime, and a test asserts the store's copy of each is byte-identical to the
 // one named here.
 //
@@ -76,6 +76,15 @@ var consumeBooleanSource string
 //go:embed check_boolean.lua
 var checkBooleanSource string
 
+//go:embed consume_rolling.lua
+var consumeRollingSource string
+
+//go:embed check_rolling.lua
+var checkRollingSource string
+
+//go:embed refund_rolling.lua
+var refundRollingSource string
+
 // Operation names one of the scripts. It is a closed set: three data-plane
 // operations, five control-plane ones and the rebuild, and no mode flag, because one script
 // per operation is what performance.md §5 requires and a mode flag inside one
@@ -101,6 +110,14 @@ const (
 	// as the rest of the set.
 	ConsumeBoolean Operation = "consume_boolean"
 	CheckBoolean   Operation = "check_boolean"
+
+	// ConsumeRolling, CheckRolling and RefundRolling are the three data-plane
+	// operations against a rolling-window entitlement (DR-052, IP-19). They
+	// share no line with the anchored scripts but the idempotency block, so a
+	// rolling window can never reach the transition block (ADR-0008).
+	ConsumeRolling Operation = "consume_rolling"
+	CheckRolling   Operation = "check_rolling"
+	RefundRolling  Operation = "refund_rolling"
 )
 
 // body is one embedded script together with the digest the store knows it by.
@@ -127,14 +144,18 @@ var (
 
 	consumeBooleanBody = newBody(ConsumeBoolean, consumeBooleanSource)
 	checkBooleanBody   = newBody(CheckBoolean, checkBooleanSource)
+
+	consumeRollingBody = newBody(ConsumeRolling, consumeRollingSource)
+	checkRollingBody   = newBody(CheckRolling, checkRollingSource)
+	refundRollingBody  = newBody(RefundRolling, refundRollingSource)
 )
 
 // allBodies is every script Load puts in the store: the data plane's three
 // first, then the control plane's five, then the rebuild's, then the two a
-// boolean entitlement runs.
+// boolean entitlement runs, then the three a rolling one runs.
 func allBodies() []body {
 	return []body{consumeBody, checkBody, refundBody, grantBody, setBody, relimitBody, reanchorBody, rolloverBody,
-		rebuildBody, consumeBooleanBody, checkBooleanBody}
+		rebuildBody, consumeBooleanBody, checkBooleanBody, consumeRollingBody, checkRollingBody, refundRollingBody}
 }
 
 func newBody(op Operation, text string) body {

@@ -166,7 +166,7 @@ func send(b body) (request, error) { return request{body: b}, nil }
 
 func featureCreate(f *flags) build {
 	key, name, unit := f.str("key", "the feature key, such as llm.tokens.output"), f.str("name", "a display name"), f.str("unit", "the unit, such as tokens")
-	desc, kind := f.str("description", "free text"), f.str("kind", "metered (the default) or boolean")
+	desc, kind := f.str("description", "free text"), f.str("kind", "metered (the default), boolean or rolling")
 	f.need("key", "name", "unit")
 	return func([]string) (request, error) {
 		b := &contract.FeatureCreate{FeatureKey: contract.FeatureKey(*key), Name: *name, Unit: contract.Unit(*unit)}
@@ -248,7 +248,7 @@ func (i invalid) Validate() error              { return i.err }
 
 func planCreate(f *flags) build {
 	key, name, desc := f.str("key", "the plan key, such as starter"), f.str("name", "a display name"), f.str("description", "free text")
-	ents := f.list("entitlement", "<feature_key>=<limit>/<interval>, or a bare <feature_key> for a boolean feature; repeat for each feature")
+	ents := f.list("entitlement", "<feature_key>=<limit>/<interval>, <feature_key>=<limit>/<rolling window> for a rolling feature, or a bare <feature_key> for a boolean feature; repeat for each feature")
 	f.need("key", "name", "entitlement")
 	return func([]string) (request, error) {
 		es, err := entitlements(*ents)
@@ -266,7 +266,7 @@ func planCreate(f *flags) build {
 func planUpdate(f *flags) build {
 	version := f.str("version", "the version the last read showed")
 	name, desc := f.str("name", "a new display name"), f.str("description", "new free text; '' clears it")
-	ents := f.list("entitlement", "<feature_key>=<limit>/<interval>, or a bare <feature_key> for a boolean feature; the set given replaces the whole set")
+	ents := f.list("entitlement", "<feature_key>=<limit>/<interval>, <feature_key>=<limit>/<rolling window> for a rolling feature, or a bare <feature_key> for a boolean feature; the set given replaces the whole set")
 	f.need("version")
 	return func([]string) (request, error) {
 		v, err := parseInt("version", *version)
@@ -303,7 +303,7 @@ func planApply(f *flags) build {
 }
 
 func featureList(f *flags) build {
-	kind := f.str("kind", "only features of this kind: metered or boolean")
+	kind := f.str("kind", "only features of this kind: metered, boolean or rolling")
 	return func([]string) (request, error) {
 		q := url.Values{}
 		f.query(q, map[string]*string{"kind": kind})

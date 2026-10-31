@@ -1161,11 +1161,19 @@ export interface components {
         ArchiveState: "active" | "archived";
         /**
          * @description `metered` is counted in a unit, with an allowance per cycle. `boolean` is present or
-         *     absent, with no counter: no balance, no limit, no bonus and no exhaustion (DR-050). A
-         *     feature's kind is chosen when it is created and never changes.
+         *     absent, with no counter: no balance, no limit, no bonus and no exhaustion (DR-050).
+         *     `rolling` is counted in a unit against a limit over a sliding lookback window, with no
+         *     calendar cycle (DR-052). A feature's kind is chosen when it is created and never changes.
          * @enum {string}
          */
-        FeatureKind: "metered" | "boolean";
+        FeatureKind: "metered" | "boolean" | "rolling";
+        /**
+         * @description The lookback of a `rolling` entitlement (DR-052). A string, never a number of seconds, so
+         *     a unit mistake cannot reach the service (Q-11). Each window is counted in 60 buckets, so
+         *     its precision is one sixtieth of it: 5 s for `rolling_5m`, 12 h for `rolling_30d`.
+         * @enum {string}
+         */
+        RollingWindow: "rolling_5m" | "rolling_15m" | "rolling_1h" | "rolling_6h" | "rolling_24h" | "rolling_7d" | "rolling_30d";
         /**
          * @description Who caused the event.
          * @enum {string}
@@ -1193,7 +1201,7 @@ export interface components {
          *     [error-catalog.md](../../docs/product/error-catalog.md).
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "invalid_amount" | "invalid_window" | "invalid_timezone" | "missing_idempotency_key" | "unauthorized" | "api_key_invalid" | "insufficient_scope" | "feature_not_in_plan" | "feature_archived" | "tenant_suspended" | "tenant_not_found" | "feature_not_found" | "plan_not_found" | "api_key_not_found" | "payload_too_large" | "idempotency_key_reuse" | "plan_in_use" | "feature_in_use" | "feature_key_exists" | "tenant_exists" | "tenant_deleted" | "plan_key_exists" | "refund_exceeds_grant" | "grant_exceeds_ceiling" | "reset_not_supported" | "feature_not_metered" | "feature_unit_immutable" | "resource_version_conflict" | "confirmation_required" | "quota_exceeded" | "rate_limited" | "service_unavailable" | "control_plane_unavailable" | "internal_error" | "not_implemented";
+        ErrorCode: "validation_failed" | "invalid_amount" | "invalid_window" | "invalid_timezone" | "missing_idempotency_key" | "unauthorized" | "api_key_invalid" | "insufficient_scope" | "feature_not_in_plan" | "feature_archived" | "tenant_suspended" | "tenant_not_found" | "feature_not_found" | "plan_not_found" | "api_key_not_found" | "payload_too_large" | "idempotency_key_reuse" | "plan_in_use" | "feature_in_use" | "feature_key_exists" | "tenant_exists" | "tenant_deleted" | "plan_key_exists" | "refund_exceeds_grant" | "grant_exceeds_ceiling" | "reset_not_supported" | "feature_not_metered" | "feature_not_anchored" | "feature_unit_immutable" | "resource_version_conflict" | "confirmation_required" | "quota_exceeded" | "rate_limited" | "service_unavailable" | "control_plane_unavailable" | "internal_error" | "not_implemented";
         /**
          * @description The one error shape, everywhere, and it is non-negotiable. No endpoint returns a bare
          *     `400` or a bare `500` without it.
@@ -1251,13 +1259,12 @@ export interface components {
             tenant_external_id: components["schemas"]["ExternalId"];
             metadata?: components["schemas"]["Metadata"];
             /**
-             * @description v0.2. Omitted means the anchored cycle, which is the only cadence in v0.1
-             *     (ADR-0008). A window that disagrees with the feature's cadence is
-             *     `400 invalid_window`, and supplying any window on a v0.1 build is also
-             *     `invalid_window`, because the two cadences are never silently mixed.
-             * @enum {string}
+             * @description Omitted means the anchored cycle (ADR-0008). A `rolling` feature must name the window
+             *     its plan entitlement configures, and any other feature must omit it: a window that is
+             *     absent, different, unknown or sent to an anchored feature is `400 invalid_window`,
+             *     because the two cadences are never silently mixed (DR-052).
              */
-            window?: "rolling_5m" | "rolling_15m" | "rolling_1h" | "rolling_6h" | "rolling_24h" | "rolling_7d" | "rolling_30d";
+            window?: components["schemas"]["RollingWindow"];
         };
         /**
          * @description One feature's numbers after a metered call, describing the cycle the call fell in. A replay
@@ -1270,6 +1277,8 @@ export interface components {
             /**
              * @description The feature's kind. For `boolean`, `balance`, `limit` and `bonus` are `null` and the
              *     cycle fields are `null`, because an inclusion has no counter and no cycle (DR-050).
+             *     For `rolling`, `balance` is what remains in the window, `bonus` and the cycle fields
+             *     are `null`, and `window` and `window_precision_seconds` are present (DR-052).
              */
             kind: components["schemas"]["FeatureKind"];
             /** @description The remaining balance **after** the deduction. Null for a boolean entitlement. */
@@ -1288,6 +1297,15 @@ export interface components {
             consumed: components["schemas"]["Amount"];
             cycle_start: components["schemas"]["Timestamp"] | null;
             cycle_end: components["schemas"]["Timestamp"] | null;
+            /** @description Present only for a `rolling` feature, the window the numbers describe (DR-052). */
+            window?: components["schemas"]["RollingWindow"];
+            /**
+             * Format: int64
+             * @description Present only for a `rolling` feature: the width of one bucket, which is the precision
+             *     of the window sum. A unit counts for at least the window less this and at most the
+             *     window (DR-052).
+             */
+            window_precision_seconds?: number;
             /**
              * @description Whether this response is a replay of a stored one. A client that needs to know
              *     whether **this call** moved anything reads this, rather than inferring it from
@@ -1303,7 +1321,11 @@ export interface components {
              *     always `allowed: true` (DR-050).
              */
             allowed: boolean;
-            /** @description The feature's kind. For `boolean`, `balance`, `limit`, `bonus` and `cycle_end` are `null`. */
+            /**
+             * @description The feature's kind. For `boolean`, `balance`, `limit`, `bonus` and `cycle_end` are
+             *     `null`. For `rolling`, `bonus` and `cycle_end` are `null`, `balance` is what remains in
+             *     the window, and `window` and `window_precision_seconds` are present (DR-052).
+             */
             kind: components["schemas"]["FeatureKind"];
             /** @description The balance now. Null for a boolean entitlement. */
             balance: components["schemas"]["Amount"] | null;
@@ -1312,8 +1334,17 @@ export interface components {
             /** @description Cycle-scoped granted quota. Null for a boolean entitlement. */
             bonus: components["schemas"]["Amount"] | null;
             requested: components["schemas"]["Amount"];
-            /** @description When a currently-denied amount would become available. */
+            /** @description When a currently-denied amount would become available. Null for a `rolling` feature, which has no cycle. */
             cycle_end: components["schemas"]["Timestamp"] | null;
+            /** @description Present only for a `rolling` feature, the window the numbers describe (DR-052). */
+            window?: components["schemas"]["RollingWindow"];
+            /**
+             * Format: int64
+             * @description Present only for a `rolling` feature: the width of one bucket, which is the precision
+             *     of the window sum. A unit counts for at least the window less this and at most the
+             *     window (DR-052).
+             */
+            window_precision_seconds?: number;
         };
         /**
          * @description One feature's balance for the current cycle. A feature the tenant's plan does not include is
@@ -1324,7 +1355,8 @@ export interface components {
             /**
              * @description The feature's kind. An included boolean entitlement is an entry whose `balance`,
              *     `limit`, `bonus`, `consumed`, `cycle_start` and `cycle_end` are all `null`: present,
-             *     with no counter (DR-050). Its presence is the answer.
+             *     with no counter (DR-050). Its presence is the answer. A `rolling` entry has a
+             *     `window`, a `window_precision_seconds`, a null `bonus` and null cycle fields (DR-052).
              */
             kind: components["schemas"]["FeatureKind"];
             /** @description The balance now. Null for a boolean entitlement. */
@@ -1337,11 +1369,21 @@ export interface components {
              * @description Net consumption in the stored cycle, derived as `limit + bonus - balance`. A refund
              *     lowers it and an administrative `set` shows through it. It is computed from the balance
              *     hash rather than read from the ledger, because this route never reads the control
-             *     plane (DR-039). Null for a boolean entitlement, whose use is not counted.
+             *     plane (DR-039). Null for a boolean entitlement, whose use is not counted. For a
+             *     `rolling` feature it is the window sum, and `balance` is `limit` minus it.
              */
             consumed: components["schemas"]["Amount"] | null;
             cycle_start: components["schemas"]["Timestamp"] | null;
             cycle_end: components["schemas"]["Timestamp"] | null;
+            /** @description Present only for a `rolling` feature, the window the numbers describe (DR-052). */
+            window?: components["schemas"]["RollingWindow"];
+            /**
+             * Format: int64
+             * @description Present only for a `rolling` feature: the width of one bucket, which is the precision
+             *     of the window sum. A unit counts for at least the window less this and at most the
+             *     window (DR-052).
+             */
+            window_precision_seconds?: number;
         };
         /**
          * @description Every feature's balance for one tenant, in one call. Paged by feature rather than by tenant,
@@ -1447,14 +1489,17 @@ export interface components {
          *     number and an interval, and a boolean feature takes `null` for both, because an inclusion
          *     has no ceiling and no cycle (UC-02, DR-050). A number for either on a boolean feature, or a
          *     `null` on a metered one, is `400 validation_failed` naming the field, rather than being
-         *     ignored.
+         *     ignored. A rolling feature takes a `limit`, a `null` `reset_interval` and a `window`, and
+         *     `window` is absent or `null` for any other kind (DR-052).
          */
         PlanEntitlement: {
             feature_key: components["schemas"]["FeatureKey"];
-            /** @description The cycle allowance of a metered feature; `null` for a boolean one. */
+            /** @description The cycle allowance of a metered feature, or the window allowance of a rolling one; `null` for a boolean one. */
             limit: components["schemas"]["Limit"] | null;
-            /** @description The cadence of a metered feature; `null` for a boolean one. */
+            /** @description The cadence of a metered feature; `null` for a boolean or rolling one. */
             reset_interval: components["schemas"]["ResetInterval"] | null;
+            /** @description The lookback of a rolling feature; absent or `null` for any other kind (DR-052). */
+            window?: components["schemas"]["RollingWindow"] | null;
         };
         /**
          * @description One plan: the offer a tenant is assigned to. A plan is a bounded set of entitlements and
@@ -2799,9 +2844,10 @@ export interface components {
             };
         };
         /**
-         * @description A refused administrative change to a balance. Nothing was applied in any of the five
-         *     cases. `tenant_deleted` is a tenant whose deletion is terminal (T-7), and
-         *     `feature_not_metered` is a feature with no counter to change (DR-050).
+         * @description A refused administrative change to a balance. Nothing was applied in any of the six
+         *     cases. `tenant_deleted` is a tenant whose deletion is terminal (T-7),
+         *     `feature_not_metered` is a feature with no counter to change (DR-050), and
+         *     `feature_not_anchored` is a rolling feature, which has no cycle balance (DR-052).
          */
         ErrorConflictQuota: {
             headers: {

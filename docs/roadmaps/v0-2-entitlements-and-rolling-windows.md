@@ -15,8 +15,8 @@ Read [roadmap-index.md](roadmap-index.md) first.
 | --- | --- | --- | --- |
 | `IP-17` | Boolean entitlements | `IP-16` | `COMPLETE` |
 | `IP-18` | `set` and `grant` as first-class operations | `IP-17` | `COMPLETE` |
-| `IP-19` | Rolling windows | `IP-16` | `BLOCKED` |
-| `IP-20` | Per-tenant runtime keys and cap reporting | `IP-18`, `IP-19` | `BLOCKED` |
+| `IP-19` | Rolling windows | `IP-16` | `COMPLETE` |
+| `IP-20` | Per-tenant runtime keys and cap reporting | `IP-18`, `IP-19` | `NOT STARTED` |
 
 `IP-19` may run in parallel with `IP-17` and `IP-18`. It depends on the same finished calendar engine
 and touches a different keyspace.
@@ -173,7 +173,7 @@ have.
 
 ## IP-19 — Rolling windows
 
-**Status** `BLOCKED`, gated on `IP-16`, and on the keyspace work in `IP-04` and `IP-05`.
+**Status** `COMPLETE`. Opened and closed 2026-10-31, 7 of 7 DoD items met.
 
 **Objective.** A requested-duration lookback inside the current cycle, correct under concurrency,
 without touching the calendar engine.
@@ -220,6 +220,28 @@ rolling keys extend. May run in parallel with `IP-17` and `IP-18`. Blocks `IP-20
 calendar engine that was proved at `IP-03` is still exactly as it was.
 
 **Deferred.** Longer windows, sub-minute precision, and per-window overrides.
+
+> **Closed 2026-10-31.** A rolling feature is a new feature kind with a limit and a window on its
+> entitlement, counted in sixty buckets in its own hash by three scripts of its own (DR-052, new).
+> The specification disagreed with itself on three points, each settled by DR-052 and a dated note
+> where it was written: the window is configured and named rather than chosen per call, a rolling
+> feature has no cycle (ADR-0008 over mvp-scope's "inside the current cycle"), and a mismatch is
+> `invalid_window` (the catalogue over UC-17). ADR-0008's open choice between exact and
+> approximate is `Q-36`, answered with sixty buckets and the error bound DR-052 states.
+>
+> | Item | Met by |
+> | --- | --- |
+> | 1 | `TestT18TwoHundredAgainstAHundred`: 200 concurrent consumes of 1 against 100 apply exactly 100 times, and the window sum, read from the store throughout, is never above 100 and is 100 after |
+> | 2 | `TestT18AFixedAndASlidingWindowCoexist`: a metered and a rolling feature on one tenant, each in exactly one key of its own, told apart in `GET /v1/balance` by `kind`, `window` and `window_precision_seconds` |
+> | 3 | `TestT18TheCalendarEngineIsUnchanged` pins every file of `internal/cycle`, the IP-03 boundary table among them, by digest; `TestNoRollingCodeImportsTheCycleEngine`; and the rolling scripts hold no transition block (`TestTheRollingScriptsShareOneWindow`) |
+> | 4 | `TestT18TheKeyIsBounded`: across three windows of virtual time one key, never more than 60 buckets, and an expiry at the newest bucket plus the window. "Its cycle's usefulness" is read as its window's, because a rolling window has no cycle |
+> | 5 | `TestT18ClockSkewIsBoundedAndVisible`: a bucket from a clock two seconds fast is counted and never pruned by a slow one, and the two views differ by at most the bucket the skew spans; the skew itself is `quotacore_clock_skew_seconds`, alerted at 1 s (`Q-26`) |
+> | 6 | `TestARollingCallIsOneCall` (one evaluation for consume, check and refund), `TestRollingCostsAboutWhatMeteredCosts` against a full window, and `TestRollingSustainedThroughput`, the load suite's rolling row at 2,000/s against a metered run on the same stack, which the `full-suite` label runs; `Q-30` is answered with its default, the service's own time |
+> | 7 | `TestT18InvalidWindow`: a window outside the set, not a string, on a metered feature, missing on a rolling one, or different, is `400 invalid_window` on consume, refund and check, and writes nothing |
+>
+> `feature_not_anchored` is new, for a grant, set, rollover or override on a rolling feature.
+> Rolling consumption writes no ledger row (`Q-37`), and `Q-11` is answered by the contract's
+> `RollingWindow` enum.
 
 ---
 

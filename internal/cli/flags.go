@@ -131,8 +131,9 @@ func queryName(flagName string) string {
 }
 
 // entitlement parses `<feature_key>=<limit>/<interval>` for a metered
-// feature, or a bare `<feature_key>` for a boolean one, whose limit and
-// interval are null (DR-050).
+// feature, `<feature_key>=<limit>/<window>` for a rolling one, such as
+// api.calls=1000/rolling_1h (DR-052), or a bare `<feature_key>` for a boolean
+// one, whose limit and interval are null (DR-050).
 func entitlement(v string) (contract.PlanEntitlement, error) {
 	if !strings.ContainsAny(v, "=/") && v != "" {
 		return contract.PlanEntitlement{FeatureKey: contract.FeatureKey(v), Limit: contract.NilLimit{Null: true},
@@ -147,6 +148,14 @@ func entitlement(v string) (contract.PlanEntitlement, error) {
 	n, err := strconv.ParseInt(limit, 10, 64)
 	if err != nil {
 		return contract.PlanEntitlement{}, usagef("--entitlement %q: the limit is not a whole number", v)
+	}
+	if strings.HasPrefix(interval, "rolling_") {
+		// A rolling feature's window in the interval's place, such as
+		// api.calls=1000/rolling_1h: a limit over a sliding window and no
+		// reset interval (DR-052).
+		return contract.PlanEntitlement{FeatureKey: contract.FeatureKey(key), Limit: contract.NewNilLimit(contract.Limit(n)),
+			ResetInterval: contract.NilResetInterval{Null: true},
+			Window:        contract.NewOptNilRollingWindow(contract.RollingWindow(interval))}, nil
 	}
 	return contract.PlanEntitlement{FeatureKey: contract.FeatureKey(key), Limit: contract.NewNilLimit(contract.Limit(n)),
 		ResetInterval: contract.NewNilResetInterval(contract.ResetInterval(interval))}, nil
