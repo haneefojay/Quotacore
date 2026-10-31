@@ -9,7 +9,7 @@ release in [mvp-scope.md](docs/product/mvp-scope.md).
 
 ## Current position
 
-**Specification complete; implementation started.** 79 documents, 17 accepted decisions, 15
+**Specification complete; implementation started.** 81 documents, 17 accepted decisions, 15
 named correctness tests, 35 error codes, 49 domain rules — and the first code, in
 [`IP-01`](docs/roadmaps/v0-1-enforcement-path.md#ip-01--repository-toolchain-and-ci-foundation),
 which owns no product behaviour. See
@@ -137,7 +137,8 @@ without a strict CSP. Small on purpose: operators can already do everything with
 
 Generated from the OpenAPI document, so they cannot drift from it.
 
-- [ ] TypeScript: `check` and `consume`, typed errors, idempotency handled for the caller
+- [x] TypeScript: `check` and `consume`, typed errors, idempotency handled for the caller (`IP-26`,
+      2026-10-31; published only after v0.2, by `Q-32`)
 - [ ] Python: the same surface, with `Decimal` handled without float drift
 - [ ] Both with a `QuotaExceeded` distinct from a transport error, because conflating them is how
       a customer ends up disabling enforcement

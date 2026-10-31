@@ -77,10 +77,15 @@ tested and documented: phases `IP-00` to `IP-16` of
 measured NFR and each line of [mvp-scope.md](docs/product/mvp-scope.md) is proved in
 [the v0.1 evidence](docs/release/v0-1-evidence.md), with its named gaps. The runbooks and the
 restore drill were followed on the reference stack and approved on 2026-10-29, and a code review of
-the whole tree followed before the release. The specification behind it is 79 documents, 17
+the whole tree followed before the release. The specification behind it is 81 documents, 17
 accepted decisions, 49 domain rules, 35 error codes and 15 named correctness tests. What remains
 open is in [the register](docs/product/assumptions-and-open-questions.md#2-open-questions), and none
 of it blocks. Later releases, `IP-17` to `IP-27`, start from v0.1.
+
+**A TypeScript client** is built and tested in [sdk/typescript/](sdk/typescript/README.md)
+(`IP-26`): typed errors, safe retries, and an idempotency key per call that every retry reuses. It
+is published to npm once v0.2's contract has landed, so the published API does not move under its
+users ([Q-32](docs/product/assumptions-and-open-questions.md#2-open-questions)).
 
 Start with [PROJECT.md](PROJECT.md), then follow the reading order it gives you.
 
@@ -120,6 +125,7 @@ The complete index, with what each document settles and who should read it, is
 ├── cmd/quotacore/         the service entry point
 ├── internal/api/          the router, the probes, and the served contract
 ├── internal/db/           embedded up-only migrations
+├── sdk/typescript/        the TypeScript client, generated from the contract (IP-26)
 ├── tools/
 │   ├── check-docs.ps1     links, anchors, identifiers, inventory
 │   └── gendocs/           renders openapi.yaml into docs.html

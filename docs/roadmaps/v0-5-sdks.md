@@ -11,7 +11,7 @@ Read [roadmap-index.md](roadmap-index.md) first.
 
 | ID | Phase | Depends on | Status |
 | --- | --- | --- | --- |
-| `IP-26` | TypeScript SDK | `IP-16` | `BLOCKED` |
+| `IP-26` | TypeScript SDK | `IP-16` | `COMPLETE`, unpublished until v0.2 ([Q-32](../product/assumptions-and-open-questions.md#2-open-questions)) |
 | `IP-27` | Python SDK | `IP-16` | `BLOCKED` |
 
 ---
@@ -27,7 +27,7 @@ this release exists.
 | Write their own retry loop and duplicate a charge | Generate an idempotency key per logical operation and reuse it across retries (DR-026) |
 | Retry a `400` forever | Retry only on `5xx` and `429 rate_limited`, with bounded attempts and jitter |
 | Guess why a call failed | Expose typed errors matching the catalogue, each carrying the code's client action |
-| Abandon a request on a timeout and never learn its outcome | Treat a transport failure as unknown, and resolve it with a `check` on the same key, because the answer may already be recorded (DR-027) |
+| Abandon a request on a timeout and never learn its outcome | Treat a transport failure as unknown, and resolve it with a `check` on the same key, because the answer may already be recorded (DR-027). Read as the same request on the same key, by the 2026-10-31 amendment to `IP-26` item 6 |
 | Hand-roll pagination | Implement the contract's pagination and follow `next` |
 | Lose the trace in a bug report | Surface `X-Request-Id` on every response and every error (NFR-S10) |
 
@@ -39,7 +39,14 @@ like it implements it.
 
 ## IP-26 — TypeScript SDK
 
-**Status** `BLOCKED`, gated on `IP-16`.
+**Status** `COMPLETE`. Opened and closed 2026-10-31, 10 of 10 DoD items met, with item 6 read as
+amended below. The package is in [sdk/typescript/](../../sdk/typescript/README.md) and is not
+published until v0.2's contract has landed ([Q-32](../product/assumptions-and-open-questions.md#2-open-questions)).
+
+> **Opened 2026-10-31, before v0.2.** The phase map gates `IP-26` on `IP-16` alone, while
+> [ADR-0015](../decisions/0015-release-slicing.md) places v0.5 after v0.2 because a package published
+> against a moving API is permanent maintenance. The ADR's objection is to publication, so the owner
+> chose to build and test the SDK now and publish it after v0.2 (Q-32). The ADR stands unchanged.
 
 **Objective.** A published package that a Node or browser customer can install, authenticate with,
 and use correctly without reading the documentation twice.
@@ -78,6 +85,15 @@ and use correctly without reading the documentation twice.
 6. A transport failure surfaces as an explicitly unknown outcome, and the SDK offers the `check` on
    the same key that resolves it. Tested against a server that applied the mutation and then dropped
    the connection.
+
+   > **Amended 2026-10-31 (`IP-26`).** `POST /v1/check` takes no `Idempotency-Key` (DR-024,
+   > [api-conventions.md](../architecture/api-conventions.md#72-check) §7.2), so no `check` can be
+   > on the same key, and the events filter on `idempotency_key` needs an `admin` key a runtime caller
+   > does not hold. What resolves the outcome with the caller's own key is the job table's own
+   > citation, DR-027: the identical request with the identical `Idempotency-Key`, which replays an
+   > applied mutation and applies an unapplied one once. `UnknownOutcomeError.resolve()` sends it,
+   > and refuses once 23 hours have passed since the first attempt, because after DR-029's window
+   > the same key is a new operation. The test is unchanged.
 7. Pagination follows the contract, and a test pages to exhaustion and reassembles the set.
 8. `X-Request-Id` is on every response object and on every error, so it can be pasted into a bug
    report (NFR-S10).

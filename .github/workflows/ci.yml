@@ -66,6 +66,90 @@ jobs:
           path: dist/sbom.cdx.json
           if-no-files-found: error
 
+  # IP-26: the TypeScript SDK, on every Node line its engines range admits that is still
+  # supported (22 maintenance, 24 and 26 LTS on 2026-10-31). The unit tests and the README's
+  # examples run here against the in-process fake; the live job below runs them against the stack.
+  sdk-typescript:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24', '26']
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install from the lockfile
+        run: npm ci --no-audit --no-fund
+      - name: No runtime dependency
+        # IP-26 D13: a runtime dependency is a licence and supply-chain review (NFR-C4).
+        run: node -e "const p=require('./package.json');if(Object.keys(p.dependencies||{}).length){console.error('runtime dependencies:',p.dependencies);process.exit(1)}"
+      - name: Generated files match the contract
+        run: |
+          npm run generate
+          git diff --exit-code -- src/generated
+      - name: Unit tests, type checks and README examples
+        run: npm test
+
+  # IP-26 D14: the guarantees that matter, against the reference stack. The service applies the
+  # mutation and a proxy in the test loses its response, which is the failure DoD 2, 3 and 6 name.
+  sdk-typescript-live:
+    runs-on: ubuntu-latest
+    env:
+      QUOTACORE_BOOTSTRAP_ADMIN_KEY_ACK: 'yes'
+      # The live suite and the examples make more admin calls a minute than the default 60.
+      QUOTACORE_RATELIMIT_ADMIN_RPM: '6000'
+      QUOTACORE_SDK_REQUIRE_LIVE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+      - name: The reference stack, with a bootstrap admin key and the quickstart's tenant
+        run: |
+          docker compose build quotacore
+          key="$(docker compose run --rm --no-deps quotacore key mint)"
+          echo "::add-mask::$key"
+          echo "QUOTACORE_BOOTSTRAP_ADMIN_KEY=$key" >> "$GITHUB_ENV"
+          export QUOTACORE_BOOTSTRAP_ADMIN_KEY="$key"
+          docker compose up -d --wait
+          docker compose exec -T quotacore quotacore init --yes --limit 1000000 > /tmp/init.log
+          runtime="$(sed -n 's/^  key      \([^ ]*\) .*/\1/p' /tmp/init.log)"
+          test -n "$runtime"
+          echo "::add-mask::$runtime"
+          echo "QUOTACORE_API_KEY=$runtime" >> "$GITHUB_ENV"
+          for attempt in $(seq 1 30); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $runtime" \
+              'http://127.0.0.1:8080/v1/balance?tenant_external_id=local-dev')"
+            if [ "$code" = 200 ]; then break; fi
+            sleep 1
+          done
+          test "$code" = 200
+      - name: Install and build
+        working-directory: sdk/typescript
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Live guarantees
+        working-directory: sdk/typescript
+        run: node --test "dist/test/live/*.test.js"
+        env:
+          QUOTACORE_SDK_LIVE_URL: http://127.0.0.1:8080
+          QUOTACORE_SDK_ADMIN_KEY: ${{ env.QUOTACORE_BOOTSTRAP_ADMIN_KEY }}
+      - name: README examples against the stack
+        working-directory: sdk/typescript
+        run: node scripts/readme-examples.mjs
+        env:
+          QUOTACORE_URL: http://127.0.0.1:8080
+          QUOTACORE_ADMIN_KEY: ${{ env.QUOTACORE_BOOTSTRAP_ADMIN_KEY }}
+      - name: Report
+        if: failure()
+        run: docker compose logs --no-color quotacore || true
+
   # The reference stack end to end (IP-15). It also asserts everything the former `compose` job
   # did: the stores reach a healthy state and the fast store refuses to evict.
   reference:

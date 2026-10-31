@@ -12,6 +12,22 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **The TypeScript SDK (`IP-26`), built ahead of v0.2 and not yet published.** [sdk/typescript/](sdk/typescript/README.md)
+  is `@quotacore/sdk`: types generated from `api/openapi.yaml` by `openapi-typescript`, and a
+  hand-written layer for the four data-plane calls and every admin operation, with no runtime
+  dependency. Every `consume` and `refund` carries one `Idempotency-Key` for all its attempts;
+  retries happen only on a transport failure, a `5xx` other than `501`, and `429 rate_limited`,
+  bounded and jittered, and an admin write is retried only on `rate_limited`. Each catalogue code is
+  its own error class with the catalogue's client action, generated from error-catalog.md §2, and a
+  transport failure shares no base class with them. A mutation whose outcome is unknown raises
+  `UnknownOutcomeError`, whose `resolve()` re-sends it with the same key and refuses after 23 hours.
+  `admin.paginate()` follows `next_cursor`, and `requestId` is on every result and error. Two CI
+  jobs run it: the unit suite and the README's examples on Node 22, 24 and 26 against an in-process
+  fake, and the guarantees and the examples against the reference stack, through a proxy that lets
+  the service apply a mutation and then loses its response. `Q-32` is new and answered: ADR-0015
+  places the SDKs after v0.2, so the package is published only once v0.2's contract has landed.
+  `make sdk-ts` runs the package's own suite.
+
 - **v0.1 is complete, pending the runbook review row (`IP-16`).** [docs/release/v0-1-evidence.md](docs/release/v0-1-evidence.md)
   is filled in from the run of record at `01ddb7d`. It holds each of the three claims with its
   measurement, each measured NFR with its figure, the run and the environment, and each line of
@@ -413,6 +429,11 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Changed
 
+- **`IP-26` DoD item 6 is read as the same request on the same key (2026-10-31).** It asked for "the
+  `check` on the same key", and `check` takes no key (DR-024). The resolution with a runtime key is
+  DR-027's replay, which the job table already cites; the test is unchanged.
+- **The `ogen` research row is corrected by a dated note.** `ogen` generates Go only, not the
+  TypeScript and Python clients the row credited it with; the choice stands on its other reasons.
 - **History rewritten to the maintainer's identity (2026-10-29).** Every commit on `dev` and `main`
   is now authored and committed by Haneef, and the Claude co-author trailers are gone; the trees
   are unchanged, but every commit identifier changed. The two cited in the documents follow: the
