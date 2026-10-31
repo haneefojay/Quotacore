@@ -101,8 +101,8 @@ func TestOperationsAreTheContracts(t *testing.T) {
 			t.Errorf("%s scope = %q, want runtime", e, byEndpoint[e].RequiredScope)
 		}
 	}
-	if n := len(byEndpoint["POST /v1/consume"].Codes); n != 18 {
-		t.Errorf("consume lists %d codes, want the matrix row's 18", n)
+	if n := len(byEndpoint["POST /v1/consume"].Codes); n != 19 {
+		t.Errorf("consume lists %d codes, want the matrix row's 19", n)
 	}
 	if !byEndpoint["POST /v1/check"].HasBody || byEndpoint["GET /v1/balance"].HasBody {
 		t.Error("HasBody is wrong for check or balance")

@@ -198,7 +198,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Unknown or soft-deleted tenant. A soft-deleted tenant is treated exactly as absent, which<br>is why this is also the answer after a soft delete (T-15).</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The key was first used for a different operation. No state changed and the original record<br>is preserved (DR-028, INV-I2). Retry with a <strong>new</strong> key only if the new operation is<br>genuinely a new one.</p>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A consume conflict, and no state changed. <code>idempotency_key_reuse</code> is a key first used for a<br>different operation; the original record is preserved (DR-028, INV-I2), and a retry with a<br><strong>new</strong> key is right only if the new operation is genuinely a new one.<br><code>feature_not_metered</code> is an amount above 1 against a boolean entitlement, which has no<br>counter to deduct from (DR-050).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -252,7 +252,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Unknown or soft-deleted tenant. A soft-deleted tenant is treated exactly as absent, which<br>is why this is also the answer after a soft delete (T-15).</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refund conflict. It never returns <code>quota_exceeded</code>: a refund cannot exceed a balance,<br>and the bound it can break is <code>balance &lt;= limit + bonus</code> (DR-019).</p>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refund conflict. It never returns <code>quota_exceeded</code>: a refund cannot exceed a balance,<br>and the bound it can break is <code>balance &lt;= limit + bonus</code> (DR-019). A refund against a<br>boolean entitlement is <code>feature_not_metered</code>, because there is no counter to restore<br>(DR-050).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -295,6 +295,8 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p>All four are <code>403</code> and they are told apart by <code>code</code>, never by status: this is the case<br>the catalogue&#39;s &#34;no code carries meaning in its HTTP status&#34; rule exists for.</p>
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Unknown or soft-deleted tenant. A soft-deleted tenant is treated exactly as absent, which<br>is why this is also the answer after a soft delete (T-15).</p>
+</td></tr>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>An amount above 1 asked of a boolean entitlement. <code>check</code> answers what <code>consume</code> would, so<br>it refuses the same amount rather than calling it allowed (DR-024, DR-050).</p>
 </td></tr>
 <tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
 </td></tr>
@@ -358,6 +360,8 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>limit</code></td><td><code>query</code></td><td>no</td><td>integer (int32)</td><td><p>Page size. An empty page returns an empty array, never <code>null</code>.</p>
 </td></tr>
+<tr><td><code>kind</code></td><td><code>query</code></td><td>no</td><td>FeatureKind</td><td><p>Restrict the catalogue to one kind. The values are <code>FeatureKind</code>&#39;s, which are the database<br>enum&#39;s, exactly.</p>
+</td></tr>
 </table>
 <h4>Responses</h4>
 <table>
@@ -381,7 +385,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </table>
 <h3><span class="method method-post">POST</span> <span class="path">/v1/admin/features</span></h3>
 <p><strong>Create a feature</strong></p>
-<p><code>key</code> is immutable always and <code>unit</code> once the feature is referenced, because reinterpreting a<br>historical amount is not allowed (INV-F2, INV-F3). <code>kind: boolean</code> is a v0.2 surface and is<br><code>501 not_implemented</code> on a v0.1 build (F-5).</p>
+<p><code>key</code> is immutable always and <code>unit</code> once the feature is referenced, because reinterpreting a<br>historical amount is not allowed (INV-F2, INV-F3). <code>kind</code> is fixed here and never changes<br>afterwards (F-5, DR-050).</p>
 <p class="muted">Operation ID: <code>createFeature</code></p>
 <h4>Authorisation</h4>
 <p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
@@ -413,8 +417,6 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
 <p>Quote the <code>request_id</code>.</p>
-</td></tr>
-<tr><td><code>501</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A later-release surface called on an MVP build. Not transient: retrying does not help.<br>Upgrade, or use the MVP equivalent.</p>
 </td></tr>
 <tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>A dependency is unavailable. Both are retryable with backoff and jitter, and whether to<br>fail <strong>open</strong> or <strong>closed</strong> is a decision your application makes deliberately<br>(DR-037).</p>
 <p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
@@ -1285,7 +1287,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Neither the tenant nor the named feature exists. On the admin API existence is not<br>hidden, because the operator is already authorised for the whole instance.</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the four<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7).</p>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the five<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7), and<br><code>feature_not_metered</code> is a feature with no counter to change (DR-050).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -1332,7 +1334,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Neither the tenant nor the named feature exists. On the admin API existence is not<br>hidden, because the operator is already authorised for the whole instance.</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the four<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7).</p>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the five<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7), and<br><code>feature_not_metered</code> is a feature with no counter to change (DR-050).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -1378,7 +1380,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Neither the tenant nor the named feature exists. On the admin API existence is not<br>hidden, because the operator is already authorised for the whole instance.</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the four<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7).</p>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the five<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7), and<br><code>feature_not_metered</code> is a feature with no counter to change (DR-050).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -1434,7 +1436,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Neither the tenant nor the named feature exists. On the admin API existence is not<br>hidden, because the operator is already authorised for the whole instance.</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the four<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7).</p>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the five<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7), and<br><code>feature_not_metered</code> is a feature with no counter to change (DR-050).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -1905,7 +1907,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p>One of: <code>active</code>, <code>archived</code></p>
 <h3 id="schema-featurekind">FeatureKind</h3>
 <p class="muted">Type <code>string</code></p>
-<p><code>metered</code> in v0.1. <code>boolean</code> exists in the schema with no v0.1 use, because adding an enum<br>value later is a schema change and v0.2&#39;s design is already known.</p>
+<p><code>metered</code> is counted in a unit, with an allowance per cycle. <code>boolean</code> is present or<br>absent, with no counter: no balance, no limit, no bonus and no exhaustion (DR-050). A<br>feature&#39;s kind is chosen when it is created and never changes.</p>
 <p>One of: <code>metered</code>, <code>boolean</code></p>
 <h3 id="schema-eventsource">EventSource</h3>
 <p class="muted">Type <code>string</code></p>
@@ -1927,7 +1929,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p class="muted">Type <code>string</code></p>
 <p>The only field to branch on. Stable, permanent, lower snake case. A code may be retired<br>only in a major version, and only if no client could reasonably depend on it.</p>
 <p>The enum is the catalogue by reference, and a contract test asserts the two match, so the<br>service cannot raise a code that is not in<br>[error-catalog.md](../../docs/product/error-catalog.md).</p>
-<p>One of: <code>validation_failed</code>, <code>invalid_amount</code>, <code>invalid_window</code>, <code>invalid_timezone</code>, <code>missing_idempotency_key</code>, <code>unauthorized</code>, <code>api_key_invalid</code>, <code>insufficient_scope</code>, <code>feature_not_in_plan</code>, <code>feature_archived</code>, <code>tenant_suspended</code>, <code>tenant_not_found</code>, <code>feature_not_found</code>, <code>plan_not_found</code>, <code>api_key_not_found</code>, <code>payload_too_large</code>, <code>idempotency_key_reuse</code>, <code>plan_in_use</code>, <code>feature_in_use</code>, <code>feature_key_exists</code>, <code>tenant_exists</code>, <code>tenant_deleted</code>, <code>plan_key_exists</code>, <code>refund_exceeds_grant</code>, <code>grant_exceeds_ceiling</code>, <code>reset_not_supported</code>, <code>feature_unit_immutable</code>, <code>resource_version_conflict</code>, <code>confirmation_required</code>, <code>quota_exceeded</code>, <code>rate_limited</code>, <code>service_unavailable</code>, <code>control_plane_unavailable</code>, <code>internal_error</code>, <code>not_implemented</code></p>
+<p>One of: <code>validation_failed</code>, <code>invalid_amount</code>, <code>invalid_window</code>, <code>invalid_timezone</code>, <code>missing_idempotency_key</code>, <code>unauthorized</code>, <code>api_key_invalid</code>, <code>insufficient_scope</code>, <code>feature_not_in_plan</code>, <code>feature_archived</code>, <code>tenant_suspended</code>, <code>tenant_not_found</code>, <code>feature_not_found</code>, <code>plan_not_found</code>, <code>api_key_not_found</code>, <code>payload_too_large</code>, <code>idempotency_key_reuse</code>, <code>plan_in_use</code>, <code>feature_in_use</code>, <code>feature_key_exists</code>, <code>tenant_exists</code>, <code>tenant_deleted</code>, <code>plan_key_exists</code>, <code>refund_exceeds_grant</code>, <code>grant_exceeds_ceiling</code>, <code>reset_not_supported</code>, <code>feature_not_metered</code>, <code>feature_unit_immutable</code>, <code>resource_version_conflict</code>, <code>confirmation_required</code>, <code>quota_exceeded</code>, <code>rate_limited</code>, <code>service_unavailable</code>, <code>control_plane_unavailable</code>, <code>internal_error</code>, <code>not_implemented</code></p>
 <h3 id="schema-errorresponse">ErrorResponse</h3>
 <p class="muted">Type <code>object</code></p>
 <p>The one error shape, everywhere, and it is non-negotiable. No endpoint returns a bare<br><code>400</code> or a bare <code>500</code> without it.</p>
@@ -1993,10 +1995,13 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
 <tr><td><code>tenant_external_id</code></td><td><a href="#schema-externalid"><code>ExternalId</code></a></td><td>yes</td><td></td></tr>
 <tr><td><code>feature_key</code></td><td><a href="#schema-featurekey"><code>FeatureKey</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>balance</code></td><td>—</td><td>yes</td><td><p>The remaining balance <strong>after</strong> the deduction.</p>
+<tr><td><code>kind</code></td><td>—</td><td>yes</td><td><p>The feature&#39;s kind. For <code>boolean</code>, <code>balance</code>, <code>limit</code> and <code>bonus</code> are <code>null</code> and the<br>cycle fields are <code>null</code>, because an inclusion has no counter and no cycle (DR-050).</p>
 </td></tr>
-<tr><td><code>limit</code></td><td><a href="#schema-limit"><code>Limit</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>bonus</code></td><td>—</td><td>yes</td><td><p>Cycle-scoped granted quota. It does not survive the boundary (DR-020).</p>
+<tr><td><code>balance</code></td><td>—</td><td>yes</td><td><p>The remaining balance <strong>after</strong> the deduction. Null for a boolean entitlement.</p>
+</td></tr>
+<tr><td><code>limit</code></td><td>—</td><td>yes</td><td><p>The cycle allowance. Null for a boolean entitlement, which has no ceiling.</p>
+</td></tr>
+<tr><td><code>bonus</code></td><td>—</td><td>yes</td><td><p>Cycle-scoped granted quota. It does not survive the boundary (DR-020). Null for a boolean entitlement.</p>
 </td></tr>
 <tr><td><code>consumed</code></td><td>—</td><td>yes</td><td><p>The amount the <strong>original</strong> call applied, returned unchanged on a replay because a<br>replay reads the recorded state (DR-027). On <code>consume</code>, <code>balance</code> minus <code>consumed</code> is<br>the balance before the original deduction. On <code>refund</code> the schema is shared, so<br><code>consumed</code> is the amount refunded and <code>balance</code> minus <code>consumed</code> is the balance before<br>the refund.</p>
 </td></tr>
@@ -2014,11 +2019,16 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </ul>
 <table>
 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
-<tr><td><code>allowed</code></td><td><code>boolean</code></td><td>yes</td><td><p>A denial is <code>allowed: false</code> at <code>200</code>, <strong>not</strong> a <code>429</code> (DR-024). A <code>429</code> from this<br>route means the service is rate-limiting you.</p>
+<tr><td><code>allowed</code></td><td><code>boolean</code></td><td>yes</td><td><p>A denial is <code>allowed: false</code> at <code>200</code>, <strong>not</strong> a <code>429</code> (DR-024). A <code>429</code> from this<br>route means the service is rate-limiting you. An included boolean entitlement is<br>always <code>allowed: true</code> (DR-050).</p>
 </td></tr>
-<tr><td><code>balance</code></td><td><a href="#schema-amount"><code>Amount</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>limit</code></td><td><a href="#schema-limit"><code>Limit</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>bonus</code></td><td><a href="#schema-amount"><code>Amount</code></a></td><td>yes</td><td></td></tr>
+<tr><td><code>kind</code></td><td>—</td><td>yes</td><td><p>The feature&#39;s kind. For <code>boolean</code>, <code>balance</code>, <code>limit</code>, <code>bonus</code> and <code>cycle_end</code> are <code>null</code>.</p>
+</td></tr>
+<tr><td><code>balance</code></td><td>—</td><td>yes</td><td><p>The balance now. Null for a boolean entitlement.</p>
+</td></tr>
+<tr><td><code>limit</code></td><td>—</td><td>yes</td><td><p>The cycle allowance. Null for a boolean entitlement.</p>
+</td></tr>
+<tr><td><code>bonus</code></td><td>—</td><td>yes</td><td><p>Cycle-scoped granted quota. Null for a boolean entitlement.</p>
+</td></tr>
 <tr><td><code>requested</code></td><td><a href="#schema-amount"><code>Amount</code></a></td><td>yes</td><td></td></tr>
 <tr><td><code>cycle_end</code></td><td>—</td><td>yes</td><td><p>When a currently-denied amount would become available.</p>
 </td></tr>
@@ -2033,10 +2043,15 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <table>
 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
 <tr><td><code>feature_key</code></td><td><a href="#schema-featurekey"><code>FeatureKey</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>balance</code></td><td><a href="#schema-amount"><code>Amount</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>limit</code></td><td><a href="#schema-limit"><code>Limit</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>bonus</code></td><td><a href="#schema-amount"><code>Amount</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>consumed</code></td><td>—</td><td>yes</td><td><p>Net consumption in the stored cycle, derived as <code>limit + bonus - balance</code>. A refund<br>lowers it and an administrative <code>set</code> shows through it. It is computed from the balance<br>hash rather than read from the ledger, because this route never reads the control<br>plane (DR-039).</p>
+<tr><td><code>kind</code></td><td>—</td><td>yes</td><td><p>The feature&#39;s kind. An included boolean entitlement is an entry whose <code>balance</code>,<br><code>limit</code>, <code>bonus</code>, <code>consumed</code>, <code>cycle_start</code> and <code>cycle_end</code> are all <code>null</code>: present,<br>with no counter (DR-050). Its presence is the answer.</p>
+</td></tr>
+<tr><td><code>balance</code></td><td>—</td><td>yes</td><td><p>The balance now. Null for a boolean entitlement.</p>
+</td></tr>
+<tr><td><code>limit</code></td><td>—</td><td>yes</td><td><p>The cycle allowance. Null for a boolean entitlement.</p>
+</td></tr>
+<tr><td><code>bonus</code></td><td>—</td><td>yes</td><td><p>Cycle-scoped granted quota. Null for a boolean entitlement.</p>
+</td></tr>
+<tr><td><code>consumed</code></td><td>—</td><td>yes</td><td><p>Net consumption in the stored cycle, derived as <code>limit + bonus - balance</code>. A refund<br>lowers it and an administrative <code>set</code> shows through it. It is computed from the balance<br>hash rather than read from the ledger, because this route never reads the control<br>plane (DR-039). Null for a boolean entitlement, whose use is not counted.</p>
 </td></tr>
 <tr><td><code>cycle_start</code></td><td>—</td><td>yes</td><td></td></tr>
 <tr><td><code>cycle_end</code></td><td>—</td><td>yes</td><td></td></tr>
@@ -2098,7 +2113,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>description</code></td><td><code>string</code></td><td>no</td><td><p>Optional free text. Absent and <code>&#39;&#39;</code> are the same thing, which is why it defaults to <code>&#39;&#39;</code>.</p>
 </td></tr>
-<tr><td><code>kind</code></td><td>—</td><td>no</td><td><p>Optional, <code>metered</code> by default. <code>boolean</code> is a v0.2 surface and is <code>501 not_implemented</code><br>on a v0.1 build (F-5).</p>
+<tr><td><code>kind</code></td><td>—</td><td>no</td><td><p>Optional, <code>metered</code> by default. Fixed at creation: no route changes it, so a boolean<br>feature never has a metered assignment to conflict with (F-5, DR-050).</p>
 </td></tr>
 </table>
 <h3 id="schema-featureupdate">FeatureUpdate</h3>
@@ -2135,7 +2150,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </table>
 <h3 id="schema-planentitlement">PlanEntitlement</h3>
 <p class="muted">Type <code>object</code></p>
-<p>One feature&#39;s allowance in a plan.</p>
+<p>One feature&#39;s allowance in a plan. <code>limit</code> and <code>reset_interval</code> are both required and both<br>nullable, by the convention in api-conventions.md section 7.4: a metered feature takes a<br>number and an interval, and a boolean feature takes <code>null</code> for both, because an inclusion<br>has no ceiling and no cycle (UC-02, DR-050). A number for either on a boolean feature, or a<br><code>null</code> on a metered one, is <code>400 validation_failed</code> naming the field, rather than being<br>ignored.</p>
 <ul>
 <li><p><strong>Undeclared fields are rejected.</strong> A field that is not in this schema is a <code>400 validation_failed</code>.</p>
 </li>
@@ -2143,8 +2158,10 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <table>
 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
 <tr><td><code>feature_key</code></td><td><a href="#schema-featurekey"><code>FeatureKey</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>limit</code></td><td><a href="#schema-limit"><code>Limit</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>reset_interval</code></td><td><a href="#schema-resetinterval"><code>ResetInterval</code></a></td><td>yes</td><td></td></tr>
+<tr><td><code>limit</code></td><td>—</td><td>yes</td><td><p>The cycle allowance of a metered feature; <code>null</code> for a boolean one.</p>
+</td></tr>
+<tr><td><code>reset_interval</code></td><td>—</td><td>yes</td><td><p>The cadence of a metered feature; <code>null</code> for a boolean one.</p>
+</td></tr>
 </table>
 <h3 id="schema-plan">Plan</h3>
 <p class="muted">Type <code>object</code></p>

@@ -78,7 +78,7 @@ measured NFR and each line of [mvp-scope.md](docs/product/mvp-scope.md) is prove
 [the v0.1 evidence](docs/release/v0-1-evidence.md), with its named gaps. The runbooks and the
 restore drill were followed on the reference stack and approved on 2026-10-29, and a code review of
 the whole tree followed before the release. The specification behind it is 81 documents, 17
-accepted decisions, 49 domain rules, 35 error codes and 15 named correctness tests. What remains
+accepted decisions, 50 domain rules, 36 error codes and 16 named correctness tests. What remains
 open is in [the register](docs/product/assumptions-and-open-questions.md#2-open-questions), and none
 of it blocks. Later releases, `IP-17` to `IP-27`, start from v0.1.
 

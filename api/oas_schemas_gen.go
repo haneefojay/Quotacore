@@ -378,13 +378,21 @@ func (s *AuditEntrySubjectType) UnmarshalText(data []byte) error {
 // Ref: #/components/schemas/BalanceEntry
 type BalanceEntry struct {
 	FeatureKey FeatureKey `json:"feature_key"`
-	Balance    Amount     `json:"balance"`
-	Limit      Limit      `json:"limit"`
-	Bonus      Amount     `json:"bonus"`
+	// The feature's kind. An included boolean entitlement is an entry whose `balance`, `limit`, `bonus`,
+	// `consumed`, `cycle_start` and `cycle_end` are all `null`: present, with no counter (DR-050). Its
+	// presence is the answer.
+	Kind FeatureKind `json:"kind"`
+	// The balance now. Null for a boolean entitlement.
+	Balance NilAmount `json:"balance"`
+	// The cycle allowance. Null for a boolean entitlement.
+	Limit NilLimit `json:"limit"`
+	// Cycle-scoped granted quota. Null for a boolean entitlement.
+	Bonus NilAmount `json:"bonus"`
 	// Net consumption in the stored cycle, derived as `limit + bonus - balance`. A refund lowers it and an
 	// administrative `set` shows through it. It is computed from the balance hash rather than read from
-	// the ledger, because this route never reads the control plane (DR-039).
-	Consumed   Amount       `json:"consumed"`
+	// the ledger, because this route never reads the control plane (DR-039). Null for a boolean
+	// entitlement, whose use is not counted.
+	Consumed   NilAmount    `json:"consumed"`
 	CycleStart NilTimestamp `json:"cycle_start"`
 	CycleEnd   NilTimestamp `json:"cycle_end"`
 }
@@ -394,23 +402,28 @@ func (s *BalanceEntry) GetFeatureKey() FeatureKey {
 	return s.FeatureKey
 }
 
+// GetKind returns the value of Kind.
+func (s *BalanceEntry) GetKind() FeatureKind {
+	return s.Kind
+}
+
 // GetBalance returns the value of Balance.
-func (s *BalanceEntry) GetBalance() Amount {
+func (s *BalanceEntry) GetBalance() NilAmount {
 	return s.Balance
 }
 
 // GetLimit returns the value of Limit.
-func (s *BalanceEntry) GetLimit() Limit {
+func (s *BalanceEntry) GetLimit() NilLimit {
 	return s.Limit
 }
 
 // GetBonus returns the value of Bonus.
-func (s *BalanceEntry) GetBonus() Amount {
+func (s *BalanceEntry) GetBonus() NilAmount {
 	return s.Bonus
 }
 
 // GetConsumed returns the value of Consumed.
-func (s *BalanceEntry) GetConsumed() Amount {
+func (s *BalanceEntry) GetConsumed() NilAmount {
 	return s.Consumed
 }
 
@@ -429,23 +442,28 @@ func (s *BalanceEntry) SetFeatureKey(val FeatureKey) {
 	s.FeatureKey = val
 }
 
+// SetKind sets the value of Kind.
+func (s *BalanceEntry) SetKind(val FeatureKind) {
+	s.Kind = val
+}
+
 // SetBalance sets the value of Balance.
-func (s *BalanceEntry) SetBalance(val Amount) {
+func (s *BalanceEntry) SetBalance(val NilAmount) {
 	s.Balance = val
 }
 
 // SetLimit sets the value of Limit.
-func (s *BalanceEntry) SetLimit(val Limit) {
+func (s *BalanceEntry) SetLimit(val NilLimit) {
 	s.Limit = val
 }
 
 // SetBonus sets the value of Bonus.
-func (s *BalanceEntry) SetBonus(val Amount) {
+func (s *BalanceEntry) SetBonus(val NilAmount) {
 	s.Bonus = val
 }
 
 // SetConsumed sets the value of Consumed.
-func (s *BalanceEntry) SetConsumed(val Amount) {
+func (s *BalanceEntry) SetConsumed(val NilAmount) {
 	s.Consumed = val
 }
 
@@ -659,12 +677,17 @@ func (*CheckOKHeaders) checkRes() {}
 // Ref: #/components/schemas/CheckResponse
 type CheckResponse struct {
 	// A denial is `allowed: false` at `200`, not a `429` (DR-024). A `429` from this route means the
-	// service is rate-limiting you.
-	Allowed   bool   `json:"allowed"`
-	Balance   Amount `json:"balance"`
-	Limit     Limit  `json:"limit"`
-	Bonus     Amount `json:"bonus"`
-	Requested Amount `json:"requested"`
+	// service is rate-limiting you. An included boolean entitlement is always `allowed: true` (DR-050).
+	Allowed bool `json:"allowed"`
+	// The feature's kind. For `boolean`, `balance`, `limit`, `bonus` and `cycle_end` are `null`.
+	Kind FeatureKind `json:"kind"`
+	// The balance now. Null for a boolean entitlement.
+	Balance NilAmount `json:"balance"`
+	// The cycle allowance. Null for a boolean entitlement.
+	Limit NilLimit `json:"limit"`
+	// Cycle-scoped granted quota. Null for a boolean entitlement.
+	Bonus     NilAmount `json:"bonus"`
+	Requested Amount    `json:"requested"`
 	// When a currently-denied amount would become available.
 	CycleEnd NilTimestamp `json:"cycle_end"`
 }
@@ -674,18 +697,23 @@ func (s *CheckResponse) GetAllowed() bool {
 	return s.Allowed
 }
 
+// GetKind returns the value of Kind.
+func (s *CheckResponse) GetKind() FeatureKind {
+	return s.Kind
+}
+
 // GetBalance returns the value of Balance.
-func (s *CheckResponse) GetBalance() Amount {
+func (s *CheckResponse) GetBalance() NilAmount {
 	return s.Balance
 }
 
 // GetLimit returns the value of Limit.
-func (s *CheckResponse) GetLimit() Limit {
+func (s *CheckResponse) GetLimit() NilLimit {
 	return s.Limit
 }
 
 // GetBonus returns the value of Bonus.
-func (s *CheckResponse) GetBonus() Amount {
+func (s *CheckResponse) GetBonus() NilAmount {
 	return s.Bonus
 }
 
@@ -704,18 +732,23 @@ func (s *CheckResponse) SetAllowed(val bool) {
 	s.Allowed = val
 }
 
+// SetKind sets the value of Kind.
+func (s *CheckResponse) SetKind(val FeatureKind) {
+	s.Kind = val
+}
+
 // SetBalance sets the value of Balance.
-func (s *CheckResponse) SetBalance(val Amount) {
+func (s *CheckResponse) SetBalance(val NilAmount) {
 	s.Balance = val
 }
 
 // SetLimit sets the value of Limit.
-func (s *CheckResponse) SetLimit(val Limit) {
+func (s *CheckResponse) SetLimit(val NilLimit) {
 	s.Limit = val
 }
 
 // SetBonus sets the value of Bonus.
-func (s *CheckResponse) SetBonus(val Amount) {
+func (s *CheckResponse) SetBonus(val NilAmount) {
 	s.Bonus = val
 }
 
@@ -1071,6 +1104,7 @@ const (
 	ErrorCodeRefundExceedsGrant      ErrorCode = "refund_exceeds_grant"
 	ErrorCodeGrantExceedsCeiling     ErrorCode = "grant_exceeds_ceiling"
 	ErrorCodeResetNotSupported       ErrorCode = "reset_not_supported"
+	ErrorCodeFeatureNotMetered       ErrorCode = "feature_not_metered"
 	ErrorCodeFeatureUnitImmutable    ErrorCode = "feature_unit_immutable"
 	ErrorCodeResourceVersionConflict ErrorCode = "resource_version_conflict"
 	ErrorCodeConfirmationRequired    ErrorCode = "confirmation_required"
@@ -1111,6 +1145,7 @@ func (ErrorCode) AllValues() []ErrorCode {
 		ErrorCodeRefundExceedsGrant,
 		ErrorCodeGrantExceedsCeiling,
 		ErrorCodeResetNotSupported,
+		ErrorCodeFeatureNotMetered,
 		ErrorCodeFeatureUnitImmutable,
 		ErrorCodeResourceVersionConflict,
 		ErrorCodeConfirmationRequired,
@@ -1177,6 +1212,8 @@ func (s ErrorCode) MarshalText() ([]byte, error) {
 	case ErrorCodeGrantExceedsCeiling:
 		return []byte(s), nil
 	case ErrorCodeResetNotSupported:
+		return []byte(s), nil
+	case ErrorCodeFeatureNotMetered:
 		return []byte(s), nil
 	case ErrorCodeFeatureUnitImmutable:
 		return []byte(s), nil
@@ -1281,6 +1318,9 @@ func (s *ErrorCode) UnmarshalText(data []byte) error {
 		return nil
 	case ErrorCodeResetNotSupported:
 		*s = ErrorCodeResetNotSupported
+		return nil
+	case ErrorCodeFeatureNotMetered:
+		*s = ErrorCodeFeatureNotMetered
 		return nil
 	case ErrorCodeFeatureUnitImmutable:
 		*s = ErrorCodeFeatureUnitImmutable
@@ -1499,6 +1539,34 @@ func (*ErrorConflictTenantHeaders) resumeTenantRes()  {}
 func (*ErrorConflictTenantHeaders) suspendTenantRes() {}
 func (*ErrorConflictTenantHeaders) updateTenantRes()  {}
 
+// ErrorConsumeConflictHeaders wraps ErrorResponse with response headers.
+type ErrorConsumeConflictHeaders struct {
+	XRequestID RequestId
+	Response   ErrorResponse
+}
+
+// GetXRequestID returns the value of XRequestID.
+func (s *ErrorConsumeConflictHeaders) GetXRequestID() RequestId {
+	return s.XRequestID
+}
+
+// GetResponse returns the value of Response.
+func (s *ErrorConsumeConflictHeaders) GetResponse() ErrorResponse {
+	return s.Response
+}
+
+// SetXRequestID sets the value of XRequestID.
+func (s *ErrorConsumeConflictHeaders) SetXRequestID(val RequestId) {
+	s.XRequestID = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ErrorConsumeConflictHeaders) SetResponse(val ErrorResponse) {
+	s.Response = val
+}
+
+func (*ErrorConsumeConflictHeaders) consumeRes() {}
+
 // ErrorControlPlaneUnavailableHeaders wraps ErrorResponse with response headers.
 type ErrorControlPlaneUnavailableHeaders struct {
 	RetryAfter OptInt32
@@ -1585,6 +1653,34 @@ func (*ErrorFeatureNotFoundHeaders) archiveFeatureRes() {}
 func (*ErrorFeatureNotFoundHeaders) deleteFeatureRes()  {}
 func (*ErrorFeatureNotFoundHeaders) getFeatureRes()     {}
 func (*ErrorFeatureNotFoundHeaders) updateFeatureRes()  {}
+
+// ErrorFeatureNotMeteredHeaders wraps ErrorResponse with response headers.
+type ErrorFeatureNotMeteredHeaders struct {
+	XRequestID RequestId
+	Response   ErrorResponse
+}
+
+// GetXRequestID returns the value of XRequestID.
+func (s *ErrorFeatureNotMeteredHeaders) GetXRequestID() RequestId {
+	return s.XRequestID
+}
+
+// GetResponse returns the value of Response.
+func (s *ErrorFeatureNotMeteredHeaders) GetResponse() ErrorResponse {
+	return s.Response
+}
+
+// SetXRequestID sets the value of XRequestID.
+func (s *ErrorFeatureNotMeteredHeaders) SetXRequestID(val RequestId) {
+	s.XRequestID = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ErrorFeatureNotMeteredHeaders) SetResponse(val ErrorResponse) {
+	s.Response = val
+}
+
+func (*ErrorFeatureNotMeteredHeaders) checkRes() {}
 
 // ErrorForbiddenEntitlementHeaders wraps ErrorResponse with response headers.
 type ErrorForbiddenEntitlementHeaders struct {
@@ -1674,34 +1770,6 @@ func (*ErrorForbiddenScopeHeaders) updateFeatureRes()        {}
 func (*ErrorForbiddenScopeHeaders) updatePlanRes()           {}
 func (*ErrorForbiddenScopeHeaders) updateTenantRes()         {}
 func (*ErrorForbiddenScopeHeaders) upsertTenantOverrideRes() {}
-
-// ErrorIdempotencyKeyReuseHeaders wraps ErrorResponse with response headers.
-type ErrorIdempotencyKeyReuseHeaders struct {
-	XRequestID RequestId
-	Response   ErrorResponse
-}
-
-// GetXRequestID returns the value of XRequestID.
-func (s *ErrorIdempotencyKeyReuseHeaders) GetXRequestID() RequestId {
-	return s.XRequestID
-}
-
-// GetResponse returns the value of Response.
-func (s *ErrorIdempotencyKeyReuseHeaders) GetResponse() ErrorResponse {
-	return s.Response
-}
-
-// SetXRequestID sets the value of XRequestID.
-func (s *ErrorIdempotencyKeyReuseHeaders) SetXRequestID(val RequestId) {
-	s.XRequestID = val
-}
-
-// SetResponse sets the value of Response.
-func (s *ErrorIdempotencyKeyReuseHeaders) SetResponse(val ErrorResponse) {
-	s.Response = val
-}
-
-func (*ErrorIdempotencyKeyReuseHeaders) consumeRes() {}
 
 // ErrorInternalHeaders wraps ErrorResponse with response headers.
 type ErrorInternalHeaders struct {
@@ -1825,34 +1893,6 @@ func (*ErrorNotFoundResourceHeaders) forceRolloverRes()        {}
 func (*ErrorNotFoundResourceHeaders) grantTenantRes()          {}
 func (*ErrorNotFoundResourceHeaders) setTenantBalanceRes()     {}
 func (*ErrorNotFoundResourceHeaders) upsertTenantOverrideRes() {}
-
-// ErrorNotImplementedHeaders wraps ErrorResponse with response headers.
-type ErrorNotImplementedHeaders struct {
-	XRequestID RequestId
-	Response   ErrorResponse
-}
-
-// GetXRequestID returns the value of XRequestID.
-func (s *ErrorNotImplementedHeaders) GetXRequestID() RequestId {
-	return s.XRequestID
-}
-
-// GetResponse returns the value of Response.
-func (s *ErrorNotImplementedHeaders) GetResponse() ErrorResponse {
-	return s.Response
-}
-
-// SetXRequestID sets the value of XRequestID.
-func (s *ErrorNotImplementedHeaders) SetXRequestID(val RequestId) {
-	s.XRequestID = val
-}
-
-// SetResponse sets the value of Response.
-func (s *ErrorNotImplementedHeaders) SetResponse(val ErrorResponse) {
-	s.Response = val
-}
-
-func (*ErrorNotImplementedHeaders) createFeatureRes() {}
 
 // ErrorPayloadTooLargeHeaders wraps ErrorResponse with response headers.
 type ErrorPayloadTooLargeHeaders struct {
@@ -2608,8 +2648,8 @@ type FeatureCreate struct {
 	Unit Unit `json:"unit"`
 	// Optional free text. Absent and `''` are the same thing, which is why it defaults to `''`.
 	Description OptString `json:"description"`
-	// Optional, `metered` by default. `boolean` is a v0.2 surface and is `501 not_implemented` on a v0.1
-	// build (F-5).
+	// Optional, `metered` by default. Fixed at creation: no route changes it, so a boolean feature never
+	// has a metered assignment to conflict with (F-5, DR-050).
 	Kind OptFeatureCreateKind `json:"kind"`
 }
 
@@ -2735,8 +2775,9 @@ func (*FeatureCreatedHeaders) createFeatureRes() {}
 
 type FeatureKey string
 
-// `metered` in v0.1. `boolean` exists in the schema with no v0.1 use, because adding an enum value
-// later is a schema change and v0.2's design is already known.
+// `metered` is counted in a unit, with an allowance per cycle. `boolean` is present or absent, with no
+// counter: no balance, no limit, no bonus and no exhaustion (DR-050). A feature's kind is chosen when
+// it is created and never changes.
 // Ref: #/components/schemas/FeatureKind
 type FeatureKind string
 
@@ -3733,11 +3774,16 @@ func (s *MeteredRequestWindow) UnmarshalText(data []byte) error {
 type MeteredResponse struct {
 	TenantExternalID ExternalId `json:"tenant_external_id"`
 	FeatureKey       FeatureKey `json:"feature_key"`
-	// The remaining balance after the deduction.
-	Balance Amount `json:"balance"`
-	Limit   Limit  `json:"limit"`
-	// Cycle-scoped granted quota. It does not survive the boundary (DR-020).
-	Bonus Amount `json:"bonus"`
+	// The feature's kind. For `boolean`, `balance`, `limit` and `bonus` are `null` and the cycle fields
+	// are `null`, because an inclusion has no counter and no cycle (DR-050).
+	Kind FeatureKind `json:"kind"`
+	// The remaining balance after the deduction. Null for a boolean entitlement.
+	Balance NilAmount `json:"balance"`
+	// The cycle allowance. Null for a boolean entitlement, which has no ceiling.
+	Limit NilLimit `json:"limit"`
+	// Cycle-scoped granted quota. It does not survive the boundary (DR-020). Null for a boolean
+	// entitlement.
+	Bonus NilAmount `json:"bonus"`
 	// The amount the original call applied, returned unchanged on a replay because a replay reads the
 	// recorded state (DR-027). On `consume`, `balance` minus `consumed` is the balance before the original
 	// deduction. On `refund` the schema is shared, so `consumed` is the amount refunded and `balance`
@@ -3761,18 +3807,23 @@ func (s *MeteredResponse) GetFeatureKey() FeatureKey {
 	return s.FeatureKey
 }
 
+// GetKind returns the value of Kind.
+func (s *MeteredResponse) GetKind() FeatureKind {
+	return s.Kind
+}
+
 // GetBalance returns the value of Balance.
-func (s *MeteredResponse) GetBalance() Amount {
+func (s *MeteredResponse) GetBalance() NilAmount {
 	return s.Balance
 }
 
 // GetLimit returns the value of Limit.
-func (s *MeteredResponse) GetLimit() Limit {
+func (s *MeteredResponse) GetLimit() NilLimit {
 	return s.Limit
 }
 
 // GetBonus returns the value of Bonus.
-func (s *MeteredResponse) GetBonus() Amount {
+func (s *MeteredResponse) GetBonus() NilAmount {
 	return s.Bonus
 }
 
@@ -3806,18 +3857,23 @@ func (s *MeteredResponse) SetFeatureKey(val FeatureKey) {
 	s.FeatureKey = val
 }
 
+// SetKind sets the value of Kind.
+func (s *MeteredResponse) SetKind(val FeatureKind) {
+	s.Kind = val
+}
+
 // SetBalance sets the value of Balance.
-func (s *MeteredResponse) SetBalance(val Amount) {
+func (s *MeteredResponse) SetBalance(val NilAmount) {
 	s.Balance = val
 }
 
 // SetLimit sets the value of Limit.
-func (s *MeteredResponse) SetLimit(val Limit) {
+func (s *MeteredResponse) SetLimit(val NilLimit) {
 	s.Limit = val
 }
 
 // SetBonus sets the value of Bonus.
-func (s *MeteredResponse) SetBonus(val Amount) {
+func (s *MeteredResponse) SetBonus(val NilAmount) {
 	s.Bonus = val
 }
 
@@ -3879,6 +3935,51 @@ func (s *MetricsOKHeaders) SetXRequestID(val RequestId) {
 // SetResponse sets the value of Response.
 func (s *MetricsOKHeaders) SetResponse(val MetricsOK) {
 	s.Response = val
+}
+
+// NewNilAmount returns new NilAmount with value set to v.
+func NewNilAmount(v Amount) NilAmount {
+	return NilAmount{
+		Value: v,
+	}
+}
+
+// NilAmount is nullable Amount.
+type NilAmount struct {
+	Value Amount
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilAmount) SetTo(v Amount) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilAmount) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilAmount) SetToNull() {
+	o.Null = true
+	var v Amount
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilAmount) Get() (v Amount, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilAmount) Or(d Amount) Amount {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
 }
 
 // NewNilAuditEntryAfter returns new NilAuditEntryAfter with value set to v.
@@ -4705,6 +4806,52 @@ func (o OptFeatureKey) Get() (v FeatureKey, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptFeatureKey) Or(d FeatureKey) FeatureKey {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptFeatureKind returns new OptFeatureKind with value set to v.
+func NewOptFeatureKind(v FeatureKind) OptFeatureKind {
+	return OptFeatureKind{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptFeatureKind is optional FeatureKind.
+type OptFeatureKind struct {
+	Value FeatureKind
+	Set   bool
+}
+
+// IsSet returns true if OptFeatureKind was set.
+func (o OptFeatureKind) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptFeatureKind) Reset() {
+	var v FeatureKind
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptFeatureKind) SetTo(v FeatureKind) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptFeatureKind) Get() (v FeatureKind, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptFeatureKind) Or(d FeatureKind) FeatureKind {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -5936,12 +6083,18 @@ func (s *PlanCreatedHeaders) SetResponse(val Plan) {
 
 func (*PlanCreatedHeaders) createPlanRes() {}
 
-// One feature's allowance in a plan.
+// One feature's allowance in a plan. `limit` and `reset_interval` are both required and both nullable,
+// by the convention in api-conventions.md section 7.4: a metered feature takes a number and an
+// interval, and a boolean feature takes `null` for both, because an inclusion has no ceiling and no
+// cycle (UC-02, DR-050). A number for either on a boolean feature, or a `null` on a metered one, is
+// `400 validation_failed` naming the field, rather than being ignored.
 // Ref: #/components/schemas/PlanEntitlement
 type PlanEntitlement struct {
-	FeatureKey    FeatureKey    `json:"feature_key"`
-	Limit         Limit         `json:"limit"`
-	ResetInterval ResetInterval `json:"reset_interval"`
+	FeatureKey FeatureKey `json:"feature_key"`
+	// The cycle allowance of a metered feature; `null` for a boolean one.
+	Limit NilLimit `json:"limit"`
+	// The cadence of a metered feature; `null` for a boolean one.
+	ResetInterval NilResetInterval `json:"reset_interval"`
 }
 
 // GetFeatureKey returns the value of FeatureKey.
@@ -5950,12 +6103,12 @@ func (s *PlanEntitlement) GetFeatureKey() FeatureKey {
 }
 
 // GetLimit returns the value of Limit.
-func (s *PlanEntitlement) GetLimit() Limit {
+func (s *PlanEntitlement) GetLimit() NilLimit {
 	return s.Limit
 }
 
 // GetResetInterval returns the value of ResetInterval.
-func (s *PlanEntitlement) GetResetInterval() ResetInterval {
+func (s *PlanEntitlement) GetResetInterval() NilResetInterval {
 	return s.ResetInterval
 }
 
@@ -5965,12 +6118,12 @@ func (s *PlanEntitlement) SetFeatureKey(val FeatureKey) {
 }
 
 // SetLimit sets the value of Limit.
-func (s *PlanEntitlement) SetLimit(val Limit) {
+func (s *PlanEntitlement) SetLimit(val NilLimit) {
 	s.Limit = val
 }
 
 // SetResetInterval sets the value of ResetInterval.
-func (s *PlanEntitlement) SetResetInterval(val ResetInterval) {
+func (s *PlanEntitlement) SetResetInterval(val NilResetInterval) {
 	s.ResetInterval = val
 }
 

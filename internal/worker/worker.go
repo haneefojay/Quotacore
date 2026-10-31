@@ -145,7 +145,8 @@ func (w *Worker) Sweep(ctx context.Context, prev, now time.Time) Tally {
 		}
 		starts := map[cycle.Interval]time.Time{}
 		for feature, e := range t.Features(now) {
-			if e.Interval == cycle.Never || e.Archived {
+			// A boolean entitlement has no cycle to roll (DR-050).
+			if e.Boolean || e.Interval == cycle.Never || e.Archived {
 				continue
 			}
 			start, seen := starts[e.Interval]

@@ -63,6 +63,7 @@ type NewKey struct {
 
 type NewFeature struct {
 	Key, Name, Unit, Description string
+	Kind                         string // metered or boolean, fixed at creation (DR-050)
 }
 
 // FeatureChange is a feature PATCH: nil leaves a field as it is.
@@ -80,9 +81,11 @@ type NewPlan struct {
 
 // Entitlement is one row of a plan: a feature, its limit and its cadence.
 type Entitlement struct {
-	Feature  string
-	Limit    int64
-	Interval string
+	Feature string
+	// Limit and Interval are nil together for a boolean feature, which has no
+	// counter and no cadence, and set together for a metered one (DR-050).
+	Limit    *int64
+	Interval *string
 }
 
 type NewTenant struct {
@@ -232,7 +235,7 @@ type Store interface {
 	// false for a key already revoked, which writes no audit row.
 	RevokeKey(ctx context.Context, a Actor, id string, at time.Time) (string, bool, error)
 
-	ListFeatures(ctx context.Context, p Page) ([]contract.Feature, error)
+	ListFeatures(ctx context.Context, p Page, kind string) ([]contract.Feature, error)
 	GetFeature(ctx context.Context, key string) (contract.Feature, error)
 	CreateFeature(ctx context.Context, a Actor, f NewFeature) (contract.Feature, error)
 	UpdateFeature(ctx context.Context, a Actor, key string, c FeatureChange) (contract.Feature, error)

@@ -130,19 +130,26 @@ func queryName(flagName string) string {
 	return strings.ReplaceAll(flagName, "-", "_")
 }
 
-// entitlement parses `<feature_key>=<limit>/<interval>`.
+// entitlement parses `<feature_key>=<limit>/<interval>` for a metered
+// feature, or a bare `<feature_key>` for a boolean one, whose limit and
+// interval are null (DR-050).
 func entitlement(v string) (contract.PlanEntitlement, error) {
+	if !strings.ContainsAny(v, "=/") && v != "" {
+		return contract.PlanEntitlement{FeatureKey: contract.FeatureKey(v), Limit: contract.NilLimit{Null: true},
+			ResetInterval: contract.NilResetInterval{Null: true}}, nil
+	}
 	key, rest, ok := strings.Cut(v, "=")
 	limit, interval, ok2 := strings.Cut(rest, "/")
 	if !ok || !ok2 || key == "" {
-		return contract.PlanEntitlement{}, usagef("--entitlement %q is not <feature_key>=<limit>/<interval>, such as llm.tokens.output=100000/monthly", v)
+		return contract.PlanEntitlement{}, usagef("--entitlement %q is not <feature_key>=<limit>/<interval>, such as llm.tokens.output=100000/monthly, "+
+			"nor a bare <feature_key> for a boolean feature", v)
 	}
 	n, err := strconv.ParseInt(limit, 10, 64)
 	if err != nil {
 		return contract.PlanEntitlement{}, usagef("--entitlement %q: the limit is not a whole number", v)
 	}
-	return contract.PlanEntitlement{FeatureKey: contract.FeatureKey(key), Limit: contract.Limit(n),
-		ResetInterval: contract.ResetInterval(interval)}, nil
+	return contract.PlanEntitlement{FeatureKey: contract.FeatureKey(key), Limit: contract.NewNilLimit(contract.Limit(n)),
+		ResetInterval: contract.NewNilResetInterval(contract.ResetInterval(interval))}, nil
 }
 
 func entitlements(vs []string) ([]contract.PlanEntitlement, error) {

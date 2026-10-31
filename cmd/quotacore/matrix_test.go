@@ -38,7 +38,7 @@ func provocations(t *testing.T, s *stack) []provocation {
 	a := s.tenant(ext, "UTC", monthlyAnchor,
 		ent{"mx.f", 100, "monthly", false}, ent{"mx.zero", 100, "monthly", false},
 		ent{"mx.full", 100, "monthly", false}, ent{"mx.old", 100, "monthly", true},
-		ent{"mx.gone", 100, "monthly", false})
+		ent{"mx.gone", 100, "monthly", false}, ent{"mx.on", 0, booleanEnt, false})
 	s.seedCurrent(a, "mx.f", 50)
 	s.seedCurrent(a, "mx.zero", 0)
 	s.seedCurrent(a, "mx.full", 100)
@@ -112,6 +112,14 @@ func provocations(t *testing.T, s *stack) []provocation {
 	add("quota_exceeded", routeConsume, a, withKey("/v1/consume", s.runtime, metered("mx.zero", 1, a.External)))
 	add("refund_exceeds_grant", routeRefund, a, withKey("/v1/refund", s.runtime, metered("mx.full", 1, a.External)))
 	out[len(out)-1].ftr, out[len(out)-2].ftr = "mx.full", "mx.zero"
+	// A counted operation on a boolean entitlement names the mismatch (DR-050,
+	// IP-17 DoD 2): more than one unit, or any refund.
+	add("feature_not_metered", routeConsume, a, withKey("/v1/consume", s.runtime, metered("mx.on", 5000, a.External)))
+	add("feature_not_metered", routeRefund, a, withKey("/v1/refund", s.runtime, metered("mx.on", 1, a.External)))
+	add("feature_not_metered", routeCheck, a, withKey("/v1/check", s.runtime, metered("mx.on", 2, a.External)))
+	for i := len(out) - 3; i < len(out); i++ {
+		out[i].ftr = "mx.on"
+	}
 
 	add("validation_failed", routeBalance, a, bal(s.runtime, "feature_key=Bad"))
 	add("unauthorized", routeBalance, a, bal("", "tenant_external_id="+a.External))
@@ -283,6 +291,11 @@ func TestT08EveryRefusalChangesNothing(t *testing.T) {
 	}
 
 	for code := range catalogue(t) {
+		// not_implemented is reserved: boolean features were its last surface,
+		// and no route of this build raises it (Q-34, IP-17).
+		if code == "not_implemented" {
+			continue
+		}
 		if !covered[code] {
 			t.Errorf("%s is not provoked", code)
 		}

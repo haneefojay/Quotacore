@@ -9,8 +9,8 @@ release in [mvp-scope.md](docs/product/mvp-scope.md).
 
 ## Current position
 
-**Specification complete; implementation started.** 81 documents, 17 accepted decisions, 15
-named correctness tests, 35 error codes, 49 domain rules — and the first code, in
+**Specification complete; implementation started.** 81 documents, 17 accepted decisions, 16
+named correctness tests, 36 error codes, 50 domain rules — and the first code, in
 [`IP-01`](docs/roadmaps/v0-1-enforcement-path.md#ip-01--repository-toolchain-and-ci-foundation),
 which owns no product behaviour. See
 [the register](docs/product/assumptions-and-open-questions.md#2-open-questions).
@@ -82,7 +82,7 @@ and the release: `v0.1.0` was tagged and its signed image published on 2026-10-2
 - [x] Embeddable CLI for tenant, plan, feature, key and status management
 - [x] Signed-delta usage ledger, writer and archiver (amended 2026-10-20, `IP-12`: this read "optional
       replica", which [mvp-scope.md](docs/product/mvp-scope.md) §4c never scoped; the table is the interface)
-- [x] Metrics, structured logs, the two money counters, a counter for each of the 35 error codes
+- [x] Metrics, structured logs, the two money counters, a counter for each error code in the catalogue
 - [x] Docker image, `docker compose up` reference deployment, migration and restore rehearsal
 - [x] All 15 correctness tests and the 7 further suites, in CI, with the three headline tests — [T-01](docs/architecture/testing-strategy.md#t-01--atomic-decrement-under-contention),
       [T-02](docs/architecture/testing-strategy.md#t-02--idempotent-replay) and

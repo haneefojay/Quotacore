@@ -121,7 +121,7 @@ sees the applied change or is told the version has advanced.
 | F-2 | active | update metadata | active | key immutable | — | yes |
 | F-3 | active | archive | archived | — | new consumption → `403 feature_archived`; balances intact (DR-016) | yes |
 | F-4 | active | set metered (default) | active | no assignment yet | defines unit and default interval | yes |
-| F-5 | active | set boolean | active | v0.2; no metered assignment yet | entitlement becomes inclusion-only | yes |
+| F-5 | active | set boolean | active | v0.2; no metered assignment yet. Amended 2026-10-31 (`IP-17`): the kind is chosen at create and no route changes it, so the guard holds by construction | entitlement becomes inclusion-only (DR-050) | yes |
 | F-6 | any | delete | — | no plan, tenant, or event reference | otherwise `409 feature_in_use` | yes, with reason; a refusal is not |
 
 **Invariants**

@@ -6,15 +6,20 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	contract "github.com/quotacore/quotacore/api"
-	"github.com/quotacore/quotacore/internal/envelope"
 )
 
 func (s *Service) listFeatures(w http.ResponseWriter, r *http.Request) {
-	l, ok := s.startList(w, r, "features", nil)
+	var kind string
+	l, ok := s.startList(w, r, "features", func(q *query) []string {
+		// The values are the FeatureKind enum's, which are the database's
+		// (IP-17 DoD 6).
+		kind = q.str("kind", nil, string(contract.FeatureKindMetered), string(contract.FeatureKindBoolean))
+		return []string{kind}
+	})
 	if !ok {
 		return
 	}
-	rows, err := s.store.ListFeatures(r.Context(), l.page)
+	rows, err := s.store.ListFeatures(r.Context(), l.page, kind)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -51,8 +56,9 @@ func (s *Service) getFeature(w http.ResponseWriter, r *http.Request) {
 	respond(w, r, http.StatusOK, &f)
 }
 
-// createFeature creates a metered feature. A boolean feature is v0.2's (F-5),
-// and is answered 501 with the release it arrives in.
+// createFeature creates a feature, metered unless kind says boolean. The kind
+// is fixed here: no route changes it, so a boolean feature never has a
+// metered assignment to conflict with (F-5, DR-050).
 func (s *Service) createFeature(w http.ResponseWriter, r *http.Request) {
 	b, err := readBody(r, "feature_key", "name", "unit", "description", "kind")
 	if err != nil {
@@ -71,12 +77,11 @@ func (s *Service) createFeature(w http.ResponseWriter, r *http.Request) {
 		problem(w, r, p)
 		return
 	}
-	if kind == "boolean" {
-		envelope.Write(w, r, envelope.Error(contract.ErrorCodeNotImplemented, "boolean features arrive in v0.2").
-			With("available_in", "v0.2"))
-		return
+	if !given {
+		kind = string(contract.FeatureKindMetered)
 	}
-	f, err := s.store.CreateFeature(r.Context(), actor(r), NewFeature{Key: key, Name: name, Unit: unit, Description: desc})
+	f, err := s.store.CreateFeature(r.Context(), actor(r), NewFeature{Key: key, Name: name, Unit: unit, Description: desc,
+		Kind: kind})
 	if err != nil {
 		s.fail(w, r, err)
 		return

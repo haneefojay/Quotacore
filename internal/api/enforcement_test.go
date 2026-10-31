@@ -187,6 +187,10 @@ func TestErrorsTotalCodesAreTheCatalogue(t *testing.T) {
 		enum[string(c)] = true
 	}
 	catalogue := catalogueCodes(t)
+	// not_implemented is reserved: no endpoint answers it, so no series
+	// carries it (Q-34).
+	delete(catalogue, "not_implemented")
+	delete(enum, "not_implemented")
 	compare := func(aName string, a map[string]bool, bName string, b map[string]bool) {
 		for c := range a {
 			if !b[c] {
@@ -536,7 +540,7 @@ func TestScriptOutcomesBecomeResponses(t *testing.T) {
 	if string(ja) != string(jb) {
 		t.Errorf("a replay differs beyond replayed:\n%s\n%s", ja, jb)
 	}
-	if a.Consumed != 100 || a.Balance != 40 || time.Time(a.CycleEnd.Value) != windowEnd {
+	if a.Consumed != 100 || a.Balance.Value != 40 || time.Time(a.CycleEnd.Value) != windowEnd {
 		t.Errorf("consume body = %+v", a)
 	}
 
@@ -634,10 +638,10 @@ func TestBalanceReportsTheStoredValues(t *testing.T) {
 		t.Fatalf("entries = %+v", got.Entries)
 	}
 	never, monthly := got.Entries[0], got.Entries[1]
-	if !never.CycleStart.Null || !never.CycleEnd.Null || never.Consumed != 0 {
+	if !never.CycleStart.Null || !never.CycleEnd.Null || never.Consumed.Value != 0 {
 		t.Errorf("never entry = %+v, want both ends null", never)
 	}
-	if monthly.Consumed != 350 || monthly.Balance != 700 || monthly.Bonus != 50 {
+	if monthly.Consumed.Value != 350 || monthly.Balance.Value != 700 || monthly.Bonus.Value != 50 {
 		t.Errorf("monthly entry = %+v, want consumed = 1000 + 50 - 700", monthly)
 	}
 	if !strings.Contains(string(r.Body), `"cycle_end":"2026-11-01T00:00:00Z"`) {

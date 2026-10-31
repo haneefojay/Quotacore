@@ -357,7 +357,13 @@ else {
     # The matrix abbreviates with "as `consume`, plus ...", where the token names
     # the endpoint whose row is being reused rather than a code.
     $endpointShorthand = @('consume', 'refund', 'check', 'balance')
+    # A reserved code is catalogued and raised by no route of this build. Codes
+    # are retired only in a major version, so one whose last surface shipped
+    # stays, named here and in its catalogue row (Q-34). The list is the whole
+    # exemption, so a code that drops out of the matrix by accident still fails.
+    $reservedCodes = @('not_implemented')
     foreach ($c in ($catStatus.Keys | Sort-Object)) {
+        if ($reservedCodes -contains $c) { continue }
         if (-not $inMatrix.Contains($c)) {
             Add-Finding 'F1' "$c is in the catalogue as $($catStatus[$c]) but no endpoint row can return it, so the code is unreachable"
         }

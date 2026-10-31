@@ -192,11 +192,12 @@ func scanFeature(r rowScanner) (api.Feature, error) {
 	return f, nil
 }
 
-func (a *Admin) ListFeatures(ctx context.Context, p admin.Page) ([]api.Feature, error) {
+func (a *Admin) ListFeatures(ctx context.Context, p admin.Page, kind string) ([]api.Feature, error) {
 	t, tie := after(p)
 	rows, err := a.db.QueryContext(ctx, `SELECT `+featureRow+` FROM features
- WHERE $1::timestamptz IS NULL OR (created_at, id) < ($1, $2::uuid)
- ORDER BY created_at DESC, id DESC LIMIT $3`, t, tie, p.Limit+1)
+ WHERE ($1::timestamptz IS NULL OR (created_at, id) < ($1, $2::uuid))
+   AND ($4 = '' OR kind::text = $4)
+ ORDER BY created_at DESC, id DESC LIMIT $3`, t, tie, p.Limit+1, kind)
 	if err != nil {
 		return nil, fmt.Errorf("list features: %w", err)
 	}
@@ -221,8 +222,12 @@ func getFeature(ctx context.Context, q querier, key, lock string) (api.Feature, 
 func (a *Admin) CreateFeature(ctx context.Context, actor admin.Actor, in admin.NewFeature) (api.Feature, error) {
 	var out api.Feature
 	err := a.tx(ctx, func(tx *sql.Tx) error {
-		f, err := scanFeature(tx.QueryRowContext(ctx, `INSERT INTO features (key, name, unit, description)
- VALUES ($1, $2, $3, $4) RETURNING `+featureRow, in.Key, in.Name, in.Unit, in.Description))
+		kind := in.Kind
+		if kind == "" {
+			kind = "metered"
+		}
+		f, err := scanFeature(tx.QueryRowContext(ctx, `INSERT INTO features (key, name, unit, description, kind)
+ VALUES ($1, $2, $3, $4, $5::feature_kind) RETURNING `+featureRow, in.Key, in.Name, in.Unit, in.Description, kind))
 		if err != nil {
 			return Classify(OpWrite, err)
 		}
@@ -418,9 +423,9 @@ func (a *Admin) CreatePlan(ctx context.Context, actor admin.Actor, in admin.NewP
 		for i, e := range in.Entitlements {
 			field := "entitlements[" + strconv.Itoa(i) + "].feature_key"
 			var (
-				featureID, state string
+				featureID, state, kind string
 			)
-			err := tx.QueryRowContext(ctx, `SELECT id, state FROM features WHERE key = $1 FOR SHARE`, e.Feature).Scan(&featureID, &state)
+			err := tx.QueryRowContext(ctx, `SELECT id, state, kind FROM features WHERE key = $1 FOR SHARE`, e.Feature).Scan(&featureID, &state, &kind)
 			if errors.Is(err, sql.ErrNoRows) {
 				return &Error{Code: api.ErrorCodeValidationFailed, Field: field}
 			}
@@ -429,6 +434,9 @@ func (a *Admin) CreatePlan(ctx context.Context, actor admin.Actor, in admin.NewP
 			}
 			if state == "archived" {
 				return &Error{Code: api.ErrorCodeValidationFailed, Field: field}
+			}
+			if err := entitlementKind(kind, e, i); err != nil {
+				return err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO plan_entitlements (plan_id, feature_id, limit_value, interval)
  VALUES ($1, $2, $3, $4)`, id, featureID, e.Limit, e.Interval); err != nil {
@@ -615,7 +623,7 @@ func (a *Admin) CreateTenant(ctx context.Context, actor admin.Actor, in admin.Ne
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT f.key, e.limit_value, e.interval
   FROM plan_entitlements e JOIN features f ON f.id = e.feature_id
- WHERE e.plan_id = $1 AND f.state = 'active' ORDER BY f.key`, planID)
+ WHERE e.plan_id = $1 AND f.state = 'active' AND e.limit_value IS NOT NULL ORDER BY f.key`, planID)
 		if err != nil {
 			return Classify(OpWrite, err)
 		}
@@ -879,4 +887,21 @@ func collect[T any](rows *sql.Rows, scan func(rowScanner) (T, error)) ([]T, erro
 		return nil, err
 	}
 	return out, nil
+}
+
+// entitlementKind refuses an entitlement whose shape is not its feature's
+// kind: a boolean feature takes no limit and no interval, and a metered one
+// takes both (DR-050). A value supplied where none belongs is refused rather
+// than ignored, naming the field, which is the rule the contract's
+// PlanEntitlement states and the schema alone cannot (IP-17 DoD 7).
+func entitlementKind(kind string, e admin.Entitlement, i int) error {
+	prefix := "entitlements[" + strconv.Itoa(i) + "]."
+	boolean := kind == "boolean"
+	switch {
+	case boolean && e.Limit != nil, !boolean && e.Limit == nil:
+		return &Error{Code: api.ErrorCodeValidationFailed, Field: prefix + "limit"}
+	case boolean && e.Interval != nil, !boolean && e.Interval == nil:
+		return &Error{Code: api.ErrorCodeValidationFailed, Field: prefix + "reset_interval"}
+	}
+	return nil
 }

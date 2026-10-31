@@ -41,7 +41,7 @@ illegal value cannot be written even by a bug in application code.
 ```sql
 CREATE TYPE tenant_state       AS ENUM ('active', 'suspended', 'deleted');
 CREATE TYPE archive_state      AS ENUM ('active', 'archived');
-CREATE TYPE feature_kind       AS ENUM ('metered', 'boolean');   -- 'boolean' unused in v0.1
+CREATE TYPE feature_kind       AS ENUM ('metered', 'boolean');   -- 'boolean' from v0.2 (DR-050)
 CREATE TYPE reset_interval     AS ENUM
   ('hourly', 'daily', 'weekly', 'monthly', 'yearly', 'never');
 CREATE TYPE key_scope          AS ENUM ('runtime', 'admin');
@@ -118,8 +118,8 @@ CREATE TABLE plan_entitlements (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   plan_id          uuid NOT NULL REFERENCES plans(id) ON DELETE RESTRICT,
   feature_id       uuid NOT NULL REFERENCES features(id) ON DELETE RESTRICT,
-  limit_value      bigint NOT NULL,
-  interval         reset_interval NOT NULL,
+  limit_value      bigint,                             -- null for a boolean feature
+  interval         reset_interval,                     -- null for a boolean feature
   UNIQUE (plan_id, feature_id),                       -- INV-E2
   CONSTRAINT plan_entitlements_limit_nonneg CHECK (limit_value >= 0),
   -- Lua 5.1 numbers are doubles: above 2^53-1 integer arithmetic stops being
@@ -127,7 +127,9 @@ CREATE TABLE plan_entitlements (
   -- script that enforces it. Bounded here so the database, the API and the
   -- script all reject the same values. See security-model.md section 6.
   CONSTRAINT plan_entitlements_limit_range
-    CHECK (limit_value <= 9007199254740991)
+    CHECK (limit_value <= 9007199254740991),
+  CONSTRAINT plan_entitlements_limit_pair
+    CHECK ((limit_value IS NULL) = (interval IS NULL))
 );
 
 CREATE INDEX plan_entitlements_plan_idx    ON plan_entitlements (plan_id);
@@ -146,6 +148,15 @@ system that silently rounds a balance is worse than one that refuses the value.
 
 `ON DELETE RESTRICT` makes a referenced plan or feature undeletable at the database level, which
 is the second line of defence behind the `plan_in_use` and `feature_in_use` errors (DR-016).
+
+> **Amended 2026-10-31 (`IP-17`) — a boolean entitlement has no limit and no interval.** A boolean
+> feature is an inclusion with no counter (DR-050), so its row holds `null` for both, and
+> `plan_entitlements_limit_pair` keeps the two null together. Which kind of feature a null pair
+> belongs to is a rule across two tables, which a `CHECK` cannot express; `internal/db` reads the
+> feature's `kind` in the transaction that writes the row and refuses a mismatch with
+> `400 validation_failed` naming the field. A boolean entitlement is never pinned
+> (section 2.10), never materialised as a balance hash (section 3.1) and never written to the
+> ledger, because it has no cadence, no balance and no delta.
 
 ### 2.4 Tenants
 
@@ -640,6 +651,12 @@ multi-key script is single-slot (ADR-0002, A-11).
 | `qc:cfg:version` | string | monotonically increasing configuration version | none |
 | `qc:cfg:cursor_key` | string | the 32-byte key that signs admin list cursors, created once with `SET NX` so every instance signs alike (`IP-09`) | none |
 | `qc:admin:cnf:<token>` | hash | `plan_id`, `resource_version`, `affected_tenants`, `reason_hash` for a pending `apply-now` confirmation. `reason_hash` is the SHA-256 of the request's `reason`, so the reason itself never reaches the fast store; the token is read and deleted in one transaction, which is what makes it single-use (`IP-10`) | `QUOTACORE_CONFIRMATION_TTL` |
+
+A boolean entitlement has no key of its own (DR-050, amended 2026-10-31 by `IP-17`): it has no
+balance hash, and a `consume` against it writes only its idempotency record, with the verdict
+`current` and the six balance fields empty. ADR-0002's sketch of a `:f:` string for a boolean
+entitlement was not adopted; inclusion is configuration, read from the snapshot, and `:f:` stays the
+rolling-window key above.
 
 There is deliberately **no** `qc:idem:fingerprint:<key>` key. The fingerprint is a field of the
 per-tenant idempotency record, which is what scopes it: a key that was not scoped to a tenant

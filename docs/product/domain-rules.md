@@ -115,6 +115,26 @@ because you are on Free" and "your Free plan includes zero of this" are differen
 messages.
 *Verified by:* T-08, and the `Endpoint × error matrix` contract test for the `403 feature_not_in_plan` mapping.
 
+### DR-050 — A boolean entitlement is an inclusion with no counter
+A feature whose `kind` is `boolean` is included in a plan or absent from it, and nothing else. An
+included boolean entitlement allows every `check` and every `consume` of `0` or `1`; it has no
+balance, no limit, no bonus, no cycle and no exhaustion, and the API reports those as `null` with
+`kind: boolean`. A larger amount, any `refund`, and an administrative `grant`, `set`,
+`force-rollover` or override against it are refused with `409 feature_not_metered`, which names the
+mismatch rather than reporting units that were never counted. An absent boolean feature is
+`403 feature_not_in_plan` (DR-012), exactly as an absent metered one. The entitlement holds no limit
+and no interval, is never pinned and is never materialised as a balance hash, so DR-045 does not
+apply to it; its inclusion is read from the plan as it stands, so removing it from the plan removes
+it at once (UC-02). A `consume` against it records an idempotency record, so a retry replays and a
+reused key is `idempotency_key_reuse` (DR-027, DR-028), and it writes no ledger row, because it has
+no delta (DR-042, Q-33). A feature's kind is chosen when it is created and never changes (F-5).
+*Rationale:* "not part of this plan" and "part of this plan, with none left" are different product
+messages (DR-012), and a limit of infinity would collapse inclusion into exhaustion's arithmetic.
+*Consequence:* a boolean check costs the round trip a metered check costs, deliberately, so a
+boolean check fails with `503` exactly when a metered one does and a client's fail-open or
+fail-closed choice (DR-037) behaves the same for both kinds.
+*Verified by:* T-16, and the `Endpoint × error matrix` contract test for the `409 feature_not_metered` mapping.
+
 ### DR-013 — Plan assignment change is a hard reset
 Assigning a tenant to a different plan applies the new plan's limits immediately and sets the
 tenant's anchor to the current instant, starting a fresh cycle.

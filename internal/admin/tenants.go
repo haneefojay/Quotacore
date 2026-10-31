@@ -154,12 +154,16 @@ func (s *Service) open(ctx context.Context, o Opening) error {
 	}
 	openings := make([]store.Opening, 0, len(o.Entitlements))
 	for _, e := range o.Entitlements {
-		iv, err := parseInterval(e.Interval)
+		if e.Limit == nil || e.Interval == nil {
+			// A boolean entitlement has no balance to open (DR-050).
+			continue
+		}
+		iv, err := parseInterval(*e.Interval)
 		if err != nil {
 			return err
 		}
 		win := cycle.CurrentWindow(o.Anchor, iv, loc, o.Anchor)
-		openings = append(openings, store.Opening{Feature: e.Feature, Limit: e.Limit, Index: win.Index, Start: win.Start, End: win.End})
+		openings = append(openings, store.Opening{Feature: e.Feature, Limit: *e.Limit, Index: win.Index, Start: win.Start, End: win.End})
 	}
 	if err := s.data.Provision(ctx, o.TenantID, openings); err != nil {
 		return errProvision{err: err}

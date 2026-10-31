@@ -62,6 +62,12 @@ values is deliberate: a customer asking "why is my quota going up?" is answered 
 
 ### 1.2 Errors
 
+> **Amended 2026-10-31 (`IP-17`) — absent against exhausted.** The metric that tells an absent
+> entitlement from an exhausted one is `quotacore_errors_total`'s `code` label:
+> `feature_not_in_plan` and `quota_exceeded` are separate series on the same route, so no new
+> metric is added. A boolean entitlement's calls are counted in section 1.1's counters like any
+> other; `feature_not_metered` is a `4xx` the caller caused and is counted here only (DR-050).
+
 One counter per error code, plus a total:
 
 | Metric | Labels |

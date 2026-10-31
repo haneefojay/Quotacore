@@ -36,6 +36,8 @@ type Scripts interface {
 	Consume(ctx context.Context, req script.Request) (script.Outcome, error)
 	Refund(ctx context.Context, req script.Request) (script.Outcome, error)
 	Check(ctx context.Context, req script.Request) (script.Outcome, error)
+	ConsumeBoolean(ctx context.Context, req script.Request) (script.Decision, error)
+	CheckBoolean(ctx context.Context, req script.Request) (script.Decision, error)
 }
 
 // Balances reads stored balance hashes for the balance route.

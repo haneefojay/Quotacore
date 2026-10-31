@@ -169,6 +169,7 @@ var constraints = map[string]constraintRule{
 	"tenants_external_id_format":     validation("external_id"),
 	"plan_entitlements_limit_nonneg": validation("limit"),
 	"plan_entitlements_limit_range":  validation("limit"),
+	"plan_entitlements_limit_pair":   validation("limit"),
 	"tenant_overrides_limit_range":   validation("limit_value"),
 	// Both aspects null: the one constraint the store, not the schema,
 	// enforces (api-conventions.md section 7.4).

@@ -128,7 +128,7 @@ export class FakeQuotacore {
       const bal = this.#balance(body.tenant_external_id, body.feature_key);
       return {
         status: 200,
-        body: { allowed: bal >= body.amount, balance: bal, limit: this.limit, bonus: 0, requested: body.amount, cycle_end: null },
+        body: { allowed: bal >= body.amount, kind: "metered", balance: bal, limit: this.limit, bonus: 0, requested: body.amount, cycle_end: null },
       };
     }
     if (method === "GET" && path === "/v1/balance") {
@@ -161,6 +161,7 @@ export class FakeQuotacore {
     return {
       tenant_external_id: tenant,
       feature_key: feature,
+      kind: "metered",
       balance: this.#balance(tenant, feature),
       limit: this.limit,
       bonus: 0,

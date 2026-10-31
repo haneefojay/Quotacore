@@ -39,7 +39,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// The nine bodies. They are package-level constants, not files opened at
+// The eleven bodies. They are package-level constants, not files opened at
 // runtime, and a test asserts the store's copy of each is byte-identical to the
 // one named here.
 //
@@ -70,6 +70,12 @@ var rolloverSource string
 //go:embed rebuild.lua
 var rebuildSource string
 
+//go:embed consume_boolean.lua
+var consumeBooleanSource string
+
+//go:embed check_boolean.lua
+var checkBooleanSource string
+
 // Operation names one of the scripts. It is a closed set: three data-plane
 // operations, five control-plane ones and the rebuild, and no mode flag, because one script
 // per operation is what performance.md §5 requires and a mode flag inside one
@@ -88,6 +94,13 @@ const (
 	Rollover Operation = "rollover"
 
 	Rebuild Operation = "rebuild"
+
+	// ConsumeBoolean and CheckBoolean are consume and check against a boolean
+	// entitlement, which has no counter (DR-050, IP-17). They are two more
+	// operations rather than a mode of consume and check, for the same reason
+	// as the rest of the set.
+	ConsumeBoolean Operation = "consume_boolean"
+	CheckBoolean   Operation = "check_boolean"
 )
 
 // body is one embedded script together with the digest the store knows it by.
@@ -111,13 +124,17 @@ var (
 	rolloverBody = newBody(Rollover, rolloverSource)
 
 	rebuildBody = newBody(Rebuild, rebuildSource)
+
+	consumeBooleanBody = newBody(ConsumeBoolean, consumeBooleanSource)
+	checkBooleanBody   = newBody(CheckBoolean, checkBooleanSource)
 )
 
 // allBodies is every script Load puts in the store: the data plane's three
-// first, then the control plane's five, then the rebuild's.
+// first, then the control plane's five, then the rebuild's, then the two a
+// boolean entitlement runs.
 func allBodies() []body {
 	return []body{consumeBody, checkBody, refundBody, grantBody, setBody, relimitBody, reanchorBody, rolloverBody,
-		rebuildBody}
+		rebuildBody, consumeBooleanBody, checkBooleanBody}
 }
 
 func newBody(op Operation, text string) body {
@@ -125,7 +142,7 @@ func newBody(op Operation, text string) body {
 	return body{op: op, text: text, digest: hex.EncodeToString(sum[:])}
 }
 
-// Load puts the nine scripts in the store's script cache. It is called once at
+// Load puts the eleven scripts in the store's script cache. It is called once at
 // start-up and again by the runner whenever the store answers NOSCRIPT, so a
 // store that was flushed or restarted recovers without a restart of this
 // process (ADR-0002).

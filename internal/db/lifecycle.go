@@ -28,8 +28,15 @@ import (
 
 type currentEntitlement struct {
 	featureID string
-	limit     int64
-	interval  string
+	kind      string
+	limit     *int64 // nil, with interval, for a boolean feature (DR-050)
+	interval  *string
+}
+
+func sameEntitlement(was currentEntitlement, e admin.Entitlement) bool {
+	eq := func(a, b *int64) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }
+	es := func(a, b *string) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }
+	return eq(was.limit, e.Limit) && es(was.interval, e.Interval)
 }
 
 func (a *Admin) UpdatePlan(ctx context.Context, actor admin.Actor, id string, c admin.PlanChange) (api.Plan, []string, error) {
@@ -82,7 +89,7 @@ func (a *Admin) UpdatePlan(ctx context.Context, actor admin.Actor, id string, c 
 // drops the ones past it; a tenant with no pin gets the feature at its next
 // re-anchor (E-1, DR-045).
 func replaceEntitlements(ctx context.Context, tx *sql.Tx, planID string, ents []admin.Entitlement, at time.Time) error {
-	rows, err := tx.QueryContext(ctx, `SELECT f.key, e.feature_id, e.limit_value, e.interval
+	rows, err := tx.QueryContext(ctx, `SELECT f.key, e.feature_id, f.kind, e.limit_value, e.interval
   FROM plan_entitlements e JOIN features f ON f.id = e.feature_id WHERE e.plan_id = $1`, planID)
 	if err != nil {
 		return Classify(OpWrite, err)
@@ -93,7 +100,7 @@ func replaceEntitlements(ctx context.Context, tx *sql.Tx, planID string, ents []
 			key string
 			e   currentEntitlement
 		)
-		err := r.Scan(&key, &e.featureID, &e.limit, &e.interval)
+		err := r.Scan(&key, &e.featureID, &e.kind, &e.limit, &e.interval)
 		current[key] = e
 		return struct{}{}, err
 	}); err != nil {
@@ -106,7 +113,10 @@ func replaceEntitlements(ctx context.Context, tx *sql.Tx, planID string, ents []
 			// A feature already in the plan may stay in it archived: the
 			// plan is edited as one offer, and an archived feature is
 			// refused at the data plane anyway (DR-015).
-			if was.limit == e.Limit && was.interval == e.Interval {
+			if err := entitlementKind(was.kind, e, i); err != nil {
+				return err
+			}
+			if sameEntitlement(was, e) {
 				continue
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE plan_entitlements SET limit_value = $3, interval = $4
@@ -116,13 +126,16 @@ func replaceEntitlements(ctx context.Context, tx *sql.Tx, planID string, ents []
 			continue
 		}
 		field := "entitlements[" + strconv.Itoa(i) + "].feature_key"
-		var featureID, state string
-		err := tx.QueryRowContext(ctx, `SELECT id, state FROM features WHERE key = $1 FOR SHARE`, e.Feature).Scan(&featureID, &state)
+		var featureID, state, kind string
+		err := tx.QueryRowContext(ctx, `SELECT id, state, kind FROM features WHERE key = $1 FOR SHARE`, e.Feature).Scan(&featureID, &state, &kind)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && state == "archived") {
 			return &Error{Code: api.ErrorCodeValidationFailed, Field: field}
 		}
 		if err != nil {
 			return Classify(OpWrite, err)
+		}
+		if err := entitlementKind(kind, e, i); err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO plan_entitlements (plan_id, feature_id, limit_value, interval)
  VALUES ($1, $2, $3, $4)`, planID, featureID, e.Limit, e.Interval); err != nil {
@@ -144,6 +157,15 @@ func replaceEntitlements(ctx context.Context, tx *sql.Tx, planID string, ents []
 	}
 	for key, was := range current {
 		if kept[key] {
+			continue
+		}
+		// A boolean feature is never pinned, so it has nothing to retire: it
+		// leaves every tenant with the plan row (DR-050).
+		if was.limit == nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM plan_entitlements WHERE plan_id = $1 AND feature_id = $2`,
+				planID, was.featureID); err != nil {
+				return Classify(OpWrite, err)
+			}
 			continue
 		}
 		if err := retire(ctx, tx, planID, was, at); err != nil {
@@ -335,7 +357,8 @@ func (a *Admin) ApplyPlan(ctx context.Context, actor admin.Actor, id string, in 
 // repin replaces the listed tenants' pins with what their plan offers now,
 // each feature at the cadence an override sets or the plan's: the moment a
 // tenant is anchored is the moment it takes the plan's feature set and
-// cadences (D1).
+// cadences (D1). A boolean feature has no cadence and is not pinned; its
+// inclusion is read from the plan as it stands (DR-050).
 func repin(ctx context.Context, tx *sql.Tx, ids []string) error {
 	if len(ids) == 0 {
 		return nil
@@ -348,7 +371,7 @@ SELECT t.id, e.feature_id, coalesce(o.interval, e.interval)
   FROM tenants t
   JOIN plan_entitlements e ON e.plan_id = t.plan_id
   LEFT JOIN tenant_entitlement_overrides o ON o.tenant_id = t.id AND o.feature_id = e.feature_id
- WHERE t.id = ANY($1::uuid[])`, ids); err != nil {
+ WHERE t.id = ANY($1::uuid[]) AND e.interval IS NOT NULL`, ids); err != nil {
 		return Classify(OpWrite, err)
 	}
 	return nil
@@ -576,16 +599,20 @@ func (a *Admin) UpsertOverride(ctx context.Context, actor admin.Actor, id string
 		tenantID = t.ID.String()
 		// An override cannot add a feature the plan does not include, nor
 		// set one that is archived (DR-012, DR-015, INV-TE1).
-		var featureID string
-		err = tx.QueryRowContext(ctx, `SELECT f.id FROM features f
+		var featureID, kind string
+		err = tx.QueryRowContext(ctx, `SELECT f.id, f.kind FROM features f
   JOIN plan_entitlements e ON e.feature_id = f.id
   JOIN tenants t ON t.plan_id = e.plan_id
- WHERE t.id = $1 AND f.key = $2 AND f.state = 'active'`, tenantID, in.Feature).Scan(&featureID)
+ WHERE t.id = $1 AND f.key = $2 AND f.state = 'active'`, tenantID, in.Feature).Scan(&featureID, &kind)
 		if errors.Is(err, sql.ErrNoRows) {
 			return &Error{Code: api.ErrorCodeValidationFailed, Field: "feature_key"}
 		}
 		if err != nil {
 			return Classify(OpWrite, err)
+		}
+		// A boolean entitlement has no limit or cadence to override (DR-050).
+		if kind == "boolean" {
+			return &Error{Code: api.ErrorCodeFeatureNotMetered, Field: "feature_key"}
 		}
 		before, err := getOverride(ctx, tx, tenantID, in.Feature)
 		if err != nil {

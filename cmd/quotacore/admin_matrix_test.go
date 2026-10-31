@@ -234,7 +234,14 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	s.createFeature(nf)
 	s.createPlan(np, 5, "never", nf)
 	forever := asTenant(t, s.createTenant(externalID("never"), np, "UTC"))
-	watched := []string{tn.ID, tn2.ID, gone.ID, forever.ID}
+	// A tenant whose plan includes a boolean feature, which has no counter
+	// for a grant, a set, a rollover or an override to change (DR-050).
+	bf, bp := uniq("bf"), uniq("bp")
+	s.createBooleanFeature(bf)
+	mustStatus(t, s.adminDo(http.MethodPost, "/v1/admin/plans",
+		`{"plan_key":"`+bp+`","name":"P","entitlements":[{"feature_key":"`+bf+`","limit":null,"reset_interval":null}]}`), http.StatusCreated)
+	incl := asTenant(t, s.createTenant(externalID("incl"), bp, "UTC"))
+	watched := []string{tn.ID, tn2.ID, gone.ID, forever.ID, incl.ID}
 	invalidTok := "qc_admin_0123456789abcdef.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	huge := `{"name":"` + strings.Repeat("a", 70000) + `"}`
 
@@ -282,7 +289,6 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	at("feature_in_use", "DELETE /v1/admin/features/{feature_key}", adm(http.MethodDelete, fp, `{"reason":"x"}`))
 	at("feature_unit_immutable", "PATCH /v1/admin/features/{feature_key}", adm(http.MethodPatch, fp, `{"version":1,"unit":"request"}`))
 	at("resource_version_conflict", "PATCH /v1/admin/features/{feature_key}", adm(http.MethodPatch, fp, `{"version":99,"name":"N"}`))
-	at("not_implemented", "POST /v1/admin/features", adm(http.MethodPost, "/v1/admin/features", `{"feature_key":"`+uniq("bool")+`","name":"F","unit":"flag","kind":"boolean"}`))
 	// Plans.
 	at("validation_failed", "POST /v1/admin/plans", adm(http.MethodPost, "/v1/admin/plans", `{}`))
 	at("plan_not_found", "GET /v1/admin/plans/{id}", adm(http.MethodGet, "/v1/admin/plans/nothing", ""))
@@ -323,6 +329,16 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	at("reset_not_supported", "POST /v1/admin/tenants/{id}/force-rollover", adm(http.MethodPost,
 		"/v1/admin/tenants/"+forever.ID+"/force-rollover", `{"feature_key":"`+nf+`","reason":"x"}`))
 	at("tenant_deleted", "POST /v1/admin/tenants/{id}/force-rollover", adm(http.MethodPost, gp+"/force-rollover", `{"feature_key":"`+f+`","reason":"x"}`))
+	ip := "/v1/admin/tenants/" + incl.ID
+	at("feature_not_metered", "POST /v1/admin/tenants/{id}/grant", adm(http.MethodPost, ip+"/grant", `{"feature_key":"`+bf+`","amount":1,"reason":"x"}`))
+	at("feature_not_metered", "POST /v1/admin/tenants/{id}/set", adm(http.MethodPost, ip+"/set", `{"feature_key":"`+bf+`","value":1,"reason":"x"}`))
+	at("feature_not_metered", "POST /v1/admin/tenants/{id}/force-rollover", adm(http.MethodPost, ip+"/force-rollover", `{"feature_key":"`+bf+`","reason":"x"}`))
+	at("feature_not_metered", "POST /v1/admin/tenants/{id}/overrides", adm(http.MethodPost, ip+"/overrides",
+		`{"feature_key":"`+bf+`","limit_value":5,"interval":null}`))
+	// A limit supplied for a boolean entitlement is refused, not ignored
+	// (IP-17 DoD 7).
+	at("validation_failed", "POST /v1/admin/plans", adm(http.MethodPost, "/v1/admin/plans",
+		`{"plan_key":"`+uniq("bq")+`","name":"P","entitlements":[{"feature_key":"`+bf+`","limit":5,"reset_interval":null}]}`))
 	at("validation_failed", "POST /v1/admin/tenants/{id}/overrides", adm(http.MethodPost, tp+"/overrides",
 		`{"feature_key":"`+f+`","limit_value":null,"interval":null}`))
 	at("validation_failed", "POST /v1/admin/tenants/{id}/overrides", adm(http.MethodPost, tp+"/overrides",

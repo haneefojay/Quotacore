@@ -72,20 +72,38 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stored, err := s.balances.ReadBalances(r.Context(), t.ID, features)
-	if errors.Is(err, store.ErrCorruptBalance) {
-		ex.Add(slog.String("error", short(err)))
-		fail(envelope.Error(contract.ErrorCodeInternalError, "a stored balance could not be read"))
-		return
+	// A boolean entitlement has no balance hash (DR-050): its entry is its
+	// presence, so only the metered features are read, and a tenant whose
+	// asked-for features are all boolean costs no round trip at all.
+	var counted []string
+	for _, f := range features {
+		if !plan[f].Boolean {
+			counted = append(counted, f)
+		}
 	}
-	if err != nil {
-		fail(s.unavailable(ex, err))
-		return
+	var stored []store.Stored
+	if len(counted) > 0 {
+		stored, err = s.balances.ReadBalances(r.Context(), t.ID, counted)
+		if errors.Is(err, store.ErrCorruptBalance) {
+			ex.Add(slog.String("error", short(err)))
+			fail(envelope.Error(contract.ErrorCodeInternalError, "a stored balance could not be read"))
+			return
+		}
+		if err != nil {
+			fail(s.unavailable(ex, err))
+			return
+		}
 	}
 
 	entries := make([]contract.BalanceEntry, 0, len(features))
-	for i, f := range features {
-		st := stored[i]
+	read := 0
+	for _, f := range features {
+		if plan[f].Boolean {
+			entries = append(entries, booleanEntry(f))
+			continue
+		}
+		st := stored[read]
+		read++
 		if !st.Present {
 			// An archived feature's hash expires a day after its last cycle,
 			// and that is not a fault. Any other absence is DR-045's: the whole
@@ -105,10 +123,11 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 		start, end := render(st.Start, st.End, loc)
 		entries = append(entries, contract.BalanceEntry{
 			FeatureKey: contract.FeatureKey(f),
-			Balance:    contract.Amount(st.Balance),
-			Limit:      contract.Limit(st.Limit),
-			Bonus:      contract.Amount(st.Bonus),
-			Consumed:   contract.Amount(consumed),
+			Kind:       contract.FeatureKindMetered,
+			Balance:    contract.NewNilAmount(contract.Amount(st.Balance)),
+			Limit:      contract.NewNilLimit(contract.Limit(st.Limit)),
+			Bonus:      contract.NewNilAmount(contract.Amount(st.Bonus)),
+			Consumed:   contract.NewNilAmount(contract.Amount(consumed)),
 			CycleStart: start,
 			CycleEnd:   end,
 		})
@@ -118,4 +137,20 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 		TenantExternalID: contract.ExternalId(externalID),
 		Entries:          entries,
 	})
+}
+
+// booleanEntry is a boolean entitlement's balance entry: present, with every
+// counter field null, because an inclusion has no balance, no ceiling, no
+// bonus and no cycle (DR-050).
+func booleanEntry(feature string) contract.BalanceEntry {
+	return contract.BalanceEntry{
+		FeatureKey: contract.FeatureKey(feature),
+		Kind:       contract.FeatureKindBoolean,
+		Balance:    contract.NilAmount{Null: true},
+		Limit:      contract.NilLimit{Null: true},
+		Bonus:      contract.NilAmount{Null: true},
+		Consumed:   contract.NilAmount{Null: true},
+		CycleStart: contract.NilTimestamp{Null: true},
+		CycleEnd:   contract.NilTimestamp{Null: true},
+	}
 }

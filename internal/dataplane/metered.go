@@ -56,6 +56,10 @@ func (s *Service) metered(w http.ResponseWriter, r *http.Request, op kind) {
 		fail(*problem)
 		return
 	}
+	if res.Boolean {
+		s.boolean(w, r, op, in, t.ID, at, controlPlane, fail)
+		return
+	}
 	loc, err := s.location(res.Timezone)
 	if err != nil {
 		ex.Add(slog.String("error", "tenant zone does not load"))
@@ -120,9 +124,10 @@ func (s *Service) metered(w http.ResponseWriter, r *http.Request, op kind) {
 		ex.Outcome = outcome
 		envelope.JSON(w, r, http.StatusOK, &contract.CheckResponse{
 			Allowed:   out.Allowed(),
-			Balance:   contract.Amount(out.Balance),
-			Limit:     contract.Limit(out.Limit),
-			Bonus:     contract.Amount(out.Bonus),
+			Kind:      contract.FeatureKindMetered,
+			Balance:   contract.NewNilAmount(contract.Amount(out.Balance)),
+			Limit:     contract.NewNilLimit(contract.Limit(out.Limit)),
+			Bonus:     contract.NewNilAmount(contract.Amount(out.Bonus)),
 			Requested: contract.Amount(in.Amount),
 			CycleEnd:  end,
 		})
@@ -171,9 +176,10 @@ func (s *Service) metered(w http.ResponseWriter, r *http.Request, op kind) {
 		envelope.JSON(w, r, http.StatusOK, &contract.MeteredResponse{
 			TenantExternalID: contract.ExternalId(in.ExternalID),
 			FeatureKey:       contract.FeatureKey(in.FeatureKey),
-			Balance:          contract.Amount(out.Balance),
-			Limit:            contract.Limit(out.Limit),
-			Bonus:            contract.Amount(out.Bonus),
+			Kind:             contract.FeatureKindMetered,
+			Balance:          contract.NewNilAmount(contract.Amount(out.Balance)),
+			Limit:            contract.NewNilLimit(contract.Limit(out.Limit)),
+			Bonus:            contract.NewNilAmount(contract.Amount(out.Bonus)),
 			Consumed:         contract.Amount(in.Amount),
 			CycleStart:       start,
 			CycleEnd:         end,

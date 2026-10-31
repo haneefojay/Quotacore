@@ -16,6 +16,11 @@ yes<Equal<OperationArgs<"getTenant">["path"], { id: string }>>();
 yes<Equal<OperationArgs<"createFeature">["body"], components["schemas"]["FeatureCreate"]>>();
 // paginate() yields the list's element type.
 yes<Equal<ListItem<"listFeatures">, components["schemas"]["Feature"]>>();
+// A boolean entitlement's counter fields are null (DR-050), so every one is nullable, and kind
+// says which reading applies.
+yes<Equal<components["schemas"]["MeteredResponse"]["balance"], number | null>>();
+yes<Equal<components["schemas"]["BalanceEntry"]["kind"], "metered" | "boolean">>();
+yes<Equal<components["schemas"]["PlanEntitlement"]["limit"], number | null>>();
 // @ts-expect-error a required path parameter cannot be left out
 void ((a: AdminClient) => a.getTenant({}));
 

@@ -755,6 +755,10 @@ func (s *BalanceEntry) encodeFields(e *jx.Encoder) {
 		s.FeatureKey.Encode(e)
 	}
 	{
+		e.FieldStart("kind")
+		s.Kind.Encode(e)
+	}
+	{
 		e.FieldStart("balance")
 		s.Balance.Encode(e)
 	}
@@ -780,14 +784,15 @@ func (s *BalanceEntry) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfBalanceEntry = [7]string{
+var jsonFieldsNameOfBalanceEntry = [8]string{
 	0: "feature_key",
-	1: "balance",
-	2: "limit",
-	3: "bonus",
-	4: "consumed",
-	5: "cycle_start",
-	6: "cycle_end",
+	1: "kind",
+	2: "balance",
+	3: "limit",
+	4: "bonus",
+	5: "consumed",
+	6: "cycle_start",
+	7: "cycle_end",
 }
 
 // Decode decodes BalanceEntry from json.
@@ -809,8 +814,18 @@ func (s *BalanceEntry) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"feature_key\"")
 			}
-		case "balance":
+		case "kind":
 			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Kind.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"kind\"")
+			}
+		case "balance":
+			requiredBitSet[0] |= 1 << 2
 			if err := func() error {
 				if err := s.Balance.Decode(d); err != nil {
 					return err
@@ -820,7 +835,7 @@ func (s *BalanceEntry) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"balance\"")
 			}
 		case "limit":
-			requiredBitSet[0] |= 1 << 2
+			requiredBitSet[0] |= 1 << 3
 			if err := func() error {
 				if err := s.Limit.Decode(d); err != nil {
 					return err
@@ -830,7 +845,7 @@ func (s *BalanceEntry) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"limit\"")
 			}
 		case "bonus":
-			requiredBitSet[0] |= 1 << 3
+			requiredBitSet[0] |= 1 << 4
 			if err := func() error {
 				if err := s.Bonus.Decode(d); err != nil {
 					return err
@@ -840,7 +855,7 @@ func (s *BalanceEntry) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"bonus\"")
 			}
 		case "consumed":
-			requiredBitSet[0] |= 1 << 4
+			requiredBitSet[0] |= 1 << 5
 			if err := func() error {
 				if err := s.Consumed.Decode(d); err != nil {
 					return err
@@ -850,7 +865,7 @@ func (s *BalanceEntry) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"consumed\"")
 			}
 		case "cycle_start":
-			requiredBitSet[0] |= 1 << 5
+			requiredBitSet[0] |= 1 << 6
 			if err := func() error {
 				if err := s.CycleStart.Decode(d); err != nil {
 					return err
@@ -860,7 +875,7 @@ func (s *BalanceEntry) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"cycle_start\"")
 			}
 		case "cycle_end":
-			requiredBitSet[0] |= 1 << 6
+			requiredBitSet[0] |= 1 << 7
 			if err := func() error {
 				if err := s.CycleEnd.Decode(d); err != nil {
 					return err
@@ -879,7 +894,7 @@ func (s *BalanceEntry) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b01111111,
+		0b11111111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -1207,6 +1222,10 @@ func (s *CheckResponse) encodeFields(e *jx.Encoder) {
 		e.Bool(s.Allowed)
 	}
 	{
+		e.FieldStart("kind")
+		s.Kind.Encode(e)
+	}
+	{
 		e.FieldStart("balance")
 		s.Balance.Encode(e)
 	}
@@ -1228,13 +1247,14 @@ func (s *CheckResponse) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfCheckResponse = [6]string{
+var jsonFieldsNameOfCheckResponse = [7]string{
 	0: "allowed",
-	1: "balance",
-	2: "limit",
-	3: "bonus",
-	4: "requested",
-	5: "cycle_end",
+	1: "kind",
+	2: "balance",
+	3: "limit",
+	4: "bonus",
+	5: "requested",
+	6: "cycle_end",
 }
 
 // Decode decodes CheckResponse from json.
@@ -1258,8 +1278,18 @@ func (s *CheckResponse) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"allowed\"")
 			}
-		case "balance":
+		case "kind":
 			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Kind.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"kind\"")
+			}
+		case "balance":
+			requiredBitSet[0] |= 1 << 2
 			if err := func() error {
 				if err := s.Balance.Decode(d); err != nil {
 					return err
@@ -1269,7 +1299,7 @@ func (s *CheckResponse) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"balance\"")
 			}
 		case "limit":
-			requiredBitSet[0] |= 1 << 2
+			requiredBitSet[0] |= 1 << 3
 			if err := func() error {
 				if err := s.Limit.Decode(d); err != nil {
 					return err
@@ -1279,7 +1309,7 @@ func (s *CheckResponse) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"limit\"")
 			}
 		case "bonus":
-			requiredBitSet[0] |= 1 << 3
+			requiredBitSet[0] |= 1 << 4
 			if err := func() error {
 				if err := s.Bonus.Decode(d); err != nil {
 					return err
@@ -1289,7 +1319,7 @@ func (s *CheckResponse) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"bonus\"")
 			}
 		case "requested":
-			requiredBitSet[0] |= 1 << 4
+			requiredBitSet[0] |= 1 << 5
 			if err := func() error {
 				if err := s.Requested.Decode(d); err != nil {
 					return err
@@ -1299,7 +1329,7 @@ func (s *CheckResponse) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"requested\"")
 			}
 		case "cycle_end":
-			requiredBitSet[0] |= 1 << 5
+			requiredBitSet[0] |= 1 << 6
 			if err := func() error {
 				if err := s.CycleEnd.Decode(d); err != nil {
 					return err
@@ -1318,7 +1348,7 @@ func (s *CheckResponse) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b00111111,
+		0b01111111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -1749,6 +1779,8 @@ func (s *ErrorCode) Decode(d *jx.Decoder) error {
 		*s = ErrorCodeGrantExceedsCeiling
 	case ErrorCodeResetNotSupported:
 		*s = ErrorCodeResetNotSupported
+	case ErrorCodeFeatureNotMetered:
+		*s = ErrorCodeFeatureNotMetered
 	case ErrorCodeFeatureUnitImmutable:
 		*s = ErrorCodeFeatureUnitImmutable
 	case ErrorCodeResourceVersionConflict:
@@ -4527,6 +4559,10 @@ func (s *MeteredResponse) encodeFields(e *jx.Encoder) {
 		s.FeatureKey.Encode(e)
 	}
 	{
+		e.FieldStart("kind")
+		s.Kind.Encode(e)
+	}
+	{
 		e.FieldStart("balance")
 		s.Balance.Encode(e)
 	}
@@ -4556,16 +4592,17 @@ func (s *MeteredResponse) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfMeteredResponse = [9]string{
+var jsonFieldsNameOfMeteredResponse = [10]string{
 	0: "tenant_external_id",
 	1: "feature_key",
-	2: "balance",
-	3: "limit",
-	4: "bonus",
-	5: "consumed",
-	6: "cycle_start",
-	7: "cycle_end",
-	8: "replayed",
+	2: "kind",
+	3: "balance",
+	4: "limit",
+	5: "bonus",
+	6: "consumed",
+	7: "cycle_start",
+	8: "cycle_end",
+	9: "replayed",
 }
 
 // Decode decodes MeteredResponse from json.
@@ -4597,8 +4634,18 @@ func (s *MeteredResponse) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"feature_key\"")
 			}
-		case "balance":
+		case "kind":
 			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				if err := s.Kind.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"kind\"")
+			}
+		case "balance":
+			requiredBitSet[0] |= 1 << 3
 			if err := func() error {
 				if err := s.Balance.Decode(d); err != nil {
 					return err
@@ -4608,7 +4655,7 @@ func (s *MeteredResponse) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"balance\"")
 			}
 		case "limit":
-			requiredBitSet[0] |= 1 << 3
+			requiredBitSet[0] |= 1 << 4
 			if err := func() error {
 				if err := s.Limit.Decode(d); err != nil {
 					return err
@@ -4618,7 +4665,7 @@ func (s *MeteredResponse) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"limit\"")
 			}
 		case "bonus":
-			requiredBitSet[0] |= 1 << 4
+			requiredBitSet[0] |= 1 << 5
 			if err := func() error {
 				if err := s.Bonus.Decode(d); err != nil {
 					return err
@@ -4628,7 +4675,7 @@ func (s *MeteredResponse) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"bonus\"")
 			}
 		case "consumed":
-			requiredBitSet[0] |= 1 << 5
+			requiredBitSet[0] |= 1 << 6
 			if err := func() error {
 				if err := s.Consumed.Decode(d); err != nil {
 					return err
@@ -4638,7 +4685,7 @@ func (s *MeteredResponse) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"consumed\"")
 			}
 		case "cycle_start":
-			requiredBitSet[0] |= 1 << 6
+			requiredBitSet[0] |= 1 << 7
 			if err := func() error {
 				if err := s.CycleStart.Decode(d); err != nil {
 					return err
@@ -4648,7 +4695,7 @@ func (s *MeteredResponse) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"cycle_start\"")
 			}
 		case "cycle_end":
-			requiredBitSet[0] |= 1 << 7
+			requiredBitSet[1] |= 1 << 0
 			if err := func() error {
 				if err := s.CycleEnd.Decode(d); err != nil {
 					return err
@@ -4658,7 +4705,7 @@ func (s *MeteredResponse) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"cycle_end\"")
 			}
 		case "replayed":
-			requiredBitSet[1] |= 1 << 0
+			requiredBitSet[1] |= 1 << 1
 			if err := func() error {
 				v, err := d.Bool()
 				s.Replayed = bool(v)
@@ -4680,7 +4727,7 @@ func (s *MeteredResponse) Decode(d *jx.Decoder) error {
 	var failures []validate.FieldError
 	for i, mask := range [2]uint8{
 		0b11111111,
-		0b00000001,
+		0b00000011,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -4722,6 +4769,50 @@ func (s *MeteredResponse) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *MeteredResponse) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes Amount as json.
+func (o NilAmount) Encode(e *jx.Encoder) {
+	if o.Null {
+		e.Null()
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes Amount from json.
+func (o *NilAmount) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode NilAmount to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v Amount
+		o.Value = v
+		o.Null = true
+		return nil
+	}
+	o.Null = false
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s NilAmount) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NilAmount) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
