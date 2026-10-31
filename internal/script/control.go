@@ -80,7 +80,9 @@ func (r *Runner) adjust(ctx context.Context, b body, req Request, first int64) (
 	if err != nil {
 		return AdminOutcome{}, fmt.Errorf("the %s script: %w", b.op, err)
 	}
-	argv := args(Check, req)[:argCount-1]
+	// The six the control scripts read: no fingerprint, and no binding,
+	// because only an admin key reaches them (DR-053).
+	argv := args(Check, req)[:6]
 	argv[0] = strconv.FormatInt(first, 10)
 	out, err := r.control(ctx, b, key, argv)
 	r.observe(req, out.Outcome, err)

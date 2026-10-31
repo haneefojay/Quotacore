@@ -16,7 +16,7 @@ Read [roadmap-index.md](roadmap-index.md) first.
 | `IP-17` | Boolean entitlements | `IP-16` | `COMPLETE` |
 | `IP-18` | `set` and `grant` as first-class operations | `IP-17` | `COMPLETE` |
 | `IP-19` | Rolling windows | `IP-16` | `COMPLETE` |
-| `IP-20` | Per-tenant runtime keys and cap reporting | `IP-18`, `IP-19` | `NOT STARTED` |
+| `IP-20` | Per-tenant runtime keys and cap reporting | `IP-18`, `IP-19` | `COMPLETE` |
 
 `IP-19` may run in parallel with `IP-17` and `IP-18`. It depends on the same finished calendar engine
 and touches a different keyspace.
@@ -247,7 +247,8 @@ calendar engine that was proved at `IP-03` is still exactly as it was.
 
 ## IP-20 — Per-tenant runtime keys and cap reporting
 
-**Status** `BLOCKED`, gated on `IP-18` and `IP-19`.
+**Status** `COMPLETE`. Opened and closed 2026-10-31, 8 of 8 DoD items met, with item 8 read by a
+dated note.
 
 **Objective.** A runtime key that can address only its own tenant, and a balance response that says
 which resource a cap counts and what the current count is.
@@ -291,7 +292,37 @@ which resource a cap counts and what the current count is.
 8. `not_implemented` is gone from these routes on a v0.2 build, and a v0.1 build still returns it
    (501).
 
+   > **Amended 2026-10-31.** Item 8 is read as the routes raise no `not_implemented` on this
+   > build, and a v0.1 build cannot be made to issue an unbound key in place of a bound one. No
+   > v0.1 route ever answered `501` for a tenant-scoped key: v0.1.0's key create took `name`,
+   > `scope` and `expires_at` and refuses any other field, `tenant_external_id` among them, as
+   > `400 validation_failed`, which is the property item 8 exists to protect. `not_implemented`
+   > stays reserved (`Q-34`). No behaviour changes.
+
 **Exit criteria.** A customer can issue a key to a specific tenant, and that key is structurally
 incapable of reaching another tenant.
 
 **Deferred.** Customer-managed key rotation schedules, and keys with a subset of the global scopes.
+
+> **Closed 2026-10-31.** A runtime key issued with `tenant_external_id` is bound to that tenant in
+> its stored row, and every data-plane script checks the binding in a block of its own before its
+> first command, so a bypassed handler still cannot cross tenants (DR-053, new). Allocation caps
+> are marked on the feature, `allocation_cap`, and `GET /v1/balance` reports `cap` for them alone
+> (DR-054, new). T-19 in [testing-strategy.md](../architecture/testing-strategy.md) proves the
+> items. Gap 1 in [SECURITY.md](../../SECURITY.md#6-known-gaps) is closed for a bound key.
+>
+> | Item | Met by |
+> | --- | --- |
+> | 1 | `TestT19ABoundKeyReachesOneTenant`: a key bound to A on consume, refund, check and both balance reads for B, a suspended C, a deleted D and a tenant that never existed is `404 tenant_not_found` with an unknown tenant's details, and B's hash, records and ledger are unchanged; every admin route is `403 insufficient_scope`. The code is `Q-38`'s answer |
+> | 2 | `TestT19TheScriptRefusesAForeignTenant` calls the runner directly, with no handler: all eight data-plane scripts answer `foreign` and write nothing. `TestT19AScriptCallWithNoBindingFailsClosed`: a call with no binding argument is `invalid`. `TestT19TheBalanceReadRefusesAForeignTenant` for the read that runs no script. `TestTheDataPlaneScriptsShareOneBindingBlock` holds the eight copies byte-identical and ahead of any command |
+> | 3 | `TestT19ABoundKeyIsRevokedLikeAnyOther`: the next request after the revoke is `401 api_key_invalid` |
+> | 4 | `TestNoKeyIsRecoverableAfterIssuance` issues and uses a bound key beside the runtime and admin ones, and scans every column of every table, the log and the metrics |
+> | 5 | `TestT19ACapReportsWhatItCounts`: a cap, a plain metered, a boolean and a rolling feature on one tenant; `cap` is on the first alone, `resource` its unit and `count` creations less deletions, and the administrative `set` answers it too. A cap that resets and a boolean cap are `400 validation_failed`. Marking is `Q-39`'s answer |
+> | 6 | `TestT19ADeletedTenantHasNoUsableKey`: the delete revokes the bound key in its own transaction with an audit row, and it is `401` on the serving instance at once and on a second instance within one refresh; another tenant's key and an unbound key are untouched |
+> | 7 | `TestT19TheTenantIsNotALabel`: `quotacore_consume_total` has the same series with and without bound keys on two tenants, and no series carries a tenant label |
+> | 8 | The endpoint matrix test (no route provokes `not_implemented`) and `TestT19IssuingABoundKey`, whose v0.1-shaped request still issues an unbound key with `tenant_external_id: null`; read by the amendment above |
+>
+> Migration `00015` adds `api_keys.tenant_id` (runtime keys only) and `features.allocation_cap`
+> (metered only). The keys cell of the endpoint matrix gains `tenant_not_found` and
+> `tenant_deleted`; no code is added. The CLI takes `key create --tenant`, `key list --tenant` and
+> `feature create --allocation-cap`, and the TypeScript SDK is regenerated.

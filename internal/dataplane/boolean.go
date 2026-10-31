@@ -27,7 +27,7 @@ func (s *Service) boolean(w http.ResponseWriter, r *http.Request, op kind, in me
 	}
 	ctx, cancel := context.WithDeadline(r.Context(), at.Add(s.storeBudget+controlPlane))
 	defer cancel()
-	req := script.Request{TenantID: tenantID, FeatureKey: in.FeatureKey, IdempotencyKey: in.ClientKey,
+	req := script.Request{TenantID: tenantID, Binding: ex.KeyTenant, FeatureKey: in.FeatureKey, IdempotencyKey: in.ClientKey,
 		Amount: in.Amount, At: at}
 	if op == opCheck {
 		if _, err := s.scripts.CheckBoolean(ctx, req); err != nil {

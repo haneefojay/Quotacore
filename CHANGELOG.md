@@ -12,6 +12,30 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **Per-tenant runtime keys and cap reporting (`IP-20`), the last v0.2 phase.** A runtime key
+  issued with `tenant_external_id` is bound to that tenant in its stored row, and reaches no other
+  (DR-053, new). A bound key's request for any other tenant, existing, suspended, deleted or never
+  created, is `404 tenant_not_found`, the unknown tenant's answer, decided before the gate (`Q-38`,
+  new, answered). The binding is checked by the handler and again inside the store: the eight
+  data-plane scripts gain one byte-identical binding block that reads the key's tenant as ARGV[8]
+  and answers a new `foreign` decision, writing nothing, when a key it was handed is in another
+  tenant's slot; a call with no binding argument is refused as `invalid`, so it fails closed; and
+  the balance read, which runs no script, refuses at the store's edge. An admin key cannot be
+  bound. Deleting a tenant revokes its bound keys in the same transaction, each audited, and the
+  invalidation makes every instance reconcile its key cache (INV-X7). `Key` and `KeyCreated` gain
+  `tenant_external_id`, `GET /v1/admin/keys` takes `?tenant_external_id=`, and the keys cell of the
+  endpoint matrix gains `tenant_not_found` and `tenant_deleted`. A feature created with
+  `allocation_cap: true`, metered only and with entitlements that never reset, counts entities, and
+  every balance entry for it carries `cap`, its unit as `resource` and its `consumed` as `count`
+  (DR-054, new; `Q-39`, new, answered). Migration `00015` adds `api_keys.tenant_id` and
+  `features.allocation_cap`. T-19 (new) proves every cross-tenant address refused through the
+  router and through the runner directly, revocation, the plaintext scan for a bound key, the cap
+  entry beside the other kinds, a deleted tenant's key refused on a second instance within one
+  refresh, and an unchanged consume-metric cardinality. IP-20 DoD 8 is read by a dated note: no
+  v0.1 route ever answered `501` here, and v0.1's key create refuses the field as unknown. SECURITY
+  gap 1 is closed for a bound key. The CLI takes `key create --tenant`, `key list --tenant` and
+  `feature create --allocation-cap`, and the TypeScript SDK is regenerated.
+
 - **Rolling windows (`IP-19`), the third v0.2 phase.** A feature created with `kind: rolling` is
   counted against a `limit` over one of seven sliding windows, `rolling_5m` to `rolling_30d`, which
   its plan entitlement fixes in a new `window` field (DR-052, new). It has no reset interval, no

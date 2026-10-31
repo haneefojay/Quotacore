@@ -160,6 +160,13 @@ type memBalances struct {
 	err    error
 }
 
+func (m memBalances) ReadBalancesAs(_ context.Context, binding, tenant string, features []string) ([]store.Stored, error) {
+	if binding != "" && binding != tenant {
+		return nil, store.ErrForeignTenant
+	}
+	return m.ReadBalances(context.Background(), tenant, features)
+}
+
 func (m memBalances) ReadBalances(_ context.Context, _ string, features []string) ([]store.Stored, error) {
 	if m.err != nil {
 		return nil, m.err

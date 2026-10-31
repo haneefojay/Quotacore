@@ -299,6 +299,28 @@ metered one's, and the calendar engine's files, the IP-03 boundary table among t
 byte-identical to their pinned digests. A window outside the set, on a metered feature, missing
 on a rolling one, or different, is `400 invalid_window` on all three routes and writes nothing.
 
+### T-19 — A tenant key reaches one tenant
+
+```
+Given  tenants A and B, and a runtime key bound to A
+When   the key addresses B on consume, refund, check and balance
+Then   every call is 404 tenant_not_found, exactly as for a tenant that does not exist
+And    B's balance, idempotency records and ledger are unchanged
+```
+
+Assert the same for a suspended B, a deleted B and an unknown tenant, and that a bound key is
+`403 insufficient_scope` on every admin route. Call the script runner directly with B's tenant and
+A's binding, bypassing the handler, and assert every data-plane script answers the foreign
+decision and writes nothing; assert the balance read refuses at the store's edge; assert the
+binding block is byte-identical in the eight data-plane scripts and that a call with no binding
+argument is refused as invalid (DR-053). Revoke a bound key and assert its next request is
+`401 api_key_invalid` (INV-K1); delete A and assert its key is refused on the serving instance at
+once and on a second instance within one refresh (INV-X7). Issue a bound key and assert no table
+and no store key holds its plaintext (NFR-S1). Assert `quotacore_consume_total` has the same
+series with and without bound keys, and no `tenant` label (NFR-O2). Read `GET /v1/balance` for a
+tenant holding an allocation cap, a plain metered, a boolean and a rolling feature, and assert
+`cap` is on the first alone and counts creations less refunds (DR-054).
+
 ---
 
 ## 3. Property tests

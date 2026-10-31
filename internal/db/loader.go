@@ -56,7 +56,8 @@ SELECT t.id, t.external_id, t.state, t.timezone, t.anchor_at, t.version, p.id, p
                   WHERE o.tenant_id = t.id), '[]'::jsonb),
        coalesce((SELECT jsonb_agg(jsonb_build_object(
                     'feature', f.key, 'interval', n.interval, 'archived', f.state = 'archived',
-                    'limit', n.retired_limit, 'until', n.retired_until))
+                    'limit', n.retired_limit, 'until', n.retired_until,
+                    'cap', CASE WHEN f.allocation_cap THEN f.unit END))
                    FROM tenant_entitlement_pins n JOIN features f ON f.id = n.feature_id
                   WHERE n.tenant_id = t.id), '[]'::jsonb)
   FROM tenants t
@@ -72,6 +73,7 @@ type loadedRow struct {
 	Window   *int64     `json:"window"`
 	Archived bool       `json:"archived"`
 	Until    *time.Time `json:"until"`
+	Cap      *string    `json:"cap"`
 }
 
 // Load implements snapshot.Loader. A tenant that provably does not exist,
@@ -186,6 +188,9 @@ func loadTenantRow(ctx context.Context, q querier, tenantID, lock string) (*snap
 			return nil, err
 		}
 		pin := snapshot.Pin{Interval: iv, Archived: p.Archived, RetiredLimit: p.Limit}
+		if p.Cap != nil {
+			pin.Cap = *p.Cap
+		}
 		if p.Until != nil {
 			until := p.Until.UTC()
 			pin.RetiredUntil = &until

@@ -36,7 +36,7 @@ func secretOf(t *testing.T, token string) []byte {
 	return raw
 }
 
-// TestNoKeyIsRecoverableAfterIssuance is IP-09 DoD 1 (NFR-S1): once a key is
+// TestNoKeyIsRecoverableAfterIssuance is IP-09 DoD 1 and IP-20 DoD 4 (NFR-S1): once a key is
 // issued, neither the token, its encoded secret nor the secret's raw bytes is
 // in any column of any table, in the log, or in the metrics. The columns are
 // read from pg_catalog, so a column added later is covered without editing
@@ -50,6 +50,17 @@ func TestNoKeyIsRecoverableAfterIssuance(t *testing.T) {
 		// A key in use is the realistic case: last_used_at, the cache and
 		// the access log have all seen it.
 		s.do(http.MethodGet, "/v1/admin/keys", str(k, "key"), "")
+	}
+	// A tenant-scoped key is covered too (IP-20 DoD 4, DR-053), in use on
+	// its own tenant.
+	feature, plan := uniq("rec-f"), uniq("rec-p")
+	s.createFeature(feature)
+	s.createPlan(plan, 100, "daily", feature)
+	owner := str(s.createTenant(externalID("rec"), plan, "UTC"), "external_id")
+	bound := s.issueBound(uniq("rec-bound"), owner)
+	tokens = append(tokens, str(bound, "key"))
+	if r := s.consume(str(bound, "key"), feature, 1, owner, newKey()); r.Status != http.StatusOK {
+		t.Fatalf("the bound key in use: %d %s", r.Status, r.Body)
 	}
 	s.app.Keys.Flush(context.Background())
 

@@ -12,6 +12,10 @@ func (s *FeatureCreate) setDefaults() {
 		val := FeatureCreateKind("metered")
 		s.Kind.SetTo(val)
 	}
+	{
+		val := bool(false)
+		s.AllocationCap.SetTo(val)
+	}
 }
 
 // setDefaults set default value of fields.

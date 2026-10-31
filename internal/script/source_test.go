@@ -31,7 +31,66 @@ var (
 	blockClose = "-- END transition"
 	idemOpen   = "-- BEGIN idempotency"
 	idemClose  = "-- END idempotency"
+	bindOpen   = "-- BEGIN binding"
+	bindClose  = "-- END binding"
 )
+
+// withoutBinding is a script's text with its binding block removed, for the
+// checks that are about the rest of the script.
+func withoutBinding(text string) string {
+	start := strings.Index(text, bindOpen)
+	end := strings.Index(text, bindClose)
+	if start < 0 || end < start {
+		return text
+	}
+	return text[:start] + text[end+len(bindClose):]
+}
+
+// dataPlaneBodies is every script a data-plane request runs, which is every
+// script that carries the binding block (DR-053).
+func dataPlaneBodies() []body {
+	return []body{consumeBody, checkBody, refundBody, consumeBooleanBody, checkBooleanBody,
+		consumeRollingBody, checkRollingBody, refundRollingBody}
+}
+
+func TestTheDataPlaneScriptsShareOneBindingBlock(t *testing.T) {
+	// The binding is checked inside the execution, so it holds for a caller
+	// that skipped the application's own check (IP-20 DoD 2). Eight copies
+	// exist for the reason the transition block has six: Redis Lua has no
+	// include. They are byte-identical, the block comes before any command,
+	// and it names no command of its own, so it decides before anything is
+	// read or written.
+	var first string
+	for _, b := range dataPlaneBodies() {
+		if strings.Count(b.text, bindOpen) != 1 || strings.Count(b.text, bindClose) != 1 {
+			t.Fatalf("%s.lua has %d open and %d close markers for the binding block; exactly one of each is required",
+				b.op, strings.Count(b.text, bindOpen), strings.Count(b.text, bindClose))
+		}
+		start, end := strings.Index(b.text, bindOpen), strings.Index(b.text, bindClose)
+		if start > end {
+			t.Fatalf("%s.lua closes the binding block before it opens it", b.op)
+		}
+		block := b.text[start : end+len(bindClose)]
+		if strings.Contains(stripLuaComments(b.text[:start]), "redis.") || strings.Contains(stripLuaComments(block), "redis.") {
+			t.Errorf("%s.lua reaches the store before or inside its binding block; the binding must decide first", b.op)
+		}
+		if first == "" {
+			first = block
+			continue
+		}
+		if block != first {
+			t.Errorf("%s.lua has a binding block that differs from consume.lua's. The binding is one rule written "+
+				"out eight times, and a copy edited alone is a script a bound key can cross tenants through (DR-053)", b.op)
+		}
+	}
+	// The control scripts are reached by an admin key alone, which is never
+	// bound, so they carry no binding.
+	for _, b := range []body{grantBody, setBody, relimitBody} {
+		if strings.Contains(b.text, bindOpen) {
+			t.Errorf("%s.lua has a binding block; only an admin key reaches it (DR-053)", b.op)
+		}
+	}
+}
 
 // bodies returns the three embedded scripts with their operation, in the order
 // the tests below talk about them.
@@ -173,6 +232,11 @@ func TestTheScriptsReadTheArgumentsTheRunnerSends(t *testing.T) {
 	keysUse := regexp.MustCompile(`KEYS\[(\d+)\]`)
 	highest := 0
 	for _, b := range bodies() {
+		// The binding block reads ARGV[8] and checks every key it was handed
+		// in every script, a check among them; it is asserted on its own by
+		// TestTheDataPlaneScriptsShareOneBindingBlock, so the rest of the
+		// script is what is read here.
+		text := withoutBinding(b.text)
 		for _, m := range argvUse.FindAllStringSubmatch(b.text, -1) {
 			n, err := strconv.Atoi(m[1])
 			if err != nil {
@@ -181,14 +245,14 @@ func TestTheScriptsReadTheArgumentsTheRunnerSends(t *testing.T) {
 			// A check has no record to compare a fingerprint against, so reading
 			// ARGV[7] there would mean a check was trying to recognise a replay,
 			// which it cannot have and must not: it changes nothing (DR-026).
-			if b.op == Check && n > 6 {
+			if b.op == Check && n > 6 && n != 8 {
 				t.Errorf("check.lua reads ARGV[%d]; a check changes nothing and has no fingerprint", n)
 			}
 			if n > highest {
 				highest = n
 			}
 		}
-		for _, m := range keysUse.FindAllStringSubmatch(b.text, -1) {
+		for _, m := range keysUse.FindAllStringSubmatch(text, -1) {
 			switch m[1] {
 			case "1":
 			case "2":
@@ -209,7 +273,7 @@ func TestTheScriptsReadTheArgumentsTheRunnerSends(t *testing.T) {
 	}
 	for _, b := range bodies() {
 		wantSecond := b.op != Check
-		if got := strings.Contains(b.text, "KEYS[2]"); got != wantSecond {
+		if got := strings.Contains(withoutBinding(b.text), "KEYS[2]"); got != wantSecond {
 			t.Errorf("%s.lua reads a second key: %t, and a %s script should: %t", b.op, got, b.op, wantSecond)
 		}
 	}

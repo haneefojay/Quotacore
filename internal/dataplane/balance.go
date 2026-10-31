@@ -50,6 +50,10 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 		fail(*problem)
 		return
 	}
+	if problem := bound(ex, t, externalID); problem != nil {
+		fail(*problem)
+		return
+	}
 	plan := t.Features(ex.Accepted)
 	var features []string
 	if q.Has("feature_key") {
@@ -86,7 +90,11 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 	}
 	var stored []store.Stored
 	if len(counted) > 0 {
-		stored, err = s.balances.ReadBalances(r.Context(), t.ID, counted)
+		stored, err = s.balances.ReadBalancesAs(r.Context(), ex.KeyTenant, t.ID, counted)
+		if errors.Is(err, store.ErrForeignTenant) {
+			fail(foreign(externalID))
+			return
+		}
 		if errors.Is(err, store.ErrCorruptBalance) {
 			ex.Add(slog.String("error", short(err)))
 			fail(envelope.Error(contract.ErrorCodeInternalError, "a stored balance could not be read"))
@@ -106,7 +114,7 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if e := plan[f]; !e.Rolling.IsZero() {
-			out, err := s.scripts.CheckRolling(r.Context(), script.RollingRequest{TenantID: t.ID, FeatureKey: f,
+			out, err := s.scripts.CheckRolling(r.Context(), script.RollingRequest{TenantID: t.ID, Binding: ex.KeyTenant, FeatureKey: f,
 				Limit: e.Limit, Window: e.Rolling, At: ex.Accepted})
 			if err != nil {
 				fail(s.scriptError(ex, err))
@@ -134,7 +142,7 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 			consumed = 0
 		}
 		start, end := render(st.Start, st.End, loc)
-		entries = append(entries, contract.BalanceEntry{
+		entry := contract.BalanceEntry{
 			FeatureKey: contract.FeatureKey(f),
 			Kind:       contract.FeatureKindMetered,
 			Balance:    contract.NewNilAmount(contract.Amount(st.Balance)),
@@ -143,7 +151,15 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 			Consumed:   contract.NewNilAmount(contract.Amount(consumed)),
 			CycleStart: start,
 			CycleEnd:   end,
-		})
+		}
+		// An allocation cap says what it counts and how many there are now,
+		// and no other entry carries the field (DR-054).
+		if unit := plan[f].Cap; unit != "" {
+			entry.Cap = contract.NewOptAllocationCap(contract.AllocationCap{
+				Resource: contract.Unit(unit), Count: contract.Amount(consumed),
+			})
+		}
+		entries = append(entries, entry)
 	}
 	ex.Outcome = observability.OutcomeAllowed
 	envelope.JSON(w, r, http.StatusOK, &contract.BalanceResponse{

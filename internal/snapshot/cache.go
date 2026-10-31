@@ -283,6 +283,10 @@ func pinKey(pins map[string]Pin) string {
 			b.WriteString(",u")
 			b.WriteString(strconv.FormatInt(p.RetiredUntil.UnixNano(), 10))
 		}
+		if p.Cap != "" {
+			b.WriteString(",c")
+			b.WriteString(p.Cap)
+		}
 		b.WriteByte(';')
 	}
 	return b.String()

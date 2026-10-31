@@ -82,7 +82,7 @@ func TestTheBooleanConsumeSharesTheIdempotencyBlock(t *testing.T) {
 	if got := block(consumeBooleanBody.text); got == "" || got != want {
 		t.Error("consume_boolean.lua's idempotency block differs from consume.lua's (DR-027, DR-028)")
 	}
-	if strings.Contains(checkBooleanBody.text, idemOpen) || strings.Contains(checkBooleanBody.text, "KEYS[2]") {
+	if strings.Contains(checkBooleanBody.text, idemOpen) || strings.Contains(withoutBinding(checkBooleanBody.text), "KEYS[2]") {
 		t.Error("check_boolean.lua has an idempotency record; a check changes nothing (DR-026)")
 	}
 	if strings.Index(consumeBooleanBody.text, "redis.call('GET', KEYS[2])") > strings.LastIndex(consumeBooleanBody.text, "redis.call('SET'") {
@@ -107,7 +107,9 @@ func TestTheBooleanScriptsAreBounded(t *testing.T) {
 				t.Errorf("%s.lua contains %q", b.op, word)
 			}
 		}
-		if strings.Contains(code, "KEYS[1]") {
+		// The binding block compares KEYS[1]'s name with the key's tenant
+		// and reads nothing from the store (DR-053), so it is not a read.
+		if strings.Contains(stripLuaComments(withoutBinding(b.text)), "KEYS[1]") {
 			t.Errorf("%s.lua reads KEYS[1]; a boolean has no balance hash", b.op)
 		}
 		for _, m := range strings.Split(code, "redis.call('")[1:] {

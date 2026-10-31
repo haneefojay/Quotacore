@@ -72,12 +72,19 @@ CREATE TABLE features (
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
   archived_at   timestamptz,
+  allocation_cap boolean NOT NULL DEFAULT false,  -- counts entities (DR-054)
   CONSTRAINT features_key_format
     CHECK (key ~ '^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$'),
   CONSTRAINT features_unit_format
-    CHECK (unit ~ '^[a-z][a-z0-9_]{0,31}$')
+    CHECK (unit ~ '^[a-z][a-z0-9_]{0,31}$'),
+  CONSTRAINT features_allocation_cap_metered
+    CHECK (NOT allocation_cap OR kind = 'metered')
 );
 ```
+
+`allocation_cap` marks a metered feature that counts entities, such as seats or projects, and is
+fixed at creation as `kind` is (DR-054, added 2026-10-31 by `IP-20`). That its entitlements never
+reset is a rule across two tables and is enforced in `internal/db`, as the kind's shape is.
 
 `key` is immutable (INV-F3) and `unit` is immutable once an assignment exists (INV-F2). Both are
 enforced in the application layer with distinct error codes, because a database `CHECK` cannot
@@ -267,10 +274,19 @@ CREATE TABLE api_keys (
   last_used_at  timestamptz,
   created_at    timestamptz NOT NULL DEFAULT now(),
   revoked_at    timestamptz,
+  tenant_id     uuid REFERENCES tenants(id) ON DELETE RESTRICT, -- a bound runtime key (DR-053)
   UNIQUE (prefix),
-  CONSTRAINT api_keys_name_unique UNIQUE (name)
+  CONSTRAINT api_keys_name_unique UNIQUE (name),
+  CONSTRAINT api_keys_tenant_runtime_only CHECK (tenant_id IS NULL OR scope = 'runtime')
 );
+
+CREATE INDEX api_keys_tenant_id ON api_keys (tenant_id) WHERE tenant_id IS NOT NULL;
 ```
+
+`tenant_id` binds a runtime key to the one tenant it may address, and is null for a key that
+reaches every tenant (DR-053, added 2026-10-31 by `IP-20`). It is the stored row's, as `scope` is,
+never the token's, and an admin key cannot carry one. Soft-deleting the tenant revokes its bound
+keys in the same transaction (INV-X7).
 
 `prefix` is a short public string, unique, shown in audit records and in the admin list, and
 recorded in logs in place of the key. It exists so a leaked key in a support ticket can be traced
@@ -776,7 +792,7 @@ the interval is a tuned value with a metric rather than a constant.
 | INV-X4 | `cycle_index` never decreases under one anchor | The monotonic guard in the Lua transition, and the anchor being the only stored cycle state. Amended 2026-10-20 (`IP-10`): a re-anchor restarts the index at 0 (C-7) and a force-rollover can lower it (C-5); both are audited control-plane writes, and no data-plane path writes a smaller index |
 | INV-X5 | `balance <= limit + bonus` at every instant, for every key | The ceiling check inside the atomic script (DR-019) |
 | INV-X6 | No runtime key expires before its cycle could legitimately need it | A balance hash has no TTL. Amended 2026-10-20: the TTL was `window_end + 24h`, and an idle tenant could need its key after that (INV-C3) |
-| INV-X7 | A deleted tenant has no runtime keys within one refresh interval | Soft delete publishes an invalidation and the script refuses unknown or deleted tenants |
+| INV-X7 | A deleted tenant has no runtime keys within one refresh interval | Soft delete revokes every key bound to the tenant in its own transaction and publishes an invalidation, on which every instance reconciles its key cache, and the snapshot refuses a deleted tenant as unknown (DR-053; amended 2026-10-31 by `IP-20`, which gave the invariant a key to revoke) |
 | INV-X8 | Postgres and the runtime store never disagree about a *schedule*; they may transiently disagree about a *value* | Anchor is Postgres-only and the script recomputes from it, so a stale snapshot can only delay a reset, never skip or duplicate one |
 
 INV-X8 is the subtle one and it is why the split is safe. A stale configuration cannot produce a

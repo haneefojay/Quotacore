@@ -156,6 +156,8 @@ type ListKeysParams struct {
 	Cursor OptString `json:",omitempty,omitzero"`
 	// Page size. An empty page returns an empty array, never `null`.
 	Limit OptInt32 `json:",omitempty,omitzero"`
+	// Your identifier for the tenant. The customer never handles an internal `tenant_id`.
+	TenantExternalID OptExternalId `json:",omitempty,omitzero"`
 }
 
 // ListPlansParams is parameters of listPlans operation.

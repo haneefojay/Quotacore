@@ -249,7 +249,14 @@ func (s *Service) adjust(w http.ResponseWriter, r *http.Request, fields []string
 		s.events.Enqueue(ev)
 	}
 	s.publish(r, []string{tenant})
-	respond(w, r, http.StatusOK, entry(feature, out, h.loc))
+	e := entry(feature, out, h.loc)
+	if h.ent.Cap != "" {
+		// The same shape GET /v1/balance answers, so a cap says what it
+		// counts here too (DR-054).
+		consumed, _ := e.Consumed.Get()
+		e.Cap = contract.NewOptAllocationCap(contract.AllocationCap{Resource: contract.Unit(h.ent.Cap), Count: consumed})
+	}
+	respond(w, r, http.StatusOK, e)
 }
 
 func isRefusal(err error) bool {

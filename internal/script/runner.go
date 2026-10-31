@@ -97,6 +97,12 @@ type Request struct {
 	// nominal limit here would silently undo a reduction.
 	Limit int64
 	At    time.Time
+	// Binding is the internal id of the one tenant the request's key may
+	// address, or empty for a key that reaches every tenant (DR-053). The
+	// script compares it with the tenant of every key it is handed, so a
+	// caller that named another tenant is refused inside the execution,
+	// whatever the code before it did: ErrForeignTenant, and nothing written.
+	Binding string
 }
 
 // Consume debits the amount, or reports that the balance could not cover it.
@@ -220,7 +226,10 @@ func isNoScript(err error) bool {
 // source_test.go can assert one number against all three bodies, and a script
 // that reads fewer arguments than it is sent is the failure mode that is hard to
 // see rather than hard to write.
-const argCount = 7
+//
+// ARGV[8] is the binding (DR-053), read by the binding block every data-plane
+// script shares, and sent by every runner method, so it is counted here too.
+const argCount = 8
 
 // args is ARGV for all three scripts, in the order the Lua reads them. Seven
 // values, each one a number, a hex fingerprint or the empty string, none of them
@@ -245,6 +254,7 @@ func args(op Operation, req Request) []any {
 		strconv.FormatInt(req.Limit, 10),
 		strconv.FormatInt(req.At.UnixMilli(), 10),
 		fingerprint,
+		req.Binding,
 	}
 }
 
@@ -315,7 +325,7 @@ func (r *Runner) ConsumeBoolean(ctx context.Context, req Request) (Decision, err
 	// the same feature and amount would read as the same operation; a
 	// feature's kind never changes, so that pair cannot both exist.
 	argv := []any{strconv.FormatInt(req.Amount, 10), "", "", "", "", "",
-		Fingerprint(Consume, req.TenantID, req.FeatureKey, req.Amount)}
+		Fingerprint(Consume, req.TenantID, req.FeatureKey, req.Amount), req.Binding}
 	return r.include(ctx, consumeBooleanBody, []string{key, idem}, argv)
 }
 
@@ -328,7 +338,8 @@ func (r *Runner) CheckBoolean(ctx context.Context, req Request) (Decision, error
 	if err != nil {
 		return "", fmt.Errorf("the %s script: %w", CheckBoolean, err)
 	}
-	return r.include(ctx, checkBooleanBody, []string{key}, nil)
+	// Only the binding is read; the other positions keep it at ARGV[8].
+	return r.include(ctx, checkBooleanBody, []string{key}, []any{"", "", "", "", "", "", "", req.Binding})
 }
 
 // include runs one of the two boolean scripts, reloading once on NOSCRIPT as
@@ -356,6 +367,8 @@ func (r *Runner) include(ctx context.Context, b body, keys []string, argv []any)
 		return Decision(d), nil
 	case Reused:
 		return "", fmt.Errorf("the %s script: %w", b.op, ErrIdempotencyKeyReuse)
+	case Foreign:
+		return "", fmt.Errorf("the %s script: %w", b.op, ErrForeignTenant)
 	case Invalid:
 		return "", fmt.Errorf("the %s script: %w", b.op, ErrInvalidArgument)
 	}

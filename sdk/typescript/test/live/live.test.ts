@@ -43,7 +43,7 @@ describe("against a real Quotacore", { skip }, () => {
   before(async () => {
     admin = new Quotacore({ baseUrl: liveUrl!, apiKey: adminKey! });
     await admin.admin.createFeature({
-      body: { feature_key: featureKey, name: "SDK live test", unit: "tokens", description: "IP-26 live suite", kind: "metered" },
+      body: { feature_key: featureKey, name: "SDK live test", unit: "tokens", description: "IP-26 live suite", kind: "metered", allocation_cap: false },
     });
     await admin.admin.createPlan({
       body: {
@@ -119,7 +119,7 @@ describe("against a real Quotacore", { skip }, () => {
   test("DoD 7: paginate() walks a real list to exhaustion", async () => {
     const keys = Array.from({ length: 5 }, (_, i) => `sdk.page.${run}.${i}`);
     for (const k of keys) {
-      await admin.admin.createFeature({ body: { feature_key: k, name: k, unit: "calls", description: "page", kind: "metered" } });
+      await admin.admin.createFeature({ body: { feature_key: k, name: k, unit: "calls", description: "page", kind: "metered", allocation_cap: false } });
     }
     const found: string[] = [];
     let pages = 0;

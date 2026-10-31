@@ -814,6 +814,11 @@ export interface paths {
          *
          *     Scope is visible in the token itself, so a scope mismatch is not a 400-line debugging
          *     session: `qc_runtime_<prefix>.<secret>` and `qc_admin_<prefix>.<secret>`.
+         *
+         *     A runtime key may be bound to one tenant with `tenant_external_id`, and then addresses
+         *     that tenant and no other: any other tenant is `404 tenant_not_found` on every data-plane
+         *     route, decided inside the script as well as before it (DR-053). The binding is in the
+         *     stored row, not in the token, as the scope is. Deleting the tenant revokes its keys.
          */
         post: operations["createKey"];
         delete?: never;
@@ -1384,6 +1389,22 @@ export interface components {
              *     window (DR-052).
              */
             window_precision_seconds?: number;
+            /**
+             * @description Present only for an allocation-cap feature (`allocation_cap: true`), and absent on
+             *     every other entry (DR-054).
+             */
+            cap?: components["schemas"]["AllocationCap"];
+        };
+        /**
+         * @description What an allocation cap counts and how many it counts now (UC-10, DR-054). The count is the
+         *     entry's `consumed`: creations less the refunds of deletions, with any administrative `set`
+         *     showing through.
+         */
+        AllocationCap: {
+            /** @description The resource type the cap counts, which is the feature's `unit`, such as `project` or `seat`. */
+            resource: components["schemas"]["Unit"];
+            /** @description The number of that resource the tenant holds now. */
+            count: components["schemas"]["Amount"];
         };
         /**
          * @description Every feature's balance for one tenant, in one call. Paged by feature rather than by tenant,
@@ -1420,6 +1441,12 @@ export interface components {
              */
             unit: components["schemas"]["Unit"];
             kind: components["schemas"]["FeatureKind"];
+            /**
+             * @description True for a feature that counts entities rather than events, such as seats or projects
+             *     (UC-10). Fixed at creation. `GET /v1/balance` reports its resource and current count
+             *     in `cap` (DR-054).
+             */
+            allocation_cap: boolean;
             /** @description Free text for an operator reading a plan. Empty when there is nothing to say. */
             description: string;
             state: components["schemas"]["ArchiveState"];
@@ -1451,6 +1478,14 @@ export interface components {
              * @default metered
              */
             kind: components["schemas"]["FeatureKind"];
+            /**
+             * @description Optional, false by default, and fixed at creation. True marks a metered feature that
+             *     counts entities (UC-10): its plan entitlements must have `reset_interval: never`, and
+             *     `GET /v1/balance` reports its `cap` (DR-054). True on a `boolean` or `rolling` feature
+             *     is `400 validation_failed` naming this field.
+             * @default false
+             */
+            allocation_cap: boolean;
         };
         /**
          * @description A rename, or a unit correction. `feature_key` is absent by design: it is immutable always, and
@@ -2053,6 +2088,11 @@ export interface components {
             prefix: string;
             scope: components["schemas"]["KeyScope"];
             state: components["schemas"]["KeyState"];
+            /**
+             * @description The one tenant a bound runtime key can address, or null for a key that reaches every
+             *     tenant (DR-053). Fixed at issue.
+             */
+            tenant_external_id: components["schemas"]["ExternalId"] | null;
             created_at: components["schemas"]["Timestamp"];
             /**
              * @description Optional at issue time, enforced on every request. A key past this is
@@ -2078,10 +2118,16 @@ export interface components {
             name: string;
             /**
              * @description Visible in the token itself, so a scope mismatch is not a debugging session. Issuance
-             *     is an admin action and is audited, and it is a per-customer decision: a runtime key is
-             *     a credential for the whole instance.
+             *     is an admin action and is audited, and it is a per-customer decision: a runtime key
+             *     with no `tenant_external_id` is a credential for the whole instance.
              */
             scope: components["schemas"]["KeyScope"];
+            /**
+             * @description Optional, runtime keys only: the one tenant the key can address (DR-053). With
+             *     `scope: admin` it is `400 validation_failed` naming this field. An unknown tenant is
+             *     `404 tenant_not_found` and a deleted one `409 tenant_deleted`.
+             */
+            tenant_external_id?: components["schemas"]["ExternalId"];
             /** @description Optional. An expiry is a limit on a credential's blast radius. */
             expires_at?: components["schemas"]["Timestamp"];
         };
@@ -2105,6 +2151,8 @@ export interface components {
             prefix: string;
             scope: components["schemas"]["KeyScope"];
             state: components["schemas"]["KeyState"];
+            /** @description The tenant the key is bound to, or null for an unbound key (DR-053). */
+            tenant_external_id: components["schemas"]["ExternalId"] | null;
             created_at: components["schemas"]["Timestamp"];
             expires_at: components["schemas"]["Timestamp"] | null;
             /** @description The plaintext credential, in the form `qc_<scope>_<prefix>.<secret>`. Shown once. */
@@ -4041,6 +4089,8 @@ export interface operations {
                 cursor?: components["parameters"]["Cursor"];
                 /** @description Page size. An empty page returns an empty array, never `null`. */
                 limit?: components["parameters"]["Limit"];
+                /** @description Your identifier for the tenant. The customer never handles an internal `tenant_id`. */
+                tenant_external_id?: components["parameters"]["TenantExternalIdQuery"];
             };
             header?: never;
             path?: never;
@@ -4074,6 +4124,8 @@ export interface operations {
             400: components["responses"]["ErrorBadRequestPlain"];
             401: components["responses"]["ErrorUnauthorized"];
             403: components["responses"]["ErrorForbiddenScope"];
+            404: components["responses"]["ErrorTenantNotFound"];
+            409: components["responses"]["ErrorConflictTenantDeleted"];
             413: components["responses"]["ErrorPayloadTooLarge"];
             429: components["responses"]["ErrorRateLimited"];
             500: components["responses"]["ErrorInternal"];

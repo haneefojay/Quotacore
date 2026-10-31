@@ -93,6 +93,10 @@ type Pin struct {
 	Archived     bool
 	RetiredLimit *int64
 	RetiredUntil *time.Time
+	// Cap is the unit an allocation-cap feature counts, empty for any other
+	// feature (DR-054). A pinned feature is referenced, so its unit no longer
+	// changes (INV-F2).
+	Cap string
 }
 
 // activeAt reports whether the pinned feature is still the tenant's at an
@@ -118,6 +122,9 @@ type Entitlement struct {
 	Archived bool
 	Boolean  bool
 	Rolling  rolling.Window
+	// Cap is the resource an allocation cap counts, its feature's unit, and
+	// empty for every other entitlement (DR-054).
+	Cap string
 }
 
 // Anchored reports an entitlement with a balance hash on an anchored cycle: a

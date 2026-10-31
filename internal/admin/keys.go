@@ -11,11 +11,15 @@ import (
 )
 
 func (s *Service) listKeys(w http.ResponseWriter, r *http.Request) {
-	l, ok := s.startList(w, r, "api_keys", nil)
+	var tenant string
+	l, ok := s.startList(w, r, "api_keys", func(q *query) []string {
+		tenant = q.str("tenant_external_id", externalIDShape)
+		return []string{tenant}
+	})
 	if !ok {
 		return
 	}
-	rows, err := s.store.ListKeys(r.Context(), l.page)
+	rows, err := s.store.ListKeys(r.Context(), l.page, tenant)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -31,7 +35,7 @@ func (s *Service) listKeys(w http.ResponseWriter, r *http.Request) {
 // createKey mints the key here, stores only its prefix and digest, and
 // returns the plaintext in this response and nowhere else (INV-K3, ADR-0018).
 func (s *Service) createKey(w http.ResponseWriter, r *http.Request) {
-	b, err := readBody(r, "name", "scope", "expires_at")
+	b, err := readBody(r, "name", "scope", "tenant_external_id", "expires_at")
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -45,6 +49,12 @@ func (s *Service) createKey(w http.ResponseWriter, r *http.Request) {
 	scope, _ := b.str("scope", true, nil, 0, 0)
 	if scope != "" && scope != string(auth.Runtime) && scope != string(auth.Admin) {
 		b.add("scope", "must be runtime or admin")
+	}
+	// A binding is a runtime key's alone: an admin key that reached one
+	// tenant would still reach the whole configuration (DR-053).
+	tenant, _ := b.str("tenant_external_id", false, externalIDShape, 0, 0)
+	if tenant != "" && scope == string(auth.Admin) {
+		b.add("tenant_external_id", "is for a runtime key only")
 	}
 	expires, _ := b.timestamp("expires_at")
 	if expires != nil && !expires.After(accepted(r)) {
@@ -68,6 +78,7 @@ func (s *Service) createKey(w http.ResponseWriter, r *http.Request) {
 		}
 		key, err = s.store.CreateKey(r.Context(), actor(r), NewKey{
 			Name: name, Scope: auth.Scope(scope), ExpiresAt: expires, Prefix: issued.Prefix, Hash: issued.Hash,
+			TenantExternalID: tenant,
 		})
 		if err == nil || attempt == 2 || !errors.Is(err, ErrPrefixTaken) {
 			break
@@ -80,7 +91,8 @@ func (s *Service) createKey(w http.ResponseWriter, r *http.Request) {
 	s.afterKeyChange(r, issued.Prefix)
 	respond(w, r, http.StatusCreated, &contract.KeyCreated{
 		ID: key.ID, Name: key.Name, Prefix: key.Prefix, Scope: key.Scope, State: key.State,
-		CreatedAt: key.CreatedAt, ExpiresAt: key.ExpiresAt, Key: issued.Token,
+		TenantExternalID: key.TenantExternalID,
+		CreatedAt:        key.CreatedAt, ExpiresAt: key.ExpiresAt, Key: issued.Token,
 	})
 }
 

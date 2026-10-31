@@ -38,6 +38,10 @@ type Exchange struct {
 	// KeyID and KeyName are the authenticated key's id and name, which an
 	// admin route records as the actor of its audit row (DR-041).
 	KeyID, KeyName string
+	// KeyTenant is the internal id of the tenant a bound runtime key may
+	// address, or empty for a key that reaches every tenant (DR-053). Every
+	// script call and balance read the request makes carries it.
+	KeyTenant string
 
 	attrs   []slog.Attr
 	onError func(code contract.ErrorCode, endpoint string)

@@ -37,6 +37,9 @@ func newFlags(name string) *flags {
 
 func (f *flags) str(name, usage string) *string { return f.fs.String(name, "", usage) }
 
+// boolean is a flag that is set by naming it, such as --allocation-cap.
+func (f *flags) boolean(name, usage string) *bool { return f.fs.Bool(name, false, usage) }
+
 func (f *flags) need(names ...string) { f.required = append(f.required, names...) }
 
 func (f *flags) has(name string) bool { return f.set[name] }

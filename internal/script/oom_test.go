@@ -55,7 +55,8 @@ func TestAFullStoreRefusesEveryScript(t *testing.T) {
 		rdb.ConfigSet(ctx, "maxmemory", "0")
 		rdb.Del(ctx, bal, idem)
 	}()
-	args := []any{5, 0, 0, "", 0, 0, strings.Repeat("a", 32)}
+	// The eighth value is the binding (DR-053): empty, an unbound key.
+	args := []any{5, 0, 0, "", 0, 0, strings.Repeat("a", 32), ""}
 	for _, b := range allBodies() {
 		err := rdb.Eval(ctx, b.text, []string{bal, idem}, args...).Err()
 		if err == nil || !strings.HasPrefix(err.Error(), "OOM") {

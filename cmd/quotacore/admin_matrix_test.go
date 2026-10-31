@@ -88,9 +88,9 @@ func (p panicStore) boom() {
 		panic("the test's store panics")
 	}
 }
-func (p panicStore) ListKeys(ctx context.Context, pg admin.Page) ([]contract.Key, error) {
+func (p panicStore) ListKeys(ctx context.Context, pg admin.Page, tenant string) ([]contract.Key, error) {
 	p.boom()
-	return p.Store.ListKeys(ctx, pg)
+	return p.Store.ListKeys(ctx, pg, tenant)
 }
 func (p panicStore) GetFeature(ctx context.Context, k string) (contract.Feature, error) {
 	p.boom()
@@ -375,6 +375,11 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	at("validation_failed", "GET /v1/admin/audit", adm(http.MethodGet, "/v1/admin/audit?from=yesterday", ""))
 	at("validation_failed", "POST /v1/admin/keys", adm(http.MethodPost, "/v1/admin/keys", `{}`))
 	at("api_key_not_found", "DELETE /v1/admin/keys/{id}", adm(http.MethodDelete, "/v1/admin/keys/"+uuid.NewString(), ""))
+	// A bound key names a tenant that exists and is not deleted (DR-053).
+	at("tenant_not_found", "POST /v1/admin/keys", adm(http.MethodPost, "/v1/admin/keys",
+		`{"name":"`+uniq("mx-bound")+`","scope":"runtime","tenant_external_id":"`+externalID("nobody")+`"}`))
+	at("tenant_deleted", "POST /v1/admin/keys", adm(http.MethodPost, "/v1/admin/keys",
+		`{"name":"`+uniq("mx-gone")+`","scope":"runtime","tenant_external_id":"`+gone.External+`"}`))
 
 	// The fast store goes away: a list page past the first needs the cursor
 	// key, which this process has not read yet, and a new tenant needs its

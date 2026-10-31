@@ -14,6 +14,115 @@ import (
 	"github.com/ogen-go/ogen/validate"
 )
 
+// Encode implements json.Marshaler.
+func (s *AllocationCap) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *AllocationCap) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("resource")
+		s.Resource.Encode(e)
+	}
+	{
+		e.FieldStart("count")
+		s.Count.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfAllocationCap = [2]string{
+	0: "resource",
+	1: "count",
+}
+
+// Decode decodes AllocationCap from json.
+func (s *AllocationCap) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode AllocationCap to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "resource":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.Resource.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"resource\"")
+			}
+		case "count":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Count.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"count\"")
+			}
+		default:
+			return errors.Errorf("unexpected field %q", k)
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode AllocationCap")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfAllocationCap) {
+					name = jsonFieldsNameOfAllocationCap[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *AllocationCap) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *AllocationCap) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes Amount as json.
 func (s Amount) Encode(e *jx.Encoder) {
 	unwrapped := int64(s)
@@ -794,19 +903,26 @@ func (s *BalanceEntry) encodeFields(e *jx.Encoder) {
 			s.WindowPrecisionSeconds.Encode(e)
 		}
 	}
+	{
+		if s.Cap.Set {
+			e.FieldStart("cap")
+			s.Cap.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfBalanceEntry = [10]string{
-	0: "feature_key",
-	1: "kind",
-	2: "balance",
-	3: "limit",
-	4: "bonus",
-	5: "consumed",
-	6: "cycle_start",
-	7: "cycle_end",
-	8: "window",
-	9: "window_precision_seconds",
+var jsonFieldsNameOfBalanceEntry = [11]string{
+	0:  "feature_key",
+	1:  "kind",
+	2:  "balance",
+	3:  "limit",
+	4:  "bonus",
+	5:  "consumed",
+	6:  "cycle_start",
+	7:  "cycle_end",
+	8:  "window",
+	9:  "window_precision_seconds",
+	10: "cap",
 }
 
 // Decode decodes BalanceEntry from json.
@@ -917,6 +1033,16 @@ func (s *BalanceEntry) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"window_precision_seconds\"")
+			}
+		case "cap":
+			if err := func() error {
+				s.Cap.Reset()
+				if err := s.Cap.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"cap\"")
 			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
@@ -2365,6 +2491,10 @@ func (s *Feature) encodeFields(e *jx.Encoder) {
 		s.Kind.Encode(e)
 	}
 	{
+		e.FieldStart("allocation_cap")
+		e.Bool(s.AllocationCap)
+	}
+	{
 		e.FieldStart("description")
 		e.Str(s.Description)
 	}
@@ -2390,18 +2520,19 @@ func (s *Feature) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfFeature = [11]string{
+var jsonFieldsNameOfFeature = [12]string{
 	0:  "id",
 	1:  "feature_key",
 	2:  "name",
 	3:  "unit",
 	4:  "kind",
-	5:  "description",
-	6:  "state",
-	7:  "version",
-	8:  "created_at",
-	9:  "updated_at",
-	10: "archived_at",
+	5:  "allocation_cap",
+	6:  "description",
+	7:  "state",
+	8:  "version",
+	9:  "created_at",
+	10: "updated_at",
+	11: "archived_at",
 }
 
 // Decode decodes Feature from json.
@@ -2467,8 +2598,20 @@ func (s *Feature) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"kind\"")
 			}
-		case "description":
+		case "allocation_cap":
 			requiredBitSet[0] |= 1 << 5
+			if err := func() error {
+				v, err := d.Bool()
+				s.AllocationCap = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"allocation_cap\"")
+			}
+		case "description":
+			requiredBitSet[0] |= 1 << 6
 			if err := func() error {
 				v, err := d.Str()
 				s.Description = string(v)
@@ -2480,7 +2623,7 @@ func (s *Feature) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"description\"")
 			}
 		case "state":
-			requiredBitSet[0] |= 1 << 6
+			requiredBitSet[0] |= 1 << 7
 			if err := func() error {
 				if err := s.State.Decode(d); err != nil {
 					return err
@@ -2490,7 +2633,7 @@ func (s *Feature) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"state\"")
 			}
 		case "version":
-			requiredBitSet[0] |= 1 << 7
+			requiredBitSet[1] |= 1 << 0
 			if err := func() error {
 				if err := s.Version.Decode(d); err != nil {
 					return err
@@ -2500,7 +2643,7 @@ func (s *Feature) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"version\"")
 			}
 		case "created_at":
-			requiredBitSet[1] |= 1 << 0
+			requiredBitSet[1] |= 1 << 1
 			if err := func() error {
 				if err := s.CreatedAt.Decode(d); err != nil {
 					return err
@@ -2510,7 +2653,7 @@ func (s *Feature) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"created_at\"")
 			}
 		case "updated_at":
-			requiredBitSet[1] |= 1 << 1
+			requiredBitSet[1] |= 1 << 2
 			if err := func() error {
 				if err := s.UpdatedAt.Decode(d); err != nil {
 					return err
@@ -2520,7 +2663,7 @@ func (s *Feature) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"updated_at\"")
 			}
 		case "archived_at":
-			requiredBitSet[1] |= 1 << 2
+			requiredBitSet[1] |= 1 << 3
 			if err := func() error {
 				if err := s.ArchivedAt.Decode(d); err != nil {
 					return err
@@ -2540,7 +2683,7 @@ func (s *Feature) Decode(d *jx.Decoder) error {
 	var failures []validate.FieldError
 	for i, mask := range [2]uint8{
 		0b11111111,
-		0b00000111,
+		0b00001111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -2619,14 +2762,21 @@ func (s *FeatureCreate) encodeFields(e *jx.Encoder) {
 			s.Kind.Encode(e)
 		}
 	}
+	{
+		if s.AllocationCap.Set {
+			e.FieldStart("allocation_cap")
+			s.AllocationCap.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfFeatureCreate = [5]string{
+var jsonFieldsNameOfFeatureCreate = [6]string{
 	0: "feature_key",
 	1: "name",
 	2: "unit",
 	3: "description",
 	4: "kind",
+	5: "allocation_cap",
 }
 
 // Decode decodes FeatureCreate from json.
@@ -2690,6 +2840,16 @@ func (s *FeatureCreate) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"kind\"")
+			}
+		case "allocation_cap":
+			if err := func() error {
+				s.AllocationCap.Reset()
+				if err := s.AllocationCap.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"allocation_cap\"")
 			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
@@ -3580,6 +3740,10 @@ func (s *Key) encodeFields(e *jx.Encoder) {
 		s.State.Encode(e)
 	}
 	{
+		e.FieldStart("tenant_external_id")
+		s.TenantExternalID.Encode(e)
+	}
+	{
 		e.FieldStart("created_at")
 		s.CreatedAt.Encode(e)
 	}
@@ -3597,16 +3761,17 @@ func (s *Key) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfKey = [9]string{
+var jsonFieldsNameOfKey = [10]string{
 	0: "id",
 	1: "name",
 	2: "prefix",
 	3: "scope",
 	4: "state",
-	5: "created_at",
-	6: "expires_at",
-	7: "last_used_at",
-	8: "revoked_at",
+	5: "tenant_external_id",
+	6: "created_at",
+	7: "expires_at",
+	8: "last_used_at",
+	9: "revoked_at",
 }
 
 // Decode decodes Key from json.
@@ -3674,8 +3839,18 @@ func (s *Key) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"state\"")
 			}
-		case "created_at":
+		case "tenant_external_id":
 			requiredBitSet[0] |= 1 << 5
+			if err := func() error {
+				if err := s.TenantExternalID.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"tenant_external_id\"")
+			}
+		case "created_at":
+			requiredBitSet[0] |= 1 << 6
 			if err := func() error {
 				if err := s.CreatedAt.Decode(d); err != nil {
 					return err
@@ -3685,7 +3860,7 @@ func (s *Key) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"created_at\"")
 			}
 		case "expires_at":
-			requiredBitSet[0] |= 1 << 6
+			requiredBitSet[0] |= 1 << 7
 			if err := func() error {
 				if err := s.ExpiresAt.Decode(d); err != nil {
 					return err
@@ -3695,7 +3870,7 @@ func (s *Key) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"expires_at\"")
 			}
 		case "last_used_at":
-			requiredBitSet[0] |= 1 << 7
+			requiredBitSet[1] |= 1 << 0
 			if err := func() error {
 				if err := s.LastUsedAt.Decode(d); err != nil {
 					return err
@@ -3705,7 +3880,7 @@ func (s *Key) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"last_used_at\"")
 			}
 		case "revoked_at":
-			requiredBitSet[1] |= 1 << 0
+			requiredBitSet[1] |= 1 << 1
 			if err := func() error {
 				if err := s.RevokedAt.Decode(d); err != nil {
 					return err
@@ -3725,7 +3900,7 @@ func (s *Key) Decode(d *jx.Decoder) error {
 	var failures []validate.FieldError
 	for i, mask := range [2]uint8{
 		0b11111111,
-		0b00000001,
+		0b00000011,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -3789,6 +3964,12 @@ func (s *KeyCreate) encodeFields(e *jx.Encoder) {
 		s.Scope.Encode(e)
 	}
 	{
+		if s.TenantExternalID.Set {
+			e.FieldStart("tenant_external_id")
+			s.TenantExternalID.Encode(e)
+		}
+	}
+	{
 		if s.ExpiresAt.Set {
 			e.FieldStart("expires_at")
 			s.ExpiresAt.Encode(e)
@@ -3796,10 +3977,11 @@ func (s *KeyCreate) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfKeyCreate = [3]string{
+var jsonFieldsNameOfKeyCreate = [4]string{
 	0: "name",
 	1: "scope",
-	2: "expires_at",
+	2: "tenant_external_id",
+	3: "expires_at",
 }
 
 // Decode decodes KeyCreate from json.
@@ -3832,6 +4014,16 @@ func (s *KeyCreate) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"scope\"")
+			}
+		case "tenant_external_id":
+			if err := func() error {
+				s.TenantExternalID.Reset()
+				if err := s.TenantExternalID.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"tenant_external_id\"")
 			}
 		case "expires_at":
 			if err := func() error {
@@ -3929,6 +4121,10 @@ func (s *KeyCreated) encodeFields(e *jx.Encoder) {
 		s.State.Encode(e)
 	}
 	{
+		e.FieldStart("tenant_external_id")
+		s.TenantExternalID.Encode(e)
+	}
+	{
 		e.FieldStart("created_at")
 		s.CreatedAt.Encode(e)
 	}
@@ -3942,15 +4138,16 @@ func (s *KeyCreated) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfKeyCreated = [8]string{
+var jsonFieldsNameOfKeyCreated = [9]string{
 	0: "id",
 	1: "name",
 	2: "prefix",
 	3: "scope",
 	4: "state",
-	5: "created_at",
-	6: "expires_at",
-	7: "key",
+	5: "tenant_external_id",
+	6: "created_at",
+	7: "expires_at",
+	8: "key",
 }
 
 // Decode decodes KeyCreated from json.
@@ -3958,7 +4155,7 @@ func (s *KeyCreated) Decode(d *jx.Decoder) error {
 	if s == nil {
 		return errors.New("invalid: unable to decode KeyCreated to nil")
 	}
-	var requiredBitSet [1]uint8
+	var requiredBitSet [2]uint8
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
@@ -4018,8 +4215,18 @@ func (s *KeyCreated) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"state\"")
 			}
-		case "created_at":
+		case "tenant_external_id":
 			requiredBitSet[0] |= 1 << 5
+			if err := func() error {
+				if err := s.TenantExternalID.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"tenant_external_id\"")
+			}
+		case "created_at":
+			requiredBitSet[0] |= 1 << 6
 			if err := func() error {
 				if err := s.CreatedAt.Decode(d); err != nil {
 					return err
@@ -4029,7 +4236,7 @@ func (s *KeyCreated) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"created_at\"")
 			}
 		case "expires_at":
-			requiredBitSet[0] |= 1 << 6
+			requiredBitSet[0] |= 1 << 7
 			if err := func() error {
 				if err := s.ExpiresAt.Decode(d); err != nil {
 					return err
@@ -4039,7 +4246,7 @@ func (s *KeyCreated) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"expires_at\"")
 			}
 		case "key":
-			requiredBitSet[0] |= 1 << 7
+			requiredBitSet[1] |= 1 << 0
 			if err := func() error {
 				v, err := d.Str()
 				s.Key = string(v)
@@ -4059,8 +4266,9 @@ func (s *KeyCreated) Decode(d *jx.Decoder) error {
 	}
 	// Validate required fields.
 	var failures []validate.FieldError
-	for i, mask := range [1]uint8{
+	for i, mask := range [2]uint8{
 		0b11111111,
+		0b00000001,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -4967,6 +5175,50 @@ func (s *NilAuditEntryBefore) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes ExternalId as json.
+func (o NilExternalId) Encode(e *jx.Encoder) {
+	if o.Null {
+		e.Null()
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes ExternalId from json.
+func (o *NilExternalId) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode NilExternalId to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v ExternalId
+		o.Value = v
+		o.Null = true
+		return nil
+	}
+	o.Null = false
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s NilExternalId) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NilExternalId) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes float64 as json.
 func (o NilFloat64) Encode(e *jx.Encoder) {
 	if o.Null {
@@ -5383,6 +5635,74 @@ func (s *OpenAPIOK) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes AllocationCap as json.
+func (o OptAllocationCap) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes AllocationCap from json.
+func (o *OptAllocationCap) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptAllocationCap to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptAllocationCap) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptAllocationCap) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes bool as json.
+func (o OptBool) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Bool(bool(o.Value))
+}
+
+// Decode decodes bool from json.
+func (o *OptBool) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptBool to nil")
+	}
+	o.Set = true
+	v, err := d.Bool()
+	if err != nil {
+		return err
+	}
+	o.Value = bool(v)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptBool) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptBool) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes ErrorDetails as json.
 func (o OptErrorDetails) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -5413,6 +5733,39 @@ func (s OptErrorDetails) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptErrorDetails) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ExternalId as json.
+func (o OptExternalId) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes ExternalId from json.
+func (o *OptExternalId) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptExternalId to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptExternalId) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptExternalId) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

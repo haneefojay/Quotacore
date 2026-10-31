@@ -31,6 +31,21 @@ type Stored struct {
 // or a hand edit, and the read fails closed.
 var ErrCorruptBalance = errors.New("store: a balance hash is incomplete or unreadable")
 
+// ErrForeignTenant is a bound key's read of another tenant's balances
+// (DR-053). The balance route runs no script, so the binding a script checks
+// for every other data-plane route is checked here, at the store's edge,
+// before a key is built.
+var ErrForeignTenant = errors.New("store: the key is bound to another tenant")
+
+// ReadBalancesAs is ReadBalances for a request whose key is bound to the
+// tenant binding, or to none when binding is empty (DR-053).
+func (s *Store) ReadBalancesAs(ctx context.Context, binding, tenantID string, features []string) ([]Stored, error) {
+	if binding != "" && binding != tenantID {
+		return nil, ErrForeignTenant
+	}
+	return s.ReadBalances(ctx, tenantID, features)
+}
+
 // ReadBalances reads the listed features' balance hashes for one tenant in one
 // pipelined round trip of HMGETs. Every key carries the tenant's hash tag, so
 // the round trip addresses one slot. The read is bounded by the script

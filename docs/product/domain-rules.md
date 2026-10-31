@@ -165,6 +165,24 @@ keyspace that was frozen for it, and err in the direction that never refuses a p
 needs both holds a metered and a rolling feature side by side.
 *Verified by:* T-18, and the `Endpoint × error matrix` contract test for `400 invalid_window` and `409 feature_not_anchored`.
 
+### DR-054 — An allocation cap reports what it counts and how many
+A metered feature created with `allocation_cap: true` counts entities rather than events, such as
+seats or projects, and is consumed by `1` when one is created and refunded by `1` when one is
+deleted (UC-10). The flag is fixed at creation, as the kind is (F-5), and only a metered feature
+can carry it. A cap's plan entitlements have `reset_interval: never`, because a count of entities
+that reset would report entities that still exist as gone; any other interval is
+`400 validation_failed` naming `entitlements[i].reset_interval`. Every balance entry for a cap, on
+`GET /v1/balance` and on the administrative balance routes, carries `cap`: `resource`, the
+feature's unit, and `count`, the entry's `consumed`. No other entry carries the field, so its
+presence is the answer to whether a cap applies.
+*Rationale:* a counter and a cap are enforced identically, and only the operator knows which a
+feature is. Inferring it from a `never` interval would report a lifetime credit pool as a count of
+entities (Q-39).
+*Consequence:* the count is what Quotacore was told, not what the customer's application holds; a
+missed refund on a delete path shows as a count above the real one, which UC-10's drift flow
+already describes.
+*Verified by:* T-19, which reads a cap, a plain metered, a boolean and a rolling entry side by side.
+
 ### DR-013 — Plan assignment change is a hard reset
 Assigning a tenant to a different plan applies the new plan's limits immediately and sets the
 tenant's anchor to the current instant, starting a fresh cycle.
@@ -479,6 +497,29 @@ deletion is not a mechanism for undoing a deduction. An operator who needs the e
 happens to a request that is in flight when a tenant is deleted.
 *Verified by:* T-15, which races a consume against a delete and asserts that a completed consume
 stands, and FS-20 for the response an in-flight request receives when the tenant is already deleted.
+
+### DR-053 — A runtime key may be bound to one tenant, and then reaches no other
+A runtime key issued with a `tenant_external_id` is bound to that tenant. The binding is in the
+stored key row, not the token, as the scope is (ADR-0018), is fixed at issue, and cannot be given
+to an admin key, which would still reach the whole configuration (`400 validation_failed` naming
+the field). A bound key's request on any data-plane route for any other tenant, whether it exists,
+is suspended, is deleted or was never created, is `404 tenant_not_found`, exactly the answer an
+unknown tenant gets and decided before the feature gate, so the key learns nothing about another
+tenant (Q-38). The binding is checked twice: by the handler after the tenant resolves, and inside
+the store, so the guarantee does not rest on the handler having run correctly: every data-plane
+script receives the key's tenant and refuses, before its first command, a key it was handed in any
+other tenant's slot, and the balance read, which runs no script, refuses at the store's edge. A
+script call with no binding argument at all is refused as invalid, so the check fails closed. A
+bound key is revoked like any other (INV-K1). Soft-deleting a tenant revokes every active key
+bound to it in the same transaction, each audited as a revocation, so a deleted tenant has no
+usable key on the serving instance at once and on every other within one refresh (INV-X7). A key
+issued with no tenant reaches every tenant, as before.
+*Rationale:* a leaked runtime key that reaches every tenant was the first known gap in
+SECURITY.md. A binding the application checks is a binding one defect removes; a binding the
+script checks is structural.
+*Consequence:* the tenant is never a metric label for this (NFR-O2); a key's prefix already is.
+*Verified by:* T-19, which attempts every cross-tenant address through the router and through the
+script runner directly.
 
 ## Availability and failure
 

@@ -61,7 +61,7 @@ func (s *Service) rolling(w http.ResponseWriter, r *http.Request, op kind, in me
 	ex := envelope.From(r.Context())
 	ctx, cancel := context.WithDeadline(r.Context(), at.Add(s.storeBudget+controlPlane))
 	defer cancel()
-	req := script.RollingRequest{TenantID: tenantID, FeatureKey: in.FeatureKey, IdempotencyKey: in.ClientKey,
+	req := script.RollingRequest{TenantID: tenantID, Binding: ex.KeyTenant, FeatureKey: in.FeatureKey, IdempotencyKey: in.ClientKey,
 		Amount: in.Amount, Limit: res.Limit, Window: res.Rolling, At: at}
 	var (
 		out script.RollingOutcome

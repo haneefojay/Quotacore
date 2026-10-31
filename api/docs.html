@@ -1568,6 +1568,8 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>limit</code></td><td><code>query</code></td><td>no</td><td>integer (int32)</td><td><p>Page size. An empty page returns an empty array, never <code>null</code>.</p>
 </td></tr>
+<tr><td><code>tenant_external_id</code></td><td><code>query</code></td><td>no</td><td>ExternalId</td><td><p>Your identifier for the tenant. The customer never handles an internal <code>tenant_id</code>.</p>
+</td></tr>
 </table>
 <h4>Responses</h4>
 <table>
@@ -1593,6 +1595,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p><strong>Issue an API key</strong></p>
 <p>The plaintext key is in this response and nowhere else. Only a SHA-256 digest of the secret<br>and the public prefix are stored, and the digest is deliberately not indexed, because<br>indexing a verifier invites a timing-oracle design (ADR-0018).</p>
 <p>Scope is visible in the token itself, so a scope mismatch is not a 400-line debugging<br>session: <code>qc_runtime_&lt;prefix&gt;.&lt;secret&gt;</code> and <code>qc_admin_&lt;prefix&gt;.&lt;secret&gt;</code>.</p>
+<p>A runtime key may be bound to one tenant with <code>tenant_external_id</code>, and then addresses<br>that tenant and no other: any other tenant is <code>404 tenant_not_found</code> on every data-plane<br>route, decided inside the script as well as before it (DR-053). The binding is in the<br>stored row, not in the token, as the scope is. Deleting the tenant revokes its keys.</p>
 <p class="muted">Operation ID: <code>createKey</code></p>
 <h4>Authorisation</h4>
 <p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
@@ -1604,6 +1607,12 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
   &#34;name&#34;: &#34;acme-prod-deploy&#34;,
   &#34;scope&#34;: &#34;runtime&#34;
 }</code></pre>
+<h5>Example: tenant_key</h5>
+<pre><code>{
+  &#34;name&#34;: &#34;acme-prod-01-app&#34;,
+  &#34;scope&#34;: &#34;runtime&#34;,
+  &#34;tenant_external_id&#34;: &#34;acme-prod-01&#34;
+}</code></pre>
 <h4>Responses</h4>
 <table>
 <tr><th>Status</th><th>Content</th><th>Schema</th><th>Headers</th><th>Description</th></tr>
@@ -1614,6 +1623,10 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>401</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>No usable credential. <code>api_key_invalid</code> covers unknown, revoked, expired and malformed<br>keys, and there is no recovery path for any of them: rotate.</p>
 </td></tr>
 <tr><td><code>403</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A valid key with the wrong scope. <code>403</code> and not <code>404</code>, because the caller is already<br>authenticated and hiding the endpoint helps nobody (FS-18).</p>
+</td></tr>
+<tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Unknown or soft-deleted tenant. A soft-deleted tenant is treated exactly as absent, which<br>is why this is also the answer after a soft delete (T-15).</p>
+</td></tr>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The tenant is deleted, which is terminal, so nothing about it can change (T-7).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -2072,6 +2085,22 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>window_precision_seconds</code></td><td><code>integer (int64)</code></td><td>no</td><td><p>Present only for a <code>rolling</code> feature: the width of one bucket, which is the precision<br>of the window sum. A unit counts for at least the window less this and at most the<br>window (DR-052).</p>
 </td></tr>
+<tr><td><code>cap</code></td><td>—</td><td>no</td><td><p>Present only for an allocation-cap feature (<code>allocation_cap: true</code>), and absent on<br>every other entry (DR-054).</p>
+</td></tr>
+</table>
+<h3 id="schema-allocationcap">AllocationCap</h3>
+<p class="muted">Type <code>object</code></p>
+<p>What an allocation cap counts and how many it counts now (UC-10, DR-054). The count is the<br>entry&#39;s <code>consumed</code>: creations less the refunds of deletions, with any administrative <code>set</code><br>showing through.</p>
+<ul>
+<li><p><strong>Undeclared fields are rejected.</strong> A field that is not in this schema is a <code>400 validation_failed</code>.</p>
+</li>
+</ul>
+<table>
+<tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+<tr><td><code>resource</code></td><td>—</td><td>yes</td><td><p>The resource type the cap counts, which is the feature&#39;s <code>unit</code>, such as <code>project</code> or <code>seat</code>.</p>
+</td></tr>
+<tr><td><code>count</code></td><td>—</td><td>yes</td><td><p>The number of that resource the tenant holds now.</p>
+</td></tr>
 </table>
 <h3 id="schema-balanceresponse">BalanceResponse</h3>
 <p class="muted">Type <code>object</code></p>
@@ -2104,6 +2133,8 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>unit</code></td><td>—</td><td>yes</td><td><p>Immutable once the feature is referenced by an assignment or an event. Reinterpreting<br>historical amounts is not allowed, and that is what <code>feature_unit_immutable</code> is for<br>(INV-F2).</p>
 </td></tr>
 <tr><td><code>kind</code></td><td><a href="#schema-featurekind"><code>FeatureKind</code></a></td><td>yes</td><td></td></tr>
+<tr><td><code>allocation_cap</code></td><td><code>boolean</code></td><td>yes</td><td><p>True for a feature that counts entities rather than events, such as seats or projects<br>(UC-10). Fixed at creation. <code>GET /v1/balance</code> reports its resource and current count<br>in <code>cap</code> (DR-054).</p>
+</td></tr>
 <tr><td><code>description</code></td><td><code>string</code></td><td>yes</td><td><p>Free text for an operator reading a plan. Empty when there is nothing to say.</p>
 </td></tr>
 <tr><td><code>state</code></td><td><a href="#schema-archivestate"><code>ArchiveState</code></a></td><td>yes</td><td></td></tr>
@@ -2131,6 +2162,8 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>description</code></td><td><code>string</code></td><td>no</td><td><p>Optional free text. Absent and <code>&#39;&#39;</code> are the same thing, which is why it defaults to <code>&#39;&#39;</code>.</p>
 </td></tr>
 <tr><td><code>kind</code></td><td>—</td><td>no</td><td><p>Optional, <code>metered</code> by default. Fixed at creation: no route changes it, so a boolean<br>feature never has a metered assignment to conflict with (F-5, DR-050).</p>
+</td></tr>
+<tr><td><code>allocation_cap</code></td><td><code>boolean</code></td><td>no</td><td><p>Optional, false by default, and fixed at creation. True marks a metered feature that<br>counts entities (UC-10): its plan entitlements must have <code>reset_interval: never</code>, and<br><code>GET /v1/balance</code> reports its <code>cap</code> (DR-054). True on a <code>boolean</code> or <code>rolling</code> feature<br>is <code>400 validation_failed</code> naming this field.</p>
 </td></tr>
 </table>
 <h3 id="schema-featureupdate">FeatureUpdate</h3>
@@ -2663,6 +2696,8 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>scope</code></td><td><a href="#schema-keyscope"><code>KeyScope</code></a></td><td>yes</td><td></td></tr>
 <tr><td><code>state</code></td><td><a href="#schema-keystate"><code>KeyState</code></a></td><td>yes</td><td></td></tr>
+<tr><td><code>tenant_external_id</code></td><td>—</td><td>yes</td><td><p>The one tenant a bound runtime key can address, or null for a key that reaches every<br>tenant (DR-053). Fixed at issue.</p>
+</td></tr>
 <tr><td><code>created_at</code></td><td><a href="#schema-timestamp"><code>Timestamp</code></a></td><td>yes</td><td></td></tr>
 <tr><td><code>expires_at</code></td><td>—</td><td>yes</td><td><p>Optional at issue time, enforced on every request. A key past this is<br><code>401 api_key_invalid</code>.</p>
 </td></tr>
@@ -2681,7 +2716,9 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
 <tr><td><code>name</code></td><td><code>string</code></td><td>yes</td><td><p>Unique and operator-chosen. It is the <code>actor</code> on every audit row this key produces, so<br>it should say what the key is for rather than who typed it.</p>
 </td></tr>
-<tr><td><code>scope</code></td><td>—</td><td>yes</td><td><p>Visible in the token itself, so a scope mismatch is not a debugging session. Issuance<br>is an admin action and is audited, and it is a per-customer decision: a runtime key is<br>a credential for the whole instance.</p>
+<tr><td><code>scope</code></td><td>—</td><td>yes</td><td><p>Visible in the token itself, so a scope mismatch is not a debugging session. Issuance<br>is an admin action and is audited, and it is a per-customer decision: a runtime key<br>with no <code>tenant_external_id</code> is a credential for the whole instance.</p>
+</td></tr>
+<tr><td><code>tenant_external_id</code></td><td>—</td><td>no</td><td><p>Optional, runtime keys only: the one tenant the key can address (DR-053). With<br><code>scope: admin</code> it is <code>400 validation_failed</code> naming this field. An unknown tenant is<br><code>404 tenant_not_found</code> and a deleted one <code>409 tenant_deleted</code>.</p>
 </td></tr>
 <tr><td><code>expires_at</code></td><td>—</td><td>no</td><td><p>Optional. An expiry is a limit on a credential&#39;s blast radius.</p>
 </td></tr>
@@ -2704,6 +2741,8 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>scope</code></td><td><a href="#schema-keyscope"><code>KeyScope</code></a></td><td>yes</td><td></td></tr>
 <tr><td><code>state</code></td><td><a href="#schema-keystate"><code>KeyState</code></a></td><td>yes</td><td></td></tr>
+<tr><td><code>tenant_external_id</code></td><td>—</td><td>yes</td><td><p>The tenant the key is bound to, or null for an unbound key (DR-053).</p>
+</td></tr>
 <tr><td><code>created_at</code></td><td><a href="#schema-timestamp"><code>Timestamp</code></a></td><td>yes</td><td></td></tr>
 <tr><td><code>expires_at</code></td><td>—</td><td>yes</td><td></td></tr>
 <tr><td><code>key</code></td><td><code>string</code></td><td>yes</td><td><p>The plaintext credential, in the form <code>qc_&lt;scope&gt;_&lt;prefix&gt;.&lt;secret&gt;</code>. Shown once.</p>
