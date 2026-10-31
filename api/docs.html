@@ -1304,6 +1304,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p><strong>Set a balance to an exact value</strong></p>
 <p>Overwrites the current cycle&#39;s balance outright, after any rollover that is due. It is the<br>blunt instrument, and it is the right one when a migration produced a number that is<br>known to be wrong.</p>
 <p><code>value</code> is <code>0</code> to <code>limit + bonus</code>. Above that is <code>409 grant_exceeds_ceiling</code>: grant first.<br>Setting <code>0</code>, or suspending the tenant, is how to stop a tenant until its boundary; a<br>negative balance is not representable in v0.1 (Q-23).</p>
+<p>A set is also how a grant or an earlier set is reversed: there is no undo route. Set the<br>balance to the <code>before</code> the audit row records, or to the balance less the amount granted;<br>the grant&#39;s bonus stays until the boundary (DR-051, Q-35).</p>
 <p class="muted">Operation ID: <code>setTenantBalance</code></p>
 <h4>Authorisation</h4>
 <p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>

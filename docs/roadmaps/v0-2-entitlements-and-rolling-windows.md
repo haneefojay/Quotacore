@@ -14,7 +14,7 @@ Read [roadmap-index.md](roadmap-index.md) first.
 | ID | Phase | Depends on | Status |
 | --- | --- | --- | --- |
 | `IP-17` | Boolean entitlements | `IP-16` | `COMPLETE` |
-| `IP-18` | `set` and `grant` as first-class operations | `IP-17` | `BLOCKED` |
+| `IP-18` | `set` and `grant` as first-class operations | `IP-17` | `COMPLETE` |
 | `IP-19` | Rolling windows | `IP-16` | `BLOCKED` |
 | `IP-20` | Per-tenant runtime keys and cap reporting | `IP-18`, `IP-19` | `BLOCKED` |
 
@@ -96,7 +96,8 @@ out.
 
 ## IP-18 — `set` and `grant` as first-class operations
 
-**Status** `BLOCKED`, gated on `IP-17`.
+**Status** `COMPLETE`. Opened and closed 2026-10-31, 7 of 7 DoD items met, with item 3 read by a
+dated note.
 
 **Objective.** The two administrative operations that are currently available but under-specified,
 given a contract, a script, an audit record and a test.
@@ -134,11 +135,39 @@ given a contract, a script, an audit record and a test.
 7. A grant does not survive a plan change, because a plan change is a hard reset (DR-013, and the
    `Q-01` answer).
 
+   > **Amended 2026-10-31.** Item 3 is read with T-04's amendment of 2026-10-20: a grant raises the
+   > bonus with the balance, so it cannot break `balance <= limit + bonus`, and the ceiling a grant
+   > can break is the representable bound `2^53 − 1` (DR-022). The `limit + bonus` refusal is a
+   > `set` above it. Both are `409 grant_exceeds_ceiling`, decided inside the script that would
+   > apply them, and apply nothing. No behaviour changes.
+
 **Exit criteria.** An operator can correct a balance and a customer can see why, with the correction
 reconciling like any other mutation.
 
 **Deferred.** Scheduled or recurring grants, which would need a schedule the data model does not
 have.
+
+> **Closed 2026-10-31.** `IP-10` built both operations; this phase specified their reversal, made
+> their audit rows carry the whole ceiling on both sides, and proved each item by T-17 in
+> [testing-strategy.md](../architecture/testing-strategy.md).
+>
+> | Item | Met by |
+> | --- | --- |
+> | 1 | `TestT17ACorrectionReconciles`: a set down and a set up record the previous balance in the audit row and signed deltas of −350 and +500 in the ledger, an equal set records none, `balance = opening + Σ(delta)` holds and `verify-tenant` is clean |
+> | 2 | `TestT17AGrantNeverAccumulates`: grants of 30, 40 and 50 in three consecutive cycles each leave the bonus at that cycle's grant; `TestAGrantIsCycleScoped` across a real boundary |
+> | 3 | `TestT17ARefusedCorrectionChangesNothing` and its script twin: a set above `limit + bonus` and a grant past `2^53 − 1` are `409 grant_exceeds_ceiling`, and the hash, audit log and ledger are unchanged |
+> | 4 | `TestT17ACorrectionReconciles` compares the cycle index, both window fields and the tenant's anchor before and after every grant and set; `TestT17NeitherMovesTheWindow` in the script |
+> | 5 | `TestT17ACorrectionReconciles`: each audit row records balance, limit and bonus before and after, the reason and an admin key's `actor_key_id`, written in the transaction that holds the tenant's lock while the script runs. The audit `before` previously had the balance alone, and a zero limit or bonus was omitted on either side |
+> | 6 | [cli.md](../architecture/cli.md) §1 maps `grant <tenant>` to `grantTenant` and `set <tenant>` to `setTenantBalance`; `TestGrantSetAndRolloverFromTheCLI` |
+> | 7 | `TestAGrantIsCycleScoped` (its plan-change half) and `TestAPlanChangeIsAHardReset` |
+>
+> Reversal is [DR-051](../product/domain-rules.md) (new): there is no undo, and a set from the
+> audited figure is the reversal, proved by `TestT17ACorrectionIsReversedByASet`. `Q-35` asks
+> whether a grant's reversal should also take its bonus back, and is answered with its default, no.
+> A stated limit is unchanged from `IP-10`: the script runs in the fast store inside the Postgres
+> transaction that audits it, so a commit that fails after the script applied leaves a moved
+> balance with no audit row; the route answers `5xx`, logs it, and hands the ledger nothing, and
+> reconciliation reports the drift.
 
 ---
 

@@ -12,6 +12,19 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **`set` and `grant` as first-class operations (`IP-18`), the second v0.2 phase.** `IP-10` built
+  both; this phase specified what was left and proved every item. A grant or a set has no undo, and
+  is reversed by a `set` from the figure its audit row records (DR-051, new); a reversed grant keeps
+  its bonus until the boundary, which `Q-35` (new, answered with its default) records as deliberate.
+  T-17 (new) proves that a correction reconciles: grants and sets are audited once each with
+  before and after balance, limit and bonus, their reason and their admin key; the ledger carries
+  their signed deltas and nothing for an equal set; `balance = opening + Σ(delta)` holds and
+  `verify-tenant` is clean; each ledger row joins its audit row by request id; neither operation
+  moves the cycle index, the window or the anchor; a `set` above `limit + bonus` and a grant past
+  `2^53 − 1` are `409 grant_exceeds_ceiling` and change nothing; and grants in three consecutive
+  cycles never accumulate. DoD item 3 is read with T-04's 2026-10-20 amendment by a dated note.
+  The `set` operation's contract description says it is the reversal.
+
 - **Boolean entitlements (`IP-17`), the first v0.2 phase.** A feature created with `kind: boolean`
   is included in a plan or absent from it, with no counter (DR-050, new). An included one allows
   every `check` and every `consume` of `0` or `1`, answers `kind: boolean` with `null` balance,
@@ -449,6 +462,12 @@ exists, because a future implementer needs to know which statements are new.
   different `QUOTACORE_IDEMPOTENCY_TTL` — by a test on each boundary.
 
 ### Changed
+
+- **A grant's and a set's audit row records the whole ceiling on both sides (`IP-18`).** `before`
+  carried the balance and the cycle index alone, and `after` omitted a limit or bonus of zero. Both
+  sides now carry `balance`, `limit`, `bonus` and `cycle_index`, with a zero written as zero
+  (DR-041). A force-rollover's `before` is unchanged, because its prior limit is not in the
+  script's reply.
 
 - **`IP-26` DoD item 6 is read as the same request on the same key (2026-10-31).** It asked for "the
   `check` on the same key", and `check` takes no key (DR-024). The resolution with a runtime key is

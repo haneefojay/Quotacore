@@ -345,6 +345,10 @@ Append-only. There is no state machine: an event is written or it is not.
 > ([security-model.md](../architecture/security-model.md#2-trust-boundaries)). The four invariants are
 > not changed.
 
+> **Amended 2026-10-31 (`IP-18`).** U-3 and U-4 are also how a correction is reversed: there is no
+> undo, and a reversal is a further U-4 with its own reason and signed delta (DR-051), so the
+> history keeps the correction and its reversal as two rows.
+
 ---
 
 ## 10. Webhook delivery (v0.3)
