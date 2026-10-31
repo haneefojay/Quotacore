@@ -55,7 +55,7 @@ why the MVP can ship without SDKs, and it is why the API is honest about `check`
 | Capability | Detail |
 | --- | --- |
 | Boolean entitlements | Feature present or absent, with no counter. Answers `feature_not_in_plan` (DR-012) vs `quota_exceeded` distinctly (UC-02) |
-| Rolling windows | `rolling_5m` to `rolling_30d`, requested-duration lookback inside the current cycle (ADR-0008) |
+| Rolling windows | `rolling_5m` to `rolling_30d`, a `rolling` feature kind counted over a sliding lookback with no calendar cycle, which every call names (ADR-0008, DR-052). Amended 2026-10-31 by `IP-19`: "inside the current cycle" is not built, because ADR-0008 shares no cycle rule between the two cadences |
 | Mixed cadences | A boolean entitlement alongside metered entitlements in one plan, per feature |
 | Allocation cap reporting | Which resource type the cap counts, and the current count, in `GET /v1/balance` |
 | Per-tenant runtime API keys | A runtime key bound to one tenant, which cannot address another; closes gap 1 in [SECURITY.md](../../SECURITY.md#6-known-gaps) |

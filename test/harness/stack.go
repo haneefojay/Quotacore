@@ -360,7 +360,8 @@ func (s *Stack) Direct() string {
 func (s *Stack) Prime(seeded Seeded) {
 	s.T.Helper()
 	for _, tn := range seeded.Tenants {
-		body := `{"feature_key":"` + seeded.Features[0] + `","amount":1,"tenant_external_id":"` + tn + `"}`
+		body := `{"feature_key":"` + seeded.Features[0] + `","amount":1,"tenant_external_id":"` + tn + `"` +
+			windowField(seeded.Window) + `}`
 		deadline := time.Now().Add(time.Minute)
 		for {
 			status, raw := s.DoRaw(http.MethodPost, "/v1/check", seeded.Keys[0], body)

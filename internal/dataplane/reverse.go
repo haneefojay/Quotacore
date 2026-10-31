@@ -32,7 +32,8 @@ func (s *Service) Reverse(ctx context.Context, externalID, featureKey, key strin
 		return script.Outcome{}, err
 	}
 	e, held := t.Entitlement(featureKey, at)
-	if !held {
+	// Only an anchored balance has ledger rows to reverse (DR-050, DR-052).
+	if !held || !e.Anchored() {
 		return script.Outcome{}, fmt.Errorf("%w: %s", ErrNotHeld, featureKey)
 	}
 	loc, err := s.location(t.Timezone)

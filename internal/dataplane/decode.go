@@ -14,6 +14,7 @@ import (
 
 	contract "github.com/quotacore/quotacore/api"
 	"github.com/quotacore/quotacore/internal/envelope"
+	"github.com/quotacore/quotacore/internal/rolling"
 )
 
 // The contract's patterns, repeated here so the aggregating pass can name every
@@ -44,6 +45,11 @@ type metered struct {
 	ExternalID string
 	ClientKey  string
 	Metadata   json.RawMessage
+	// Window is the request's window, empty when it sent none. That it is
+	// one of the seven was checked here; that it is the one the feature's
+	// entitlement configures is checked once the feature is resolved
+	// (DR-052).
+	Window string
 }
 
 // decodeMetered reads and validates a metered request. Every problem is
@@ -100,9 +106,18 @@ func decodeMetered(r *http.Request, op kind, metadataMax int) (metered, *envelop
 	in.FeatureKey, issues = stringField(fields, "feature_key", featureKeyShape, issues)
 	in.ExternalID, issues = stringField(fields, "tenant_external_id", externalIDShape, issues)
 	in.Amount, issues = amountField(fields, issues)
-	if _, ok := fields["window"]; ok {
-		issues = append(issues, issue{Field: "window", Issue: "rolling windows are not part of this release",
-			code: contract.ErrorCodeInvalidWindow})
+	if raw, ok := fields["window"]; ok {
+		var name string
+		if err := json.Unmarshal(raw, &name); err != nil {
+			issues = append(issues, issue{Field: "window", Issue: "must be one of the rolling windows, as a string",
+				code: contract.ErrorCodeInvalidWindow})
+		} else if _, known := rolling.Parse(name); !known {
+			issues = append(issues, issue{Field: "window", Issue: fmt.Sprintf("%q is not a supported window; "+
+				"use rolling_5m, rolling_15m, rolling_1h, rolling_6h, rolling_24h, rolling_7d or rolling_30d", name),
+				code: contract.ErrorCodeInvalidWindow})
+		} else {
+			in.Window = name
+		}
 	}
 	var unknown []string
 	for name := range fields {

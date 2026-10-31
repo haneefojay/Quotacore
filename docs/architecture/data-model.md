@@ -41,7 +41,7 @@ illegal value cannot be written even by a bug in application code.
 ```sql
 CREATE TYPE tenant_state       AS ENUM ('active', 'suspended', 'deleted');
 CREATE TYPE archive_state      AS ENUM ('active', 'archived');
-CREATE TYPE feature_kind       AS ENUM ('metered', 'boolean');   -- 'boolean' from v0.2 (DR-050)
+CREATE TYPE feature_kind       AS ENUM ('metered', 'boolean', 'rolling');   -- 'boolean' and 'rolling' from v0.2 (DR-050, DR-052)
 CREATE TYPE reset_interval     AS ENUM
   ('hourly', 'daily', 'weekly', 'monthly', 'yearly', 'never');
 CREATE TYPE key_scope          AS ENUM ('runtime', 'admin');
@@ -119,7 +119,9 @@ CREATE TABLE plan_entitlements (
   plan_id          uuid NOT NULL REFERENCES plans(id) ON DELETE RESTRICT,
   feature_id       uuid NOT NULL REFERENCES features(id) ON DELETE RESTRICT,
   limit_value      bigint,                             -- null for a boolean feature
-  interval         reset_interval,                     -- null for a boolean feature
+  interval         reset_interval,                     -- null for a boolean or rolling feature
+  rolling_window_seconds integer                       -- a rolling feature's window (DR-052)
+    CHECK (rolling_window_seconds IN (300, 900, 3600, 21600, 86400, 604800, 2592000)),
   UNIQUE (plan_id, feature_id),                       -- INV-E2
   CONSTRAINT plan_entitlements_limit_nonneg CHECK (limit_value >= 0),
   -- Lua 5.1 numbers are doubles: above 2^53-1 integer arithmetic stops being
@@ -128,8 +130,10 @@ CREATE TABLE plan_entitlements (
   -- script all reject the same values. See security-model.md section 6.
   CONSTRAINT plan_entitlements_limit_range
     CHECK (limit_value <= 9007199254740991),
-  CONSTRAINT plan_entitlements_limit_pair
-    CHECK ((limit_value IS NULL) = (interval IS NULL))
+  CONSTRAINT plan_entitlements_shape
+    CHECK ((limit_value IS NULL AND interval IS NULL AND rolling_window_seconds IS NULL)
+        OR (limit_value IS NOT NULL AND interval IS NOT NULL AND rolling_window_seconds IS NULL)
+        OR (limit_value IS NOT NULL AND interval IS NULL AND rolling_window_seconds IS NOT NULL))
 );
 
 CREATE INDEX plan_entitlements_plan_idx    ON plan_entitlements (plan_id);
@@ -157,6 +161,16 @@ is the second line of defence behind the `plan_in_use` and `feature_in_use` erro
 > `400 validation_failed` naming the field. A boolean entitlement is never pinned
 > (section 2.10), never materialised as a balance hash (section 3.1) and never written to the
 > ledger, because it has no cadence, no balance and no delta.
+
+> **Amended 2026-10-31 (`IP-19`) — a rolling entitlement has a limit and a window and no interval.**
+> A rolling feature is counted against a limit over a sliding window, with no calendar cycle
+> (DR-052, ADR-0008), so its row holds `limit_value` and `rolling_window_seconds` and a null
+> `interval`. `plan_entitlements_shape` replaces `plan_entitlements_limit_pair` and admits exactly
+> three shapes: nothing (boolean), a limit and an interval (metered), a limit and a window
+> (rolling). The window is stored in seconds and only the seven the contract names are
+> representable. As for a boolean, which shape belongs to which kind is checked in `internal/db`
+> in the same transaction, a rolling entitlement is never pinned, never materialised as a balance
+> hash and never written to the ledger (Q-37).
 
 ### 2.4 Tenants
 
@@ -645,8 +659,8 @@ multi-key script is single-slot (ADR-0002, A-11).
 | --- | --- | --- | --- |
 | `qc:{t:<tenant_id>}:bal:<feature_key>` | hash | `balance`, `limit`, `bonus`, `cycle_index`, `window_start`, `window_end` | none. Amended 2026-10-20: this was `window_end + 24h`, which locked out a tenant idle for a day past its window (INV-C3) |
 | `qc:{t:<tenant_id>}:idem:<key>` | string | the recorded decision state: the fingerprint, the transition verdict and the six balance fields (§3.3) | 24 h |
-| `qc:{t:<tenant_id>}:f:<feature_key>` | hash | rolling-window bucket counters (v0.2) | `window_end + 24h` |
-| `qc:{t:<tenant_id>}:w:<feature_key>` | string | rolling-window bucket boundary marker (v0.2) | `window_end + 24h` |
+| `qc:{t:<tenant_id>}:f:<feature_key>` | hash | rolling-window bucket counters (v0.2): field = a bucket's start in Unix milliseconds, value = the units consumed in it; at most one window's 60 buckets (DR-052) | the newest bucket's start plus the window, refreshed by every write. Amended 2026-10-31 by `IP-19`: this was `window_end + 24h`, a cycle's end, and a rolling window has no cycle |
+| `qc:{t:<tenant_id>}:w:<feature_key>` | string | reserved; not written. Amended 2026-10-31 by `IP-19`: a boundary marker was planned beside the buckets, and the buckets' own field names are their boundaries, so nothing needs one | — |
 | `qc:cfg:tenants` | hash | tenant → snapshot version, for invalidation diffing | none |
 | `qc:cfg:version` | string | monotonically increasing configuration version | none |
 | `qc:cfg:cursor_key` | string | the 32-byte key that signs admin list cursors, created once with `SET NX` so every instance signs alike (`IP-09`) | none |

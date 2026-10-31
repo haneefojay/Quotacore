@@ -98,7 +98,7 @@ as one. `TestEveryCatalogueCodeHasOneExitCode` holds this table to
 | 3 | Client error: the request is wrong, or the contract refuses it before it is sent | `validation_failed`, `invalid_amount`, `invalid_window`, `invalid_timezone`, `missing_idempotency_key`, `payload_too_large`, `feature_not_in_plan`, `feature_archived`, `tenant_suspended`, `not_implemented` |
 | 4 | Credential | `unauthorized`, `api_key_invalid`, `insufficient_scope` |
 | 5 | Not found | `tenant_not_found`, `feature_not_found`, `plan_not_found`, `api_key_not_found` |
-| 6 | Conflict, including a confirmation the operator must give | `idempotency_key_reuse`, `plan_in_use`, `feature_in_use`, `feature_key_exists`, `tenant_exists`, `tenant_deleted`, `plan_key_exists`, `refund_exceeds_grant`, `grant_exceeds_ceiling`, `reset_not_supported`, `feature_not_metered`, `feature_unit_immutable`, `resource_version_conflict`, `confirmation_required` |
+| 6 | Conflict, including a confirmation the operator must give | `idempotency_key_reuse`, `plan_in_use`, `feature_in_use`, `feature_key_exists`, `tenant_exists`, `tenant_deleted`, `plan_key_exists`, `refund_exceeds_grant`, `grant_exceeds_ceiling`, `reset_not_supported`, `feature_not_metered`, `feature_not_anchored`, `feature_unit_immutable`, `resource_version_conflict`, `confirmation_required` |
 | 7 | Quota exhausted. No v0.1 command can be answered with it, since no admin route returns it; it is reserved for the data-plane commands of v0.5 | `quota_exceeded` |
 | 8 | Rate limited | `rate_limited` |
 | 9 | Unavailable, including a service or dependency that did not answer at all | `service_unavailable`, `control_plane_unavailable` |

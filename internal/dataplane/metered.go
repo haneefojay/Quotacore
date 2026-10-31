@@ -56,8 +56,16 @@ func (s *Service) metered(w http.ResponseWriter, r *http.Request, op kind) {
 		fail(*problem)
 		return
 	}
+	if problem := windowMismatch(res, in); problem != nil {
+		fail(*problem)
+		return
+	}
 	if res.Boolean {
 		s.boolean(w, r, op, in, t.ID, at, controlPlane, fail)
+		return
+	}
+	if !res.Rolling.IsZero() {
+		s.rolling(w, r, op, in, t.ID, res, at, controlPlane, fail)
 		return
 	}
 	loc, err := s.location(res.Timezone)

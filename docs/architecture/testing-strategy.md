@@ -278,6 +278,27 @@ three consecutive cycles each leave the bonus at that cycle's grant alone (DR-02
 and a grant are each reversed by a set, audited and ledgered like any other, and the reversed
 grant's bonus stays until the boundary (DR-051).
 
+### T-18 — A rolling window holds under load
+
+```
+Given  a rolling feature, rolling_1h, limit 100
+When   200 consumes of 1 arrive at once
+Then   exactly 100 apply and 100 are quota_exceeded
+And    the window sum, read from the store while they run, is never above 100, and is 100 after
+```
+
+Assert that a metered and a rolling feature coexist on one tenant, each in exactly one key of its
+own, and that `GET /v1/balance` tells them apart by `kind`, `window` and
+`window_precision_seconds` (DR-052). Assert UC-17's slide: `rolling_5m`, limit 10, 8 consumed; 3
+four minutes later is denied with `next_release_at`, and allowed five minutes after the 8, and
+that a unit counts for at least the window less one bucket. Across three windows of virtual time
+the bucket hash never holds more than 60 buckets and expires at its newest bucket plus the window.
+A writer two seconds fast is counted by a slow one and never pruned by it. A rolling consume,
+check and refund are each one round trip, a rolling consume's p99 is within a small factor of a
+metered one's, and the calendar engine's files, the IP-03 boundary table among them, are
+byte-identical to their pinned digests. A window outside the set, on a metered feature, missing
+on a rolling one, or different, is `400 invalid_window` on all three routes and writes nothing.
+
 ---
 
 ## 3. Property tests

@@ -268,9 +268,9 @@ func (c *commands) subjects(ctx context.Context, tenantID string) ([]reconcile.S
 			return nil, err
 		}
 		for f, e := range snapshot.NewTenant(lt).Features(now) {
-			// A boolean entitlement has no balance and no ledger rows to
-			// reconcile (DR-050).
-			if e.Boolean {
+			// A boolean or rolling entitlement has no balance and no ledger
+			// rows to reconcile (DR-050, DR-052).
+			if !e.Anchored() {
 				continue
 			}
 			s := reconcile.Subject{TenantID: id, Feature: f}
@@ -569,8 +569,9 @@ func (c *commands) rebuildTenant(ctx context.Context, id string, now, horizon ti
 	held := t.Features(now)
 	features := make([]string, 0, len(held))
 	for f, e := range held {
-		// A boolean entitlement has no balance hash to rebuild (DR-050).
-		if !e.Boolean {
+		// A boolean or rolling entitlement has no balance hash to rebuild
+		// (DR-050, DR-052).
+		if e.Anchored() {
 			features = append(features, f)
 		}
 	}

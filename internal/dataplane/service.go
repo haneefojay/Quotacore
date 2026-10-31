@@ -38,6 +38,9 @@ type Scripts interface {
 	Check(ctx context.Context, req script.Request) (script.Outcome, error)
 	ConsumeBoolean(ctx context.Context, req script.Request) (script.Decision, error)
 	CheckBoolean(ctx context.Context, req script.Request) (script.Decision, error)
+	ConsumeRolling(ctx context.Context, req script.RollingRequest) (script.RollingOutcome, error)
+	CheckRolling(ctx context.Context, req script.RollingRequest) (script.RollingOutcome, error)
+	RefundRolling(ctx context.Context, req script.RollingRequest) (script.RollingOutcome, error)
 }
 
 // Balances reads stored balance hashes for the balance route.

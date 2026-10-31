@@ -1287,7 +1287,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Neither the tenant nor the named feature exists. On the admin API existence is not<br>hidden, because the operator is already authorised for the whole instance.</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the five<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7), and<br><code>feature_not_metered</code> is a feature with no counter to change (DR-050).</p>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the six<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7),<br><code>feature_not_metered</code> is a feature with no counter to change (DR-050), and<br><code>feature_not_anchored</code> is a rolling feature, which has no cycle balance (DR-052).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -1335,7 +1335,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Neither the tenant nor the named feature exists. On the admin API existence is not<br>hidden, because the operator is already authorised for the whole instance.</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the five<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7), and<br><code>feature_not_metered</code> is a feature with no counter to change (DR-050).</p>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the six<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7),<br><code>feature_not_metered</code> is a feature with no counter to change (DR-050), and<br><code>feature_not_anchored</code> is a rolling feature, which has no cycle balance (DR-052).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -1381,7 +1381,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Neither the tenant nor the named feature exists. On the admin API existence is not<br>hidden, because the operator is already authorised for the whole instance.</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the five<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7), and<br><code>feature_not_metered</code> is a feature with no counter to change (DR-050).</p>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the six<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7),<br><code>feature_not_metered</code> is a feature with no counter to change (DR-050), and<br><code>feature_not_anchored</code> is a rolling feature, which has no cycle balance (DR-052).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -1437,7 +1437,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Neither the tenant nor the named feature exists. On the admin API existence is not<br>hidden, because the operator is already authorised for the whole instance.</p>
 </td></tr>
-<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the five<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7), and<br><code>feature_not_metered</code> is a feature with no counter to change (DR-050).</p>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A refused administrative change to a balance. Nothing was applied in any of the six<br>cases. <code>tenant_deleted</code> is a tenant whose deletion is terminal (T-7),<br><code>feature_not_metered</code> is a feature with no counter to change (DR-050), and<br><code>feature_not_anchored</code> is a rolling feature, which has no cycle balance (DR-052).</p>
 </td></tr>
 <tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
 </td></tr>
@@ -1908,8 +1908,12 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p>One of: <code>active</code>, <code>archived</code></p>
 <h3 id="schema-featurekind">FeatureKind</h3>
 <p class="muted">Type <code>string</code></p>
-<p><code>metered</code> is counted in a unit, with an allowance per cycle. <code>boolean</code> is present or<br>absent, with no counter: no balance, no limit, no bonus and no exhaustion (DR-050). A<br>feature&#39;s kind is chosen when it is created and never changes.</p>
-<p>One of: <code>metered</code>, <code>boolean</code></p>
+<p><code>metered</code> is counted in a unit, with an allowance per cycle. <code>boolean</code> is present or<br>absent, with no counter: no balance, no limit, no bonus and no exhaustion (DR-050).<br><code>rolling</code> is counted in a unit against a limit over a sliding lookback window, with no<br>calendar cycle (DR-052). A feature&#39;s kind is chosen when it is created and never changes.</p>
+<p>One of: <code>metered</code>, <code>boolean</code>, <code>rolling</code></p>
+<h3 id="schema-rollingwindow">RollingWindow</h3>
+<p class="muted">Type <code>string</code></p>
+<p>The lookback of a <code>rolling</code> entitlement (DR-052). A string, never a number of seconds, so<br>a unit mistake cannot reach the service (Q-11). Each window is counted in 60 buckets, so<br>its precision is one sixtieth of it: 5 s for <code>rolling_5m</code>, 12 h for <code>rolling_30d</code>.</p>
+<p>One of: <code>rolling_5m</code>, <code>rolling_15m</code>, <code>rolling_1h</code>, <code>rolling_6h</code>, <code>rolling_24h</code>, <code>rolling_7d</code>, <code>rolling_30d</code></p>
 <h3 id="schema-eventsource">EventSource</h3>
 <p class="muted">Type <code>string</code></p>
 <p>Who caused the event.</p>
@@ -1930,7 +1934,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p class="muted">Type <code>string</code></p>
 <p>The only field to branch on. Stable, permanent, lower snake case. A code may be retired<br>only in a major version, and only if no client could reasonably depend on it.</p>
 <p>The enum is the catalogue by reference, and a contract test asserts the two match, so the<br>service cannot raise a code that is not in<br>[error-catalog.md](../../docs/product/error-catalog.md).</p>
-<p>One of: <code>validation_failed</code>, <code>invalid_amount</code>, <code>invalid_window</code>, <code>invalid_timezone</code>, <code>missing_idempotency_key</code>, <code>unauthorized</code>, <code>api_key_invalid</code>, <code>insufficient_scope</code>, <code>feature_not_in_plan</code>, <code>feature_archived</code>, <code>tenant_suspended</code>, <code>tenant_not_found</code>, <code>feature_not_found</code>, <code>plan_not_found</code>, <code>api_key_not_found</code>, <code>payload_too_large</code>, <code>idempotency_key_reuse</code>, <code>plan_in_use</code>, <code>feature_in_use</code>, <code>feature_key_exists</code>, <code>tenant_exists</code>, <code>tenant_deleted</code>, <code>plan_key_exists</code>, <code>refund_exceeds_grant</code>, <code>grant_exceeds_ceiling</code>, <code>reset_not_supported</code>, <code>feature_not_metered</code>, <code>feature_unit_immutable</code>, <code>resource_version_conflict</code>, <code>confirmation_required</code>, <code>quota_exceeded</code>, <code>rate_limited</code>, <code>service_unavailable</code>, <code>control_plane_unavailable</code>, <code>internal_error</code>, <code>not_implemented</code></p>
+<p>One of: <code>validation_failed</code>, <code>invalid_amount</code>, <code>invalid_window</code>, <code>invalid_timezone</code>, <code>missing_idempotency_key</code>, <code>unauthorized</code>, <code>api_key_invalid</code>, <code>insufficient_scope</code>, <code>feature_not_in_plan</code>, <code>feature_archived</code>, <code>tenant_suspended</code>, <code>tenant_not_found</code>, <code>feature_not_found</code>, <code>plan_not_found</code>, <code>api_key_not_found</code>, <code>payload_too_large</code>, <code>idempotency_key_reuse</code>, <code>plan_in_use</code>, <code>feature_in_use</code>, <code>feature_key_exists</code>, <code>tenant_exists</code>, <code>tenant_deleted</code>, <code>plan_key_exists</code>, <code>refund_exceeds_grant</code>, <code>grant_exceeds_ceiling</code>, <code>reset_not_supported</code>, <code>feature_not_metered</code>, <code>feature_not_anchored</code>, <code>feature_unit_immutable</code>, <code>resource_version_conflict</code>, <code>confirmation_required</code>, <code>quota_exceeded</code>, <code>rate_limited</code>, <code>service_unavailable</code>, <code>control_plane_unavailable</code>, <code>internal_error</code>, <code>not_implemented</code></p>
 <h3 id="schema-errorresponse">ErrorResponse</h3>
 <p class="muted">Type <code>object</code></p>
 <p>The one error shape, everywhere, and it is non-negotiable. No endpoint returns a bare<br><code>400</code> or a bare <code>500</code> without it.</p>
@@ -1972,7 +1976,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>tenant_external_id</code></td><td>—</td><td>yes</td><td><p>The customer never handles an internal <code>tenant_id</code>.</p>
 </td></tr>
 <tr><td><code>metadata</code></td><td><a href="#schema-metadata"><code>Metadata</code></a></td><td>no</td><td></td></tr>
-<tr><td><code>window</code></td><td><code>string</code></td><td>no</td><td><p>v0.2. Omitted means the anchored cycle, which is the only cadence in v0.1<br>(ADR-0008). A window that disagrees with the feature&#39;s cadence is<br><code>400 invalid_window</code>, and supplying any window on a v0.1 build is also<br><code>invalid_window</code>, because the two cadences are never silently mixed.</p>
+<tr><td><code>window</code></td><td>—</td><td>no</td><td><p>Omitted means the anchored cycle (ADR-0008). A <code>rolling</code> feature must name the window<br>its plan entitlement configures, and any other feature must omit it: a window that is<br>absent, different, unknown or sent to an anchored feature is <code>400 invalid_window</code>,<br>because the two cadences are never silently mixed (DR-052).</p>
 </td></tr>
 </table>
 <h4>Example: metered</h4>
@@ -1996,7 +2000,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
 <tr><td><code>tenant_external_id</code></td><td><a href="#schema-externalid"><code>ExternalId</code></a></td><td>yes</td><td></td></tr>
 <tr><td><code>feature_key</code></td><td><a href="#schema-featurekey"><code>FeatureKey</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>kind</code></td><td>—</td><td>yes</td><td><p>The feature&#39;s kind. For <code>boolean</code>, <code>balance</code>, <code>limit</code> and <code>bonus</code> are <code>null</code> and the<br>cycle fields are <code>null</code>, because an inclusion has no counter and no cycle (DR-050).</p>
+<tr><td><code>kind</code></td><td>—</td><td>yes</td><td><p>The feature&#39;s kind. For <code>boolean</code>, <code>balance</code>, <code>limit</code> and <code>bonus</code> are <code>null</code> and the<br>cycle fields are <code>null</code>, because an inclusion has no counter and no cycle (DR-050).<br>For <code>rolling</code>, <code>balance</code> is what remains in the window, <code>bonus</code> and the cycle fields<br>are <code>null</code>, and <code>window</code> and <code>window_precision_seconds</code> are present (DR-052).</p>
 </td></tr>
 <tr><td><code>balance</code></td><td>—</td><td>yes</td><td><p>The remaining balance <strong>after</strong> the deduction. Null for a boolean entitlement.</p>
 </td></tr>
@@ -2008,6 +2012,10 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>cycle_start</code></td><td>—</td><td>yes</td><td></td></tr>
 <tr><td><code>cycle_end</code></td><td>—</td><td>yes</td><td></td></tr>
+<tr><td><code>window</code></td><td>—</td><td>no</td><td><p>Present only for a <code>rolling</code> feature, the window the numbers describe (DR-052).</p>
+</td></tr>
+<tr><td><code>window_precision_seconds</code></td><td><code>integer (int64)</code></td><td>no</td><td><p>Present only for a <code>rolling</code> feature: the width of one bucket, which is the precision<br>of the window sum. A unit counts for at least the window less this and at most the<br>window (DR-052).</p>
+</td></tr>
 <tr><td><code>replayed</code></td><td><code>boolean</code></td><td>yes</td><td><p>Whether this response is a replay of a stored one. A client that needs to know<br>whether <strong>this call</strong> moved anything reads this, rather than inferring it from<br>arithmetic, and it can also read the <code>Idempotent-Replay</code> header.</p>
 </td></tr>
 </table>
@@ -2022,7 +2030,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
 <tr><td><code>allowed</code></td><td><code>boolean</code></td><td>yes</td><td><p>A denial is <code>allowed: false</code> at <code>200</code>, <strong>not</strong> a <code>429</code> (DR-024). A <code>429</code> from this<br>route means the service is rate-limiting you. An included boolean entitlement is<br>always <code>allowed: true</code> (DR-050).</p>
 </td></tr>
-<tr><td><code>kind</code></td><td>—</td><td>yes</td><td><p>The feature&#39;s kind. For <code>boolean</code>, <code>balance</code>, <code>limit</code>, <code>bonus</code> and <code>cycle_end</code> are <code>null</code>.</p>
+<tr><td><code>kind</code></td><td>—</td><td>yes</td><td><p>The feature&#39;s kind. For <code>boolean</code>, <code>balance</code>, <code>limit</code>, <code>bonus</code> and <code>cycle_end</code> are<br><code>null</code>. For <code>rolling</code>, <code>bonus</code> and <code>cycle_end</code> are <code>null</code>, <code>balance</code> is what remains in<br>the window, and <code>window</code> and <code>window_precision_seconds</code> are present (DR-052).</p>
 </td></tr>
 <tr><td><code>balance</code></td><td>—</td><td>yes</td><td><p>The balance now. Null for a boolean entitlement.</p>
 </td></tr>
@@ -2031,7 +2039,11 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>bonus</code></td><td>—</td><td>yes</td><td><p>Cycle-scoped granted quota. Null for a boolean entitlement.</p>
 </td></tr>
 <tr><td><code>requested</code></td><td><a href="#schema-amount"><code>Amount</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>cycle_end</code></td><td>—</td><td>yes</td><td><p>When a currently-denied amount would become available.</p>
+<tr><td><code>cycle_end</code></td><td>—</td><td>yes</td><td><p>When a currently-denied amount would become available. Null for a <code>rolling</code> feature, which has no cycle.</p>
+</td></tr>
+<tr><td><code>window</code></td><td>—</td><td>no</td><td><p>Present only for a <code>rolling</code> feature, the window the numbers describe (DR-052).</p>
+</td></tr>
+<tr><td><code>window_precision_seconds</code></td><td><code>integer (int64)</code></td><td>no</td><td><p>Present only for a <code>rolling</code> feature: the width of one bucket, which is the precision<br>of the window sum. A unit counts for at least the window less this and at most the<br>window (DR-052).</p>
 </td></tr>
 </table>
 <h3 id="schema-balanceentry">BalanceEntry</h3>
@@ -2044,7 +2056,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <table>
 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
 <tr><td><code>feature_key</code></td><td><a href="#schema-featurekey"><code>FeatureKey</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>kind</code></td><td>—</td><td>yes</td><td><p>The feature&#39;s kind. An included boolean entitlement is an entry whose <code>balance</code>,<br><code>limit</code>, <code>bonus</code>, <code>consumed</code>, <code>cycle_start</code> and <code>cycle_end</code> are all <code>null</code>: present,<br>with no counter (DR-050). Its presence is the answer.</p>
+<tr><td><code>kind</code></td><td>—</td><td>yes</td><td><p>The feature&#39;s kind. An included boolean entitlement is an entry whose <code>balance</code>,<br><code>limit</code>, <code>bonus</code>, <code>consumed</code>, <code>cycle_start</code> and <code>cycle_end</code> are all <code>null</code>: present,<br>with no counter (DR-050). Its presence is the answer. A <code>rolling</code> entry has a<br><code>window</code>, a <code>window_precision_seconds</code>, a null <code>bonus</code> and null cycle fields (DR-052).</p>
 </td></tr>
 <tr><td><code>balance</code></td><td>—</td><td>yes</td><td><p>The balance now. Null for a boolean entitlement.</p>
 </td></tr>
@@ -2052,10 +2064,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </td></tr>
 <tr><td><code>bonus</code></td><td>—</td><td>yes</td><td><p>Cycle-scoped granted quota. Null for a boolean entitlement.</p>
 </td></tr>
-<tr><td><code>consumed</code></td><td>—</td><td>yes</td><td><p>Net consumption in the stored cycle, derived as <code>limit + bonus - balance</code>. A refund<br>lowers it and an administrative <code>set</code> shows through it. It is computed from the balance<br>hash rather than read from the ledger, because this route never reads the control<br>plane (DR-039). Null for a boolean entitlement, whose use is not counted.</p>
+<tr><td><code>consumed</code></td><td>—</td><td>yes</td><td><p>Net consumption in the stored cycle, derived as <code>limit + bonus - balance</code>. A refund<br>lowers it and an administrative <code>set</code> shows through it. It is computed from the balance<br>hash rather than read from the ledger, because this route never reads the control<br>plane (DR-039). Null for a boolean entitlement, whose use is not counted. For a<br><code>rolling</code> feature it is the window sum, and <code>balance</code> is <code>limit</code> minus it.</p>
 </td></tr>
 <tr><td><code>cycle_start</code></td><td>—</td><td>yes</td><td></td></tr>
 <tr><td><code>cycle_end</code></td><td>—</td><td>yes</td><td></td></tr>
+<tr><td><code>window</code></td><td>—</td><td>no</td><td><p>Present only for a <code>rolling</code> feature, the window the numbers describe (DR-052).</p>
+</td></tr>
+<tr><td><code>window_precision_seconds</code></td><td><code>integer (int64)</code></td><td>no</td><td><p>Present only for a <code>rolling</code> feature: the width of one bucket, which is the precision<br>of the window sum. A unit counts for at least the window less this and at most the<br>window (DR-052).</p>
+</td></tr>
 </table>
 <h3 id="schema-balanceresponse">BalanceResponse</h3>
 <p class="muted">Type <code>object</code></p>
@@ -2151,7 +2167,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 </table>
 <h3 id="schema-planentitlement">PlanEntitlement</h3>
 <p class="muted">Type <code>object</code></p>
-<p>One feature&#39;s allowance in a plan. <code>limit</code> and <code>reset_interval</code> are both required and both<br>nullable, by the convention in api-conventions.md section 7.4: a metered feature takes a<br>number and an interval, and a boolean feature takes <code>null</code> for both, because an inclusion<br>has no ceiling and no cycle (UC-02, DR-050). A number for either on a boolean feature, or a<br><code>null</code> on a metered one, is <code>400 validation_failed</code> naming the field, rather than being<br>ignored.</p>
+<p>One feature&#39;s allowance in a plan. <code>limit</code> and <code>reset_interval</code> are both required and both<br>nullable, by the convention in api-conventions.md section 7.4: a metered feature takes a<br>number and an interval, and a boolean feature takes <code>null</code> for both, because an inclusion<br>has no ceiling and no cycle (UC-02, DR-050). A number for either on a boolean feature, or a<br><code>null</code> on a metered one, is <code>400 validation_failed</code> naming the field, rather than being<br>ignored. A rolling feature takes a <code>limit</code>, a <code>null</code> <code>reset_interval</code> and a <code>window</code>, and<br><code>window</code> is absent or <code>null</code> for any other kind (DR-052).</p>
 <ul>
 <li><p><strong>Undeclared fields are rejected.</strong> A field that is not in this schema is a <code>400 validation_failed</code>.</p>
 </li>
@@ -2159,9 +2175,11 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <table>
 <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
 <tr><td><code>feature_key</code></td><td><a href="#schema-featurekey"><code>FeatureKey</code></a></td><td>yes</td><td></td></tr>
-<tr><td><code>limit</code></td><td>—</td><td>yes</td><td><p>The cycle allowance of a metered feature; <code>null</code> for a boolean one.</p>
+<tr><td><code>limit</code></td><td>—</td><td>yes</td><td><p>The cycle allowance of a metered feature, or the window allowance of a rolling one; <code>null</code> for a boolean one.</p>
 </td></tr>
-<tr><td><code>reset_interval</code></td><td>—</td><td>yes</td><td><p>The cadence of a metered feature; <code>null</code> for a boolean one.</p>
+<tr><td><code>reset_interval</code></td><td>—</td><td>yes</td><td><p>The cadence of a metered feature; <code>null</code> for a boolean or rolling one.</p>
+</td></tr>
+<tr><td><code>window</code></td><td>—</td><td>no</td><td><p>The lookback of a rolling feature; absent or <code>null</code> for any other kind (DR-052).</p>
 </td></tr>
 </table>
 <h3 id="schema-plan">Plan</h3>

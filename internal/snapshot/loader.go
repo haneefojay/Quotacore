@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/quotacore/quotacore/internal/cycle"
+	"github.com/quotacore/quotacore/internal/rolling"
 )
 
 // Typed miss outcomes. The mapping to the HTTP catalogue is the data plane's
@@ -107,12 +108,23 @@ func (p Pin) activeAt(at time.Time) bool {
 //
 // Boolean marks an inclusion with no counter (DR-050): Limit and Interval are
 // then zero and mean nothing, and no balance exists to enforce against.
+//
+// Rolling, when it is not zero, marks a rolling-window entitlement (DR-052):
+// Limit is the window's limit, Interval means nothing, and the units are
+// counted in the window's bucket hash, never in a balance hash.
 type Entitlement struct {
 	Limit    int64
 	Interval cycle.Interval
 	Archived bool
 	Boolean  bool
+	Rolling  rolling.Window
 }
+
+// Anchored reports an entitlement with a balance hash on an anchored cycle: a
+// metered one. A boolean has no counter and a rolling one counts in a window,
+// so every path that rolls, rebuilds, reconciles or adjusts a balance skips
+// both (DR-050, DR-052).
+func (e Entitlement) Anchored() bool { return !e.Boolean && e.Rolling.IsZero() }
 
 // LoadedOverride is one tenant_entitlement_overrides row, resolved to concrete
 // values. A nil field means "inherit from the plan".
@@ -143,6 +155,10 @@ type Resolution struct {
 	// Boolean is true when the entitlement is an inclusion with no counter
 	// (DR-050); Limit, Interval and Anchor then mean nothing.
 	Boolean bool
+	// Rolling is the window of a rolling entitlement (DR-052), zero for any
+	// other kind; Limit is then the window's limit and Interval and Anchor
+	// mean nothing.
+	Rolling rolling.Window
 	// Anchor is the tenant's cycle anchor, the one per-tenant cycle state
 	// (DR-002), valid when InPlan is true.
 	Anchor time.Time

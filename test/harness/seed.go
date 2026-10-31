@@ -14,6 +14,9 @@ type Seeded struct {
 	Features []string
 	Tenants  []string
 	Keys     []string
+	// Window is the rolling window of every feature SeedRolling made, and
+	// empty for Seed's monthly ones.
+	Window string
 }
 
 // Seed creates features, one monthly plan carrying every one of them at
@@ -33,6 +36,29 @@ func (s *Stack) Seed(prefix string, features, tenants, keys int, limit int64, co
 		out.Features = append(out.Features, f)
 		ents = append(ents, fmt.Sprintf(`{"feature_key":%q,"limit":%d,"reset_interval":"monthly"}`, f, limit))
 	}
+	return s.populate(out, ents, tenants, keys, concurrency, zones)
+}
+
+// SeedRolling is Seed for rolling features (DR-052): each one at limit over
+// the window, on one plan, with n UTC tenants and runtime keys.
+func (s *Stack) SeedRolling(prefix string, features, tenants, keys int, limit int64, window string) Seeded {
+	s.T.Helper()
+	out := Seeded{Plan: prefix + "-plan", Window: window}
+	var ents []string
+	for i := range features {
+		f := fmt.Sprintf("%s.f%03d", prefix, i)
+		s.Must(http.StatusCreated, http.MethodPost, "/v1/admin/features",
+			`{"feature_key":"`+f+`","name":"F","unit":"unit","kind":"rolling"}`)
+		out.Features = append(out.Features, f)
+		ents = append(ents, fmt.Sprintf(`{"feature_key":%q,"limit":%d,"reset_interval":null,"window":%q}`, f, limit, window))
+	}
+	return s.populate(out, ents, tenants, keys, 16, []string{"UTC"})
+}
+
+// populate creates the plan, the keys and the tenants for a seed.
+func (s *Stack) populate(out Seeded, ents []string, tenants, keys, concurrency int, zones []string) Seeded {
+	s.T.Helper()
+	prefix := strings.TrimSuffix(out.Plan, "-plan")
 	s.Must(http.StatusCreated, http.MethodPost, "/v1/admin/plans",
 		`{"plan_key":"`+out.Plan+`","name":"P","entitlements":[`+strings.Join(ents, ",")+`]}`)
 	for i := range keys {

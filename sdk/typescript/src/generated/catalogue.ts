@@ -30,6 +30,7 @@ export const errorCodes = [
   "grant_exceeds_ceiling",
   "reset_not_supported",
   "feature_not_metered",
+  "feature_not_anchored",
   "feature_unit_immutable",
   "resource_version_conflict",
   "confirmation_required",
@@ -67,7 +68,7 @@ export const catalogue: { readonly [C in ErrorCode]: CatalogueEntry } = {
   invalid_window: {
     status: 400,
     retryable: "no",
-    clientAction: "Omit window for anchored cycles, or use a valid rolling window (v0.2)",
+    clientAction: "Omit window for anchored cycles; on a rolling feature name the window its plan configures",
   },
   invalid_timezone: {
     status: 400,
@@ -189,6 +190,11 @@ export const catalogue: { readonly [C in ErrorCode]: CatalogueEntry } = {
     retryable: "no",
     clientAction: "The feature is included or not and has no counter. Consume or check 1, or make the feature metered by creating a new one (DR-050)",
   },
+  feature_not_anchored: {
+    status: 409,
+    retryable: "no",
+    clientAction: "Raise the window's limit in the plan. Per-window overrides are deferred",
+  },
   feature_unit_immutable: {
     status: 409,
     retryable: "no",
@@ -206,8 +212,8 @@ export const catalogue: { readonly [C in ErrorCode]: CatalogueEntry } = {
   },
   quota_exceeded: {
     status: 429,
-    retryable: "at cycle_end",
-    clientAction: "Wait for the reset, or ask for a grant. details.cycle_end is authoritative",
+    retryable: "at cycle_end, or on a rolling feature as units age out",
+    clientAction: "Wait for the reset, or ask for a grant. details.cycle_end is authoritative; a rolling feature's details.next_release_at is when the oldest counted bucket leaves the window (DR-052)",
   },
   rate_limited: {
     status: 429,

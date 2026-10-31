@@ -199,7 +199,7 @@ server-side scheme detects that, and pretending otherwise would be worse than sa
 | `amount` | yes | Integer, ≥ 0 (DR-023) |
 | `tenant_external_id` | yes on the data plane | The customer never handles a `tenant_id` |
 | `metadata` | no | ≤ 4 KiB. Correlation only. Not a data store, not indexed, excluded from logs (DR-043), and not returned by any endpoint |
-| `window` | no | v0.2 only. Omitted means the anchored cycle. A window that disagrees with the feature's cadence is `400 invalid_window` |
+| `window` | no | Omitted means the anchored cycle. A `rolling` feature must name the window its entitlement configures, one of `rolling_5m` to `rolling_30d`, and any other feature must omit it; anything else is `400 invalid_window` (DR-052) |
 
 Response:
 
