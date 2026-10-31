@@ -220,7 +220,7 @@ func (rt *router) operation(op envelope.Operation, h http.Handler) http.Handler 
 				refuse(p)
 				return
 			}
-			ex.KeyPrefix, ex.KeyID, ex.KeyName = key.Prefix, key.ID, key.Name
+			ex.KeyPrefix, ex.KeyID, ex.KeyName, ex.KeyTenant = key.Prefix, key.ID, key.Name, key.TenantID
 			if dataPlane && rt.limiter != nil {
 				if ok, wait := rt.limiter.Allow(key.Prefix, ex.Accepted); !ok {
 					if rt.metrics != nil {

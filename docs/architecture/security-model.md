@@ -116,6 +116,13 @@ application naturally needs to address many of that customer's tenants, and bind
 force a key per tenant. The trade is documented here rather than buried in a changelog, and it is
 the first candidate for a post-MVP release.
 
+> **Amended 2026-10-31 (`IP-20`).** Built in v0.2 as an option rather than the default: a runtime
+> key issued with a `tenant_external_id` reaches that tenant alone, and an unbound runtime key
+> keeps the position above. The binding is checked inside every data-plane script and at the
+> balance read's store edge, so a handler defect cannot cross it, and another tenant is answered
+> as an unknown one (DR-053, Q-38). The trade this section names is unchanged for an unbound key,
+> and a customer who wants the narrower blast radius issues one key per tenant.
+
 ## 5. Data protection
 
 | Control | Rule |
@@ -210,7 +217,7 @@ Stated as facts with their limits, not as claims.
 | Dependencies | Default image BSD-3-Clause. The Redis licence change is documented, not discovered (NFR-C2, ADR-0009) |
 | SBOM | Generated per build (NFR-C3) |
 | Audit | Complete for administrative actions, in-transaction, append-only, retained 400 days by default |
-| Access control | Named, scoped, rotatable, audited credentials. No per-tenant runtime keys in the MVP (section 4) |
+| Access control | Named, scoped, rotatable, audited credentials. No per-tenant runtime keys in the MVP; from v0.2 a runtime key may be bound to one tenant (section 4, DR-053) |
 | Encryption at rest | Not provided. The host's disk encryption is the customer's control, and the service does not hold data whose compromise it cannot describe |
 | Certification | None claimed. A certification claim would not be true of a self-hosted single-binary service operated by its owner |
 | Right to erasure | Soft deletion only, because the ledger is a contractual record. A hard-delete workflow is deliberately not exposed |

@@ -51,6 +51,10 @@ func (s *Service) metered(w http.ResponseWriter, r *http.Request, op kind) {
 		fail(*problem)
 		return
 	}
+	if problem := bound(ex, t, in.ExternalID); problem != nil {
+		fail(*problem)
+		return
+	}
 	res := s.tenants.Decide(t, in.FeatureKey, at)
 	if problem := gate(res, in.FeatureKey); problem != nil {
 		fail(*problem)
@@ -88,6 +92,7 @@ func (s *Service) metered(w http.ResponseWriter, r *http.Request, op kind) {
 		Interval:       res.Interval,
 		Limit:          res.Limit,
 		At:             at,
+		Binding:        ex.KeyTenant,
 	}
 	var out script.Outcome
 	switch op {
@@ -250,6 +255,11 @@ func gate(res snapshot.Resolution, featureKey string) *envelope.Problem {
 // script changed nothing.
 func (s *Service) scriptError(ex *envelope.Exchange, err error) envelope.Problem {
 	switch {
+	case errors.Is(err, script.ErrForeignTenant):
+		// The script refused a bound key's request for another tenant, which
+		// the check before it should already have answered (DR-053).
+		ex.Add(slog.String("error", "binding refused in the script"))
+		return envelope.Error(contract.ErrorCodeTenantNotFound, "no tenant has that tenant_external_id")
 	case errors.Is(err, script.ErrIdempotencyKeyReuse):
 		return envelope.Error(contract.ErrorCodeIdempotencyKeyReuse,
 			"this Idempotency-Key was used for a different operation within 24 hours")

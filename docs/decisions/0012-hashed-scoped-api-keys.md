@@ -58,6 +58,10 @@ per tier.
   which is inside the trust boundary, and narrowing it to specific tenants would require the
   customer to re-issue keys on every onboarding. Documented as a deliberate simplification with
   a stated reason.
+
+  > **Amended 2026-10-31 (`IP-20`).** Still two scopes. A runtime key may now also be bound to one
+  > tenant at issue, a property of the stored row rather than a third scope, and the token format
+  > is unchanged (DR-053, ADR-0018). An unbound runtime key is the default and behaves as above.
 - **Revocation is immediate.** Revoking a key takes effect on the next request; the in-memory
   key cache carries a bounded TTL and a pub/sub invalidation on revoke, so revocation is not
   gated on cache expiry.

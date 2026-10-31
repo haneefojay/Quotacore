@@ -135,9 +135,10 @@ var commands = []Command{
 		Summary: "Read a tenant's usage ledger", setup: events},
 
 	// Keys.
-	{Name: "key list", Op: "listKeys", List: true, Summary: "List API keys; no secret is ever shown"},
+	{Name: "key list", Op: "listKeys", List: true, Summary: "List API keys, or one tenant's; no secret is ever shown",
+		setup: keyList},
 	{Name: "key create", Op: "createKey", Writes: true,
-		Summary: "Issue an API key; its plaintext is printed once", setup: keyCreate},
+		Summary: "Issue an API key, optionally bound to one tenant; its plaintext is printed once", setup: keyCreate},
 	{Name: "key revoke", Op: "revokeKey", Args: []string{"key_id"}, Writes: true, Summary: "Revoke an API key by its id"},
 	{Name: "key mint", Kind: Local, Summary: "Print a new admin token for QUOTACORE_BOOTSTRAP_ADMIN_KEY; touches nothing"},
 
@@ -167,6 +168,7 @@ func send(b body) (request, error) { return request{body: b}, nil }
 func featureCreate(f *flags) build {
 	key, name, unit := f.str("key", "the feature key, such as llm.tokens.output"), f.str("name", "a display name"), f.str("unit", "the unit, such as tokens")
 	desc, kind := f.str("description", "free text"), f.str("kind", "metered (the default), boolean or rolling")
+	capped := f.boolean("allocation-cap", "the feature counts entities, such as seats or projects (DR-054)")
 	f.need("key", "name", "unit")
 	return func([]string) (request, error) {
 		b := &contract.FeatureCreate{FeatureKey: contract.FeatureKey(*key), Name: *name, Unit: contract.Unit(*unit)}
@@ -175,6 +177,9 @@ func featureCreate(f *flags) build {
 		}
 		if f.has("kind") {
 			b.Kind = contract.NewOptFeatureCreateKind(contract.FeatureCreateKind(*kind))
+		}
+		if f.has("allocation-cap") {
+			b.AllocationCap = contract.NewOptBool(*capped)
 		}
 		return send(b)
 	}
@@ -474,9 +479,13 @@ func events(f *flags) build {
 
 func keyCreate(f *flags) build {
 	name, scope, expires := f.str("name", "what the key is for; the audit actor"), f.str("scope", "runtime or admin"), f.str("expires-at", "an RFC 3339 instant")
+	tenant := f.str("tenant", "bind a runtime key to this tenant's external id; it reaches no other (DR-053)")
 	f.need("name", "scope")
 	return func([]string) (request, error) {
 		b := &contract.KeyCreate{Name: *name, Scope: contract.KeyScope(*scope)}
+		if f.has("tenant") {
+			b.TenantExternalID = contract.NewOptExternalId(contract.ExternalId(*tenant))
+		}
 		if f.has("expires-at") {
 			t, err := parseTime("expires-at", *expires)
 			if err != nil {
@@ -485,6 +494,15 @@ func keyCreate(f *flags) build {
 			b.ExpiresAt = contract.NewOptTimestamp(contract.Timestamp(t))
 		}
 		return send(b)
+	}
+}
+
+func keyList(f *flags) build {
+	tenant := f.str("tenant", "only the keys bound to this tenant's external id")
+	return func([]string) (request, error) {
+		q := url.Values{}
+		f.query(q, map[string]*string{"tenant": tenant})
+		return request{query: q}, nil
 	}
 }
 

@@ -52,7 +52,7 @@ func TestTheRollingScriptsShareOneWindow(t *testing.T) {
 			t.Errorf("%s.lua holds the anchored transition block; the two cadences share no rule (ADR-0008)", b.op)
 		}
 		if b.op == CheckRolling {
-			if strings.Contains(b.text, idemOpen) || strings.Contains(b.text, "KEYS[2]") {
+			if strings.Contains(b.text, idemOpen) || strings.Contains(withoutBinding(b.text), "KEYS[2]") {
 				t.Error("check_rolling.lua has an idempotency record; a check changes nothing (DR-026)")
 			}
 			continue

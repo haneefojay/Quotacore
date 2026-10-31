@@ -149,6 +149,21 @@ func (b *body) str(name string, required bool, shape *regexp.Regexp, minLen, max
 	return s, true
 }
 
+// flag reads an optional JSON boolean, false when absent. Anything else is
+// refused naming the field.
+func (b *body) flag(name string) bool {
+	raw, ok := b.fields[name]
+	if !ok {
+		return false
+	}
+	var v bool
+	if err := json.Unmarshal(raw, &v); err != nil {
+		b.add(name, "must be a boolean")
+		return false
+	}
+	return v
+}
+
 // integer accepts a JSON integer and nothing else: 3.0 and 3e0 are refused.
 func (b *body) integer(name string, required bool, lo, hi int64) (int64, bool) {
 	raw, ok := b.fields[name]

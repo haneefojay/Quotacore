@@ -94,28 +94,35 @@ func nilTS(t sql.NullTime) api.NilTimestamp {
 
 const keyRow = `id, name, prefix, scope,
  CASE WHEN state = 'active' AND expires_at IS NOT NULL AND expires_at <= now() THEN 'expired' ELSE state::text END,
+ (SELECT t.external_id FROM tenants t WHERE t.id = api_keys.tenant_id),
  created_at, expires_at, last_used_at, revoked_at`
 
 func scanAdminKey(r rowScanner) (api.Key, error) {
 	var (
 		k                      api.Key
 		scope, state           string
+		tenant                 sql.NullString
 		created                time.Time
 		expires, used, revoked sql.NullTime
 	)
-	if err := r.Scan(&k.ID, &k.Name, &k.Prefix, &scope, &state, &created, &expires, &used, &revoked); err != nil {
+	if err := r.Scan(&k.ID, &k.Name, &k.Prefix, &scope, &state, &tenant, &created, &expires, &used, &revoked); err != nil {
 		return api.Key{}, err
+	}
+	k.TenantExternalID = api.NilExternalId{Null: true}
+	if tenant.Valid {
+		k.TenantExternalID = api.NewNilExternalId(api.ExternalId(tenant.String))
 	}
 	k.Scope, k.State, k.CreatedAt = api.KeyScope(scope), api.KeyState(state), ts(created)
 	k.ExpiresAt, k.LastUsedAt, k.RevokedAt = nilTS(expires), nilTS(used), nilTS(revoked)
 	return k, nil
 }
 
-func (a *Admin) ListKeys(ctx context.Context, p admin.Page) ([]api.Key, error) {
+func (a *Admin) ListKeys(ctx context.Context, p admin.Page, tenant string) ([]api.Key, error) {
 	t, tie := after(p)
 	rows, err := a.db.QueryContext(ctx, `SELECT `+keyRow+` FROM api_keys
- WHERE $1::timestamptz IS NULL OR (created_at, id) < ($1, $2::uuid)
- ORDER BY created_at DESC, id DESC LIMIT $3`, t, tie, p.Limit+1)
+ WHERE ($1::timestamptz IS NULL OR (created_at, id) < ($1, $2::uuid))
+   AND ($4 = '' OR tenant_id = (SELECT id FROM tenants WHERE external_id = $4))
+ ORDER BY created_at DESC, id DESC LIMIT $3`, t, tie, p.Limit+1, tenant)
 	if err != nil {
 		return nil, fmt.Errorf("list keys: %w", err)
 	}
@@ -129,8 +136,27 @@ func (a *Admin) CreateKey(ctx context.Context, actor admin.Actor, in admin.NewKe
 		if in.ExpiresAt != nil {
 			expires = in.ExpiresAt.UTC()
 		}
-		k, err := scanAdminKey(tx.QueryRowContext(ctx, `INSERT INTO api_keys (name, prefix, key_hash, scope, expires_at)
- VALUES ($1, $2, $3, $4, $5) RETURNING `+keyRow, in.Name, in.Prefix, in.Hash, string(in.Scope), expires))
+		// A bound key names a live tenant, read under its lock so a delete
+		// that commits first is seen and one that commits after revokes this
+		// key with the tenant's others (DR-053, INV-X7).
+		var tenantID any
+		if in.TenantExternalID != "" {
+			var id, state string
+			err := tx.QueryRowContext(ctx, `SELECT id, state FROM tenants WHERE external_id = $1 FOR SHARE`,
+				in.TenantExternalID).Scan(&id, &state)
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrTenantNotFound
+			}
+			if err != nil {
+				return Classify(OpWrite, err)
+			}
+			if state == "deleted" {
+				return ErrTenantDeleted
+			}
+			tenantID = id
+		}
+		k, err := scanAdminKey(tx.QueryRowContext(ctx, `INSERT INTO api_keys (name, prefix, key_hash, scope, expires_at, tenant_id)
+ VALUES ($1, $2, $3, $4, $5, $6) RETURNING `+keyRow, in.Name, in.Prefix, in.Hash, string(in.Scope), expires, tenantID))
 		if err != nil {
 			if c := Classify(OpWrite, err); errors.Is(c, ErrPrefixCollision) {
 				return admin.ErrPrefixTaken
@@ -174,7 +200,7 @@ func (a *Admin) RevokeKey(ctx context.Context, actor admin.Actor, id string, at 
 
 // ---- features
 
-const featureRow = `id, key, name, unit, kind, description, state, version, created_at, updated_at, archived_at`
+const featureRow = `id, key, name, unit, kind, allocation_cap, description, state, version, created_at, updated_at, archived_at`
 
 func scanFeature(r rowScanner) (api.Feature, error) {
 	var (
@@ -185,7 +211,7 @@ func scanFeature(r rowScanner) (api.Feature, error) {
 		created, updated time.Time
 		archived         sql.NullTime
 	)
-	if err := r.Scan(&f.ID, &key, &f.Name, &unit, &kind, &f.Description, &state, &version, &created, &updated, &archived); err != nil {
+	if err := r.Scan(&f.ID, &key, &f.Name, &unit, &kind, &f.AllocationCap, &f.Description, &state, &version, &created, &updated, &archived); err != nil {
 		return api.Feature{}, err
 	}
 	f.FeatureKey, f.Unit, f.Kind, f.State = api.FeatureKey(key), api.Unit(unit), api.FeatureKind(kind), api.ArchiveState(state)
@@ -227,8 +253,8 @@ func (a *Admin) CreateFeature(ctx context.Context, actor admin.Actor, in admin.N
 		if kind == "" {
 			kind = "metered"
 		}
-		f, err := scanFeature(tx.QueryRowContext(ctx, `INSERT INTO features (key, name, unit, description, kind)
- VALUES ($1, $2, $3, $4, $5::feature_kind) RETURNING `+featureRow, in.Key, in.Name, in.Unit, in.Description, kind))
+		f, err := scanFeature(tx.QueryRowContext(ctx, `INSERT INTO features (key, name, unit, description, kind, allocation_cap)
+ VALUES ($1, $2, $3, $4, $5::feature_kind, $6) RETURNING `+featureRow, in.Key, in.Name, in.Unit, in.Description, kind, in.AllocationCap))
 		if err != nil {
 			return Classify(OpWrite, err)
 		}
@@ -435,7 +461,7 @@ func (a *Admin) CreatePlan(ctx context.Context, actor admin.Actor, in admin.NewP
 			var (
 				featureID, state, kind string
 			)
-			err := tx.QueryRowContext(ctx, `SELECT id, state, kind FROM features WHERE key = $1 FOR SHARE`, e.Feature).Scan(&featureID, &state, &kind)
+			err := tx.QueryRowContext(ctx, `SELECT id, state, `+shapeKind+` FROM features f WHERE key = $1 FOR SHARE`, e.Feature).Scan(&featureID, &state, &kind)
 			if errors.Is(err, sql.ErrNoRows) {
 				return &Error{Code: api.ErrorCodeValidationFailed, Field: field}
 			}
@@ -719,8 +745,11 @@ func (a *Admin) SetTenantState(ctx context.Context, actor admin.Actor, id string
 	return out, err
 }
 
-func (a *Admin) DeleteTenant(ctx context.Context, actor admin.Actor, id, reason string, at time.Time) (api.Tenant, error) {
-	var out api.Tenant
+func (a *Admin) DeleteTenant(ctx context.Context, actor admin.Actor, id, reason string, at time.Time) (api.Tenant, []string, error) {
+	var (
+		out     api.Tenant
+		revoked []string
+	)
 	err := a.tx(ctx, func(tx *sql.Tx) error {
 		before, err := lockTenant(ctx, tx, id)
 		if err != nil {
@@ -736,9 +765,36 @@ func (a *Admin) DeleteTenant(ctx context.Context, actor admin.Actor, id, reason 
 			return err
 		}
 		out = t
-		return audit(ctx, tx, actor, "tenant.delete", "tenant", t.ID.String(), &before, &t, reason)
+		if err := audit(ctx, tx, actor, "tenant.delete", "tenant", t.ID.String(), &before, &t, reason); err != nil {
+			return err
+		}
+		// A deleted tenant has no usable key (INV-X7): every active key bound
+		// to it is revoked here, each audited as a revocation, so the delete
+		// and the revocations commit or fail together (DR-053).
+		revoked = revoked[:0]
+		rows, err := tx.QueryContext(ctx, `SELECT `+keyRow+` FROM api_keys
+ WHERE tenant_id = $1 AND state = 'active' ORDER BY created_at, id FOR UPDATE`, before.ID)
+		if err != nil {
+			return Classify(OpWrite, err)
+		}
+		keys, err := collect(rows, scanAdminKey)
+		if err != nil {
+			return Classify(OpWrite, err)
+		}
+		for i := range keys {
+			k, err := scanAdminKey(tx.QueryRowContext(ctx, `UPDATE api_keys SET state = 'revoked', revoked_at = $2
+ WHERE id = $1 RETURNING `+keyRow, keys[i].ID, at.UTC()))
+			if err != nil {
+				return Classify(OpWrite, err)
+			}
+			if err := audit(ctx, tx, actor, "api_key.revoke", "api_key", k.ID.String(), &keys[i], &k, "tenant deleted"); err != nil {
+				return err
+			}
+			revoked = append(revoked, k.Prefix)
+		}
+		return nil
 	})
-	return out, err
+	return out, revoked, err
 }
 
 // ---- audit and events
@@ -904,10 +960,15 @@ func collect[T any](rows *sql.Rows, scan func(rowScanner) (T, error)) ([]T, erro
 // takes both (DR-050). A value supplied where none belongs is refused rather
 // than ignored, naming the field, which is the rule the contract's
 // PlanEntitlement states and the schema alone cannot (IP-17 DoD 7).
+//
+// An allocation cap, read through shapeKind as "cap", is metered and counts
+// entities, which never reset, so its interval is never (DR-054).
 func entitlementKind(kind string, e admin.Entitlement, i int) error {
 	prefix := "entitlements[" + strconv.Itoa(i) + "]."
 	boolean, rolling := kind == "boolean", kind == "rolling"
 	switch {
+	case kind == "cap" && e.Interval != nil && *e.Interval != "never":
+		return &Error{Code: api.ErrorCodeValidationFailed, Field: prefix + "reset_interval"}
 	case boolean && e.Limit != nil, !boolean && e.Limit == nil:
 		return &Error{Code: api.ErrorCodeValidationFailed, Field: prefix + "limit"}
 	case (boolean || rolling) && e.Interval != nil, !boolean && !rolling && e.Interval == nil:
@@ -919,6 +980,11 @@ func entitlementKind(kind string, e admin.Entitlement, i int) error {
 	}
 	return nil
 }
+
+// shapeKind is a feature's kind as entitlementKind reads it: "cap" for an
+// allocation cap, whose entitlements are metered with no reset (DR-054), and
+// the kind otherwise. It reads the features row aliased f.
+const shapeKind = `CASE WHEN f.allocation_cap THEN 'cap' ELSE f.kind::text END`
 
 // windowSeconds is the stored form of an entitlement's window, nil when it has
 // none. The name was checked against the seven when the body was read.

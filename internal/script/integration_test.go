@@ -1028,7 +1028,7 @@ func TestT09AFailedRequestLeavesNothingBehind(t *testing.T) {
 		return respCommand("EVALSHA", consumeBody.digest, "2", key, idemKeyFor(t, clientKey),
 			"30", "5", strconv.FormatInt(at.Add(-time.Hour).UnixMilli(), 10),
 			strconv.FormatInt(at.Add(23*time.Hour).UnixMilli(), 10), "100", strconv.FormatInt(at.UnixMilli(), 10),
-			Fingerprint(Consume, testTenant, feature, 30))
+			Fingerprint(Consume, testTenant, feature, 30), "")
 	}
 
 	t.Run("a command that arrives in full is applied in full", func(t *testing.T) {

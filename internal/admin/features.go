@@ -61,7 +61,7 @@ func (s *Service) getFeature(w http.ResponseWriter, r *http.Request) {
 // is fixed here: no route changes it, so a boolean feature never has a
 // metered assignment to conflict with (F-5, DR-050).
 func (s *Service) createFeature(w http.ResponseWriter, r *http.Request) {
-	b, err := readBody(r, "feature_key", "name", "unit", "description", "kind")
+	b, err := readBody(r, "feature_key", "name", "unit", "description", "kind", "allocation_cap")
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -74,6 +74,11 @@ func (s *Service) createFeature(w http.ResponseWriter, r *http.Request) {
 	if given && kind != "metered" && kind != "boolean" && kind != "rolling" {
 		b.add("kind", "must be metered, boolean or rolling")
 	}
+	// An allocation cap counts entities, so it is metered (DR-054).
+	capped := b.flag("allocation_cap")
+	if capped && given && kind != string(contract.FeatureKindMetered) {
+		b.add("allocation_cap", "is for a metered feature only")
+	}
 	if p := b.check(&contract.FeatureCreate{}); p != nil {
 		problem(w, r, p)
 		return
@@ -82,7 +87,7 @@ func (s *Service) createFeature(w http.ResponseWriter, r *http.Request) {
 		kind = string(contract.FeatureKindMetered)
 	}
 	f, err := s.store.CreateFeature(r.Context(), actor(r), NewFeature{Key: key, Name: name, Unit: unit, Description: desc,
-		Kind: kind})
+		Kind: kind, AllocationCap: capped})
 	if err != nil {
 		s.fail(w, r, err)
 		return

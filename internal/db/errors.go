@@ -177,6 +177,10 @@ var constraints = map[string]constraintRule{
 	"tenant_overrides_not_empty": validation("limit_value"),
 	"usage_events_delta_nonzero": {err: ErrZeroDelta},
 	"audit_log_subject_type":     {err: ErrAuditSubject},
+	// DR-053 and DR-054: a binding is a runtime key's, and a cap a metered
+	// feature's. The routes refuse both first, naming the same fields.
+	"api_keys_tenant_runtime_only":    validation("tenant_external_id"),
+	"features_allocation_cap_metered": validation("allocation_cap"),
 
 	// Foreign keys.
 	"plan_entitlements_plan_id_fkey":               {missing: ErrPlanNotFound},
@@ -188,6 +192,7 @@ var constraints = map[string]constraintRule{
 	"tenant_entitlement_pins_tenant_id_fkey":       {missing: ErrTenantNotFound},
 	"tenant_entitlement_pins_feature_id_fkey":      {missing: ErrFeatureNotFound},
 	"pending_reanchors_tenant_id_fkey":             {missing: ErrTenantNotFound},
+	"api_keys_tenant_id_fkey":                      {missing: ErrTenantNotFound},
 	"usage_events_feature_id_fkey":                 {missing: ErrFeatureNotFound},
 	"audit_log_actor_key_id_fkey":                  {missing: &Error{Code: api.ErrorCodeInternalError, Reason: "audit actor key"}},
 }

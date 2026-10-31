@@ -11,6 +11,36 @@ import (
 	"github.com/google/uuid"
 )
 
+// What an allocation cap counts and how many it counts now (UC-10, DR-054). The count is the entry's
+// `consumed`: creations less the refunds of deletions, with any administrative `set` showing through.
+// Ref: #/components/schemas/AllocationCap
+type AllocationCap struct {
+	// The resource type the cap counts, which is the feature's `unit`, such as `project` or `seat`.
+	Resource Unit `json:"resource"`
+	// The number of that resource the tenant holds now.
+	Count Amount `json:"count"`
+}
+
+// GetResource returns the value of Resource.
+func (s *AllocationCap) GetResource() Unit {
+	return s.Resource
+}
+
+// GetCount returns the value of Count.
+func (s *AllocationCap) GetCount() Amount {
+	return s.Count
+}
+
+// SetResource sets the value of Resource.
+func (s *AllocationCap) SetResource(val Unit) {
+	s.Resource = val
+}
+
+// SetCount sets the value of Count.
+func (s *AllocationCap) SetCount(val Amount) {
+	s.Count = val
+}
+
 type Amount int64
 
 // Archive a plan or a feature. Archiving is not deletion: the record keeps its history and stops being
@@ -402,6 +432,9 @@ type BalanceEntry struct {
 	// Present only for a `rolling` feature: the width of one bucket, which is the precision of the window
 	// sum. A unit counts for at least the window less this and at most the window (DR-052).
 	WindowPrecisionSeconds OptInt64 `json:"window_precision_seconds"`
+	// Present only for an allocation-cap feature (`allocation_cap: true`), and absent on every other entry
+	// (DR-054).
+	Cap OptAllocationCap `json:"cap"`
 }
 
 // GetFeatureKey returns the value of FeatureKey.
@@ -454,6 +487,11 @@ func (s *BalanceEntry) GetWindowPrecisionSeconds() OptInt64 {
 	return s.WindowPrecisionSeconds
 }
 
+// GetCap returns the value of Cap.
+func (s *BalanceEntry) GetCap() OptAllocationCap {
+	return s.Cap
+}
+
 // SetFeatureKey sets the value of FeatureKey.
 func (s *BalanceEntry) SetFeatureKey(val FeatureKey) {
 	s.FeatureKey = val
@@ -502,6 +540,11 @@ func (s *BalanceEntry) SetWindow(val OptRollingWindow) {
 // SetWindowPrecisionSeconds sets the value of WindowPrecisionSeconds.
 func (s *BalanceEntry) SetWindowPrecisionSeconds(val OptInt64) {
 	s.WindowPrecisionSeconds = val
+}
+
+// SetCap sets the value of Cap.
+func (s *BalanceEntry) SetCap(val OptAllocationCap) {
+	s.Cap = val
 }
 
 // BalanceEntryOKHeaders wraps BalanceEntry with response headers.
@@ -1566,6 +1609,7 @@ func (s *ErrorConflictTenantDeletedHeaders) SetResponse(val ErrorResponse) {
 }
 
 func (*ErrorConflictTenantDeletedHeaders) clearTenantOverrideRes() {}
+func (*ErrorConflictTenantDeletedHeaders) createKeyRes()           {}
 
 // ErrorConflictTenantHeaders wraps ErrorResponse with response headers.
 type ErrorConflictTenantHeaders struct {
@@ -2290,6 +2334,7 @@ func (s *ErrorTenantNotFoundHeaders) SetResponse(val ErrorResponse) {
 
 func (*ErrorTenantNotFoundHeaders) checkRes()           {}
 func (*ErrorTenantNotFoundHeaders) consumeRes()         {}
+func (*ErrorTenantNotFoundHeaders) createKeyRes()       {}
 func (*ErrorTenantNotFoundHeaders) deleteTenantRes()    {}
 func (*ErrorTenantNotFoundHeaders) getTenantRes()       {}
 func (*ErrorTenantNotFoundHeaders) listUsageEventsRes() {}
@@ -2578,6 +2623,9 @@ type Feature struct {
 	// amounts is not allowed, and that is what `feature_unit_immutable` is for (INV-F2).
 	Unit Unit        `json:"unit"`
 	Kind FeatureKind `json:"kind"`
+	// True for a feature that counts entities rather than events, such as seats or projects (UC-10). Fixed
+	// at creation. `GET /v1/balance` reports its resource and current count in `cap` (DR-054).
+	AllocationCap bool `json:"allocation_cap"`
 	// Free text for an operator reading a plan. Empty when there is nothing to say.
 	Description string       `json:"description"`
 	State       ArchiveState `json:"state"`
@@ -2611,6 +2659,11 @@ func (s *Feature) GetUnit() Unit {
 // GetKind returns the value of Kind.
 func (s *Feature) GetKind() FeatureKind {
 	return s.Kind
+}
+
+// GetAllocationCap returns the value of AllocationCap.
+func (s *Feature) GetAllocationCap() bool {
+	return s.AllocationCap
 }
 
 // GetDescription returns the value of Description.
@@ -2668,6 +2721,11 @@ func (s *Feature) SetKind(val FeatureKind) {
 	s.Kind = val
 }
 
+// SetAllocationCap sets the value of AllocationCap.
+func (s *Feature) SetAllocationCap(val bool) {
+	s.AllocationCap = val
+}
+
 // SetDescription sets the value of Description.
 func (s *Feature) SetDescription(val string) {
 	s.Description = val
@@ -2713,6 +2771,11 @@ type FeatureCreate struct {
 	// Optional, `metered` by default. Fixed at creation: no route changes it, so a boolean feature never
 	// has a metered assignment to conflict with (F-5, DR-050).
 	Kind OptFeatureCreateKind `json:"kind"`
+	// Optional, false by default, and fixed at creation. True marks a metered feature that counts entities
+	// (UC-10): its plan entitlements must have `reset_interval: never`, and `GET /v1/balance` reports its
+	// `cap` (DR-054). True on a `boolean` or `rolling` feature is `400 validation_failed` naming this
+	// field.
+	AllocationCap OptBool `json:"allocation_cap"`
 }
 
 // GetFeatureKey returns the value of FeatureKey.
@@ -2740,6 +2803,11 @@ func (s *FeatureCreate) GetKind() OptFeatureCreateKind {
 	return s.Kind
 }
 
+// GetAllocationCap returns the value of AllocationCap.
+func (s *FeatureCreate) GetAllocationCap() OptBool {
+	return s.AllocationCap
+}
+
 // SetFeatureKey sets the value of FeatureKey.
 func (s *FeatureCreate) SetFeatureKey(val FeatureKey) {
 	s.FeatureKey = val
@@ -2763,6 +2831,11 @@ func (s *FeatureCreate) SetDescription(val OptString) {
 // SetKind sets the value of Kind.
 func (s *FeatureCreate) SetKind(val OptFeatureCreateKind) {
 	s.Kind = val
+}
+
+// SetAllocationCap sets the value of AllocationCap.
+func (s *FeatureCreate) SetAllocationCap(val OptBool) {
+	s.AllocationCap = val
 }
 
 // Merged schema.
@@ -3214,10 +3287,13 @@ type Key struct {
 	// The public, unique part of the key. It appears in this list, in the audit log and in logs in place
 	// of the key, which is how a key leaked in a support ticket is traced to the key that leaked (DR-043,
 	// K-1).
-	Prefix    string    `json:"prefix"`
-	Scope     KeyScope  `json:"scope"`
-	State     KeyState  `json:"state"`
-	CreatedAt Timestamp `json:"created_at"`
+	Prefix string   `json:"prefix"`
+	Scope  KeyScope `json:"scope"`
+	State  KeyState `json:"state"`
+	// The one tenant a bound runtime key can address, or null for a key that reaches every tenant
+	// (DR-053). Fixed at issue.
+	TenantExternalID NilExternalId `json:"tenant_external_id"`
+	CreatedAt        Timestamp     `json:"created_at"`
 	// Optional at issue time, enforced on every request. A key past this is `401 api_key_invalid`.
 	ExpiresAt  NilTimestamp `json:"expires_at"`
 	LastUsedAt NilTimestamp `json:"last_used_at"`
@@ -3249,6 +3325,11 @@ func (s *Key) GetScope() KeyScope {
 // GetState returns the value of State.
 func (s *Key) GetState() KeyState {
 	return s.State
+}
+
+// GetTenantExternalID returns the value of TenantExternalID.
+func (s *Key) GetTenantExternalID() NilExternalId {
+	return s.TenantExternalID
 }
 
 // GetCreatedAt returns the value of CreatedAt.
@@ -3296,6 +3377,11 @@ func (s *Key) SetState(val KeyState) {
 	s.State = val
 }
 
+// SetTenantExternalID sets the value of TenantExternalID.
+func (s *Key) SetTenantExternalID(val NilExternalId) {
+	s.TenantExternalID = val
+}
+
 // SetCreatedAt sets the value of CreatedAt.
 func (s *Key) SetCreatedAt(val Timestamp) {
 	s.CreatedAt = val
@@ -3323,9 +3409,13 @@ type KeyCreate struct {
 	// what the key is for rather than who typed it.
 	Name string `json:"name"`
 	// Visible in the token itself, so a scope mismatch is not a debugging session. Issuance is an admin
-	// action and is audited, and it is a per-customer decision: a runtime key is a credential for the
-	// whole instance.
+	// action and is audited, and it is a per-customer decision: a runtime key with no `tenant_external_id`
+	// is a credential for the whole instance.
 	Scope KeyScope `json:"scope"`
+	// Optional, runtime keys only: the one tenant the key can address (DR-053). With `scope: admin` it is
+	// `400 validation_failed` naming this field. An unknown tenant is `404 tenant_not_found` and a deleted
+	// one `409 tenant_deleted`.
+	TenantExternalID OptExternalId `json:"tenant_external_id"`
 	// Optional. An expiry is a limit on a credential's blast radius.
 	ExpiresAt OptTimestamp `json:"expires_at"`
 }
@@ -3338,6 +3428,11 @@ func (s *KeyCreate) GetName() string {
 // GetScope returns the value of Scope.
 func (s *KeyCreate) GetScope() KeyScope {
 	return s.Scope
+}
+
+// GetTenantExternalID returns the value of TenantExternalID.
+func (s *KeyCreate) GetTenantExternalID() OptExternalId {
+	return s.TenantExternalID
 }
 
 // GetExpiresAt returns the value of ExpiresAt.
@@ -3353,6 +3448,11 @@ func (s *KeyCreate) SetName(val string) {
 // SetScope sets the value of Scope.
 func (s *KeyCreate) SetScope(val KeyScope) {
 	s.Scope = val
+}
+
+// SetTenantExternalID sets the value of TenantExternalID.
+func (s *KeyCreate) SetTenantExternalID(val OptExternalId) {
+	s.TenantExternalID = val
 }
 
 // SetExpiresAt sets the value of ExpiresAt.
@@ -3372,11 +3472,13 @@ type KeyCreated struct {
 	// The name chosen at creation, echoed back.
 	Name string `json:"name"`
 	// The public prefix, so it can be recorded where the key cannot.
-	Prefix    string       `json:"prefix"`
-	Scope     KeyScope     `json:"scope"`
-	State     KeyState     `json:"state"`
-	CreatedAt Timestamp    `json:"created_at"`
-	ExpiresAt NilTimestamp `json:"expires_at"`
+	Prefix string   `json:"prefix"`
+	Scope  KeyScope `json:"scope"`
+	State  KeyState `json:"state"`
+	// The tenant the key is bound to, or null for an unbound key (DR-053).
+	TenantExternalID NilExternalId `json:"tenant_external_id"`
+	CreatedAt        Timestamp     `json:"created_at"`
+	ExpiresAt        NilTimestamp  `json:"expires_at"`
 	// The plaintext credential, in the form `qc_<scope>_<prefix>.<secret>`. Shown once.
 	Key string `json:"key"`
 }
@@ -3404,6 +3506,11 @@ func (s *KeyCreated) GetScope() KeyScope {
 // GetState returns the value of State.
 func (s *KeyCreated) GetState() KeyState {
 	return s.State
+}
+
+// GetTenantExternalID returns the value of TenantExternalID.
+func (s *KeyCreated) GetTenantExternalID() NilExternalId {
+	return s.TenantExternalID
 }
 
 // GetCreatedAt returns the value of CreatedAt.
@@ -3444,6 +3551,11 @@ func (s *KeyCreated) SetScope(val KeyScope) {
 // SetState sets the value of State.
 func (s *KeyCreated) SetState(val KeyState) {
 	s.State = val
+}
+
+// SetTenantExternalID sets the value of TenantExternalID.
+func (s *KeyCreated) SetTenantExternalID(val NilExternalId) {
+	s.TenantExternalID = val
 }
 
 // SetCreatedAt sets the value of CreatedAt.
@@ -4098,6 +4210,51 @@ func (o NilAuditEntryBefore) Or(d AuditEntryBefore) AuditEntryBefore {
 	return d
 }
 
+// NewNilExternalId returns new NilExternalId with value set to v.
+func NewNilExternalId(v ExternalId) NilExternalId {
+	return NilExternalId{
+		Value: v,
+	}
+}
+
+// NilExternalId is nullable ExternalId.
+type NilExternalId struct {
+	Value ExternalId
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilExternalId) SetTo(v ExternalId) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilExternalId) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilExternalId) SetToNull() {
+	o.Null = true
+	var v ExternalId
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilExternalId) Get() (v ExternalId, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilExternalId) Or(d ExternalId) ExternalId {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewNilFloat64 returns new NilFloat64 with value set to v.
 func NewNilFloat64(v float64) NilFloat64 {
 	return NilFloat64{
@@ -4514,6 +4671,52 @@ func (s *OpenAPIOKHeaders) SetXRequestID(val RequestId) {
 // SetResponse sets the value of Response.
 func (s *OpenAPIOKHeaders) SetResponse(val OpenAPIOK) {
 	s.Response = val
+}
+
+// NewOptAllocationCap returns new OptAllocationCap with value set to v.
+func NewOptAllocationCap(v AllocationCap) OptAllocationCap {
+	return OptAllocationCap{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptAllocationCap is optional AllocationCap.
+type OptAllocationCap struct {
+	Value AllocationCap
+	Set   bool
+}
+
+// IsSet returns true if OptAllocationCap was set.
+func (o OptAllocationCap) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptAllocationCap) Reset() {
+	var v AllocationCap
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptAllocationCap) SetTo(v AllocationCap) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptAllocationCap) Get() (v AllocationCap, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptAllocationCap) Or(d AllocationCap) AllocationCap {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
 }
 
 // NewOptBool returns new OptBool with value set to v.

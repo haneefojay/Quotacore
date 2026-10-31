@@ -291,10 +291,18 @@ func (s *Service) deleteTenant(w http.ResponseWriter, r *http.Request) {
 		problem(w, r, p)
 		return
 	}
-	t, err := s.store.DeleteTenant(r.Context(), actor(r), id, reason, accepted(r))
+	t, revoked, err := s.store.DeleteTenant(r.Context(), actor(r), id, reason, accepted(r))
 	if err != nil {
 		s.fail(w, r, err)
 		return
+	}
+	// The tenant's keys were revoked with it. Dropping them here makes the
+	// next request with one a miss that reads the revoked row; the publish
+	// below makes every other instance reconcile its key cache (INV-X7).
+	if s.keys != nil {
+		for _, p := range revoked {
+			s.keys.Forget(p)
+		}
 	}
 	s.publish(r, []string{t.ID.String()})
 	respond(w, r, http.StatusOK, &t)

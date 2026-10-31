@@ -223,7 +223,7 @@ func TestTheRunnerAddressesTheScriptByItsDigest(t *testing.T) {
 	}
 }
 
-func TestTheRunnerSendsTwoKeysAndSevenValues(t *testing.T) {
+func TestTheRunnerSendsTwoKeysAndEightValues(t *testing.T) {
 	fake := &fakeStore{reply: appliedReply(70)}
 	r := newRunner(t, fake, 250*time.Millisecond)
 	if _, err := r.Consume(context.Background(), testRequest()); err != nil {
@@ -243,6 +243,7 @@ func TestTheRunnerSendsTwoKeysAndSevenValues(t *testing.T) {
 		"100",
 		strconv.FormatInt(testRequest().At.UnixMilli(), 10),
 		Fingerprint(Consume, testTenant, "searches", 30),
+		"", // an unbound key's binding (DR-053)
 	}
 	if len(fake.args) != len(want) {
 		t.Fatalf("ARGV = %v, want %v", fake.args, want)
@@ -270,8 +271,11 @@ func TestCheckSendsOneKeyAndAnEmptyFingerprint(t *testing.T) {
 	if len(fake.args) != argCount {
 		t.Fatalf("a check sent %d arguments, want %d", len(fake.args), argCount)
 	}
-	if last, ok := fake.args[argCount-1].(string); !ok || last != "" {
-		t.Errorf("a check sent ARGV[%d] = %v, and a check has no fingerprint", argCount, fake.args[argCount-1])
+	if fp, ok := fake.args[6].(string); !ok || fp != "" {
+		t.Errorf("a check sent ARGV[7] = %v, and a check has no fingerprint", fake.args[6])
+	}
+	if binding, ok := fake.args[7].(string); !ok || binding != "" {
+		t.Errorf("an unbound check sent ARGV[8] = %v, want the empty binding (DR-053)", fake.args[7])
 	}
 }
 

@@ -150,6 +150,15 @@ caller get charged for the failure?
 > by v0.2's rolling features rather than by every window, and UC-17's `validation_failed` for a
 > mismatch is read as `invalid_window`, which this catalogue already named for it.
 
+> **Amended 2026-10-31 (`IP-20`).** The keys cell gains `tenant_not_found` and `tenant_deleted`:
+> a runtime key issued with a `tenant_external_id` names a tenant that must exist and must not be
+> deleted (DR-053). No code is added. A bound key's request for another tenant on a data-plane
+> route is `tenant_not_found`, which every data-plane cell already lists, because the refusal is
+> the unknown tenant's answer and discloses nothing (Q-38). `not_implemented` stays reserved: no
+> route of v0.1 or v0.2 answered it for a tenant-scoped key, and v0.1's key create refuses the
+> field as unknown with `validation_failed`, so an old build never issues an unbound key in place of
+> a bound one.
+
 **The 500 guarantee.** A `500` on `consume` or `refund` always means the balance is unchanged.
 The mutation is a single atomic script execution, so there is no state in which a deduction was
 partially applied. This is a strong, testable guarantee and it is what makes a client-side retry
@@ -185,7 +194,7 @@ The complete mapping, so no error can be documented in one place and forgotten i
 | `DELETE /v1/admin/tenants/{id}/overrides/{feature_key}` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `feature_not_found`, `tenant_deleted`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
 | `GET /v1/admin/tenants/{id}/events` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
 | `GET /v1/admin/audit` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
-| `POST /v1/admin/keys`, `GET /v1/admin/keys`, `DELETE /v1/admin/keys/{id}` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `api_key_not_found`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
+| `POST /v1/admin/keys`, `GET /v1/admin/keys`, `DELETE /v1/admin/keys/{id}` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `api_key_not_found`, `tenant_not_found`, `tenant_deleted`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
 | `GET /v1/admin/status`, `GET /healthz`, `GET /readyz` | none |
 | `GET /metrics`, `GET /openapi.json`, `GET /docs` | none |
 

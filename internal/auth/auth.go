@@ -20,6 +20,11 @@ type Key struct {
 	State     string // active, revoked or expired
 	ExpiresAt *time.Time
 	Hash      []byte
+	// TenantID is the internal id of the one tenant a bound runtime key can
+	// address, or empty for a key that reaches every tenant (DR-053). It is the
+	// stored row's, never the token's, so it is read and reconciled with the
+	// row like the scope and the state are.
+	TenantID string
 }
 
 // KeyLoader is the control-plane read the key cache may perform. internal/db

@@ -23,6 +23,8 @@ type RollingRequest struct {
 	Window         rolling.Window
 	// At is the instant the request was accepted, its one clock read.
 	At time.Time
+	// Binding is the key's tenant, as for Request (DR-053).
+	Binding string
 }
 
 // RollingOutcome is a rolling window as the script left it, read inside the
@@ -106,6 +108,7 @@ func (r *Runner) rolling(ctx context.Context, b body, req RollingRequest) (Rolli
 		strconv.FormatInt(req.At.UnixMilli(), 10),
 		"", "",
 		fingerprint,
+		req.Binding,
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)

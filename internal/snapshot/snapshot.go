@@ -398,7 +398,7 @@ func (t *Tenant) Entitlement(featureKey string, at time.Time) (Entitlement, bool
 		return Entitlement{}, false
 	}
 	limit, _ := t.limit(featureKey, pin)
-	return Entitlement{Limit: limit, Interval: pin.Interval, Archived: pin.Archived}, true
+	return Entitlement{Limit: limit, Interval: pin.Interval, Archived: pin.Archived, Cap: pin.Cap}, true
 }
 
 // find takes the write lock, not the read lock, because a hit is a write: get

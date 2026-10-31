@@ -90,7 +90,7 @@ func (a *Admin) UpdatePlan(ctx context.Context, actor admin.Actor, id string, c 
 // drops the ones past it; a tenant with no pin gets the feature at its next
 // re-anchor (E-1, DR-045).
 func replaceEntitlements(ctx context.Context, tx *sql.Tx, planID string, ents []admin.Entitlement, at time.Time) error {
-	rows, err := tx.QueryContext(ctx, `SELECT f.key, e.feature_id, f.kind, e.limit_value, e.interval, e.rolling_window_seconds
+	rows, err := tx.QueryContext(ctx, `SELECT f.key, e.feature_id, `+shapeKind+`, e.limit_value, e.interval, e.rolling_window_seconds
   FROM plan_entitlements e JOIN features f ON f.id = e.feature_id WHERE e.plan_id = $1`, planID)
 	if err != nil {
 		return Classify(OpWrite, err)
@@ -128,7 +128,7 @@ func replaceEntitlements(ctx context.Context, tx *sql.Tx, planID string, ents []
 		}
 		field := "entitlements[" + strconv.Itoa(i) + "].feature_key"
 		var featureID, state, kind string
-		err := tx.QueryRowContext(ctx, `SELECT id, state, kind FROM features WHERE key = $1 FOR SHARE`, e.Feature).Scan(&featureID, &state, &kind)
+		err := tx.QueryRowContext(ctx, `SELECT id, state, `+shapeKind+` FROM features f WHERE key = $1 FOR SHARE`, e.Feature).Scan(&featureID, &state, &kind)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && state == "archived") {
 			return &Error{Code: api.ErrorCodeValidationFailed, Field: field}
 		}

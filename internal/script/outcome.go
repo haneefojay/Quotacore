@@ -8,13 +8,14 @@ import (
 )
 
 // Decision is what a script decided about a request. It is a closed set of
-// seven, and the strings are the ones the scripts return, so a value that is
+// eight, and the strings are the ones the scripts return, so a value that is
 // not in this set means the reply and this code disagree and is refused rather
 // than interpreted.
 //
-// Two of the seven say nothing about whether the request fit in the balance:
+// Three of the eight say nothing about whether the request fit in the balance:
 // Replayed and Reused are what an idempotency key decides (DR-027, DR-028), and
-// both arrive before the script has looked at the balance at all.
+// both arrive before the script has looked at the balance at all; Foreign is
+// what the key's binding decides (DR-053), before anything else.
 type Decision string
 
 const (
@@ -48,6 +49,10 @@ const (
 	// refused as idempotency_key_reuse. The record that was there is untouched,
 	// so the original outcome is still retrievable (DR-028, INV-I2).
 	Reused Decision = "reused"
+	// Foreign means the request's key is bound to one tenant and a key the
+	// script was handed is in another's slot (DR-053). The script read and
+	// wrote nothing; the caller answers as for an unknown tenant.
+	Foreign Decision = "foreign"
 )
 
 // Transition is what the script found when it compared the caller's window with
@@ -134,6 +139,12 @@ var ErrInvalidArgument = errors.New("the request would be refused as invalid")
 // generated one would generate a fresh key per attempt and protect nothing while
 // appearing to. The caller maps it to 400 missing_idempotency_key.
 var ErrMissingIdempotencyKey = errors.New("this operation requires an Idempotency-Key")
+
+// ErrForeignTenant is a bound key's request for another tenant, refused inside
+// the script (DR-053). The data plane maps it to 404 tenant_not_found, the
+// answer an unknown tenant gets, so a bound key learns nothing about another
+// tenant (Q-38).
+var ErrForeignTenant = errors.New("the key is bound to another tenant")
 
 // ErrIdempotencyKeyReuse is an Idempotency-Key that was already used for a
 // different operation, and it is never applied (DR-028). The caller maps it to
@@ -225,8 +236,13 @@ func decodeFields(op Operation, fields []string) (Outcome, error) {
 			return Outcome{}, err
 		}
 		return Outcome{}, fmt.Errorf("the %s script: %w", op, ErrIdempotencyKeyReuse)
+	case Foreign:
+		if err := requireEmpty(op, fields); err != nil {
+			return Outcome{}, err
+		}
+		return Outcome{}, fmt.Errorf("the %s script: %w", op, ErrForeignTenant)
 	default:
-		return Outcome{}, fmt.Errorf("the %s script answered the decision %q, which is not one of the seven", op, fields[0])
+		return Outcome{}, fmt.Errorf("the %s script answered the decision %q, which is not one of the eight", op, fields[0])
 	}
 
 	switch out.Transition {

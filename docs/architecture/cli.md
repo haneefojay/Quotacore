@@ -69,7 +69,10 @@ command the table does not have, or a method, path or operation that is not the 
 | `audit note` | local: `--reason` is required; appends an audit row with `subject_type` `system` and action `system.note`, such as a restore's truncation of history; step 6 after a Postgres restore (`IP-16`, Q-28) | yes |
 
 A tenant is addressed by its `external_id` or its id, and a plan by its key or its id, as the
-contract's path parameters allow; a key is addressed by its id. `quotacore <command> --help` prints
+contract's path parameters allow; a key is addressed by its id. `key create --tenant <external_id>` binds a
+runtime key to one tenant, which it alone can address, and `key list --tenant` lists that tenant's
+keys (DR-053); `feature create --allocation-cap` marks a metered feature that counts entities
+(DR-054). Both were added 2026-10-31 by `IP-20`. `quotacore <command> --help` prints
 its flags and its route, from the same table the binary dispatches on.
 
 ## 2. Environment

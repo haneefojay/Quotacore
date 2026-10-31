@@ -59,11 +59,17 @@ type NewKey struct {
 	ExpiresAt *time.Time
 	Prefix    string
 	Hash      []byte
+	// TenantExternalID binds a runtime key to one tenant (DR-053); empty
+	// issues a key that reaches every tenant.
+	TenantExternalID string
 }
 
 type NewFeature struct {
 	Key, Name, Unit, Description string
-	Kind                         string // metered or boolean, fixed at creation (DR-050)
+	Kind                         string // metered, boolean or rolling, fixed at creation (DR-050, DR-052)
+	// AllocationCap marks a metered feature that counts entities, fixed at
+	// creation (DR-054).
+	AllocationCap bool
 }
 
 // FeatureChange is a feature PATCH: nil leaves a field as it is.
@@ -232,7 +238,8 @@ type EventPage struct {
 // its audit row in the same transaction, and every refusal is an error whose
 // catalogue code the route answers with (see Coded).
 type Store interface {
-	ListKeys(ctx context.Context, p Page) ([]contract.Key, error)
+	// ListKeys lists every key, or one tenant's when tenantExternalID is set.
+	ListKeys(ctx context.Context, p Page, tenantExternalID string) ([]contract.Key, error)
 	CreateKey(ctx context.Context, a Actor, k NewKey) (contract.Key, error)
 	// RevokeKey returns the key's prefix and whether this call revoked it;
 	// false for a key already revoked, which writes no audit row.
@@ -258,7 +265,10 @@ type Store interface {
 	UpdateTenant(ctx context.Context, a Actor, id string, c TenantChange) (contract.Tenant, error)
 	// SetTenantState is suspend (to "suspended") and resume (to "active").
 	SetTenantState(ctx context.Context, a Actor, id string, version int64, reason, to string) (contract.Tenant, error)
-	DeleteTenant(ctx context.Context, a Actor, id, reason string, at time.Time) (contract.Tenant, error)
+	// DeleteTenant also revokes every active key bound to the tenant, in the
+	// same transaction, and returns their prefixes so the route can drop them
+	// from the key cache (INV-X7, DR-053).
+	DeleteTenant(ctx context.Context, a Actor, id, reason string, at time.Time) (contract.Tenant, []string, error)
 
 	// UpdatePlan edits a plan and returns the tenants on it, whose snapshot
 	// the edit changes. It touches no balance (DR-014).

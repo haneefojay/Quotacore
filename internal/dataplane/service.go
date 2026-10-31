@@ -43,9 +43,10 @@ type Scripts interface {
 	RefundRolling(ctx context.Context, req script.RollingRequest) (script.RollingOutcome, error)
 }
 
-// Balances reads stored balance hashes for the balance route.
+// Balances reads stored balance hashes for the balance route, as the key
+// that asked: a key bound to another tenant reads nothing (DR-053).
 type Balances interface {
-	ReadBalances(ctx context.Context, tenantID string, features []string) ([]store.Stored, error)
+	ReadBalancesAs(ctx context.Context, binding, tenantID string, features []string) ([]store.Stored, error)
 }
 
 // Options configure a Service.
@@ -156,6 +157,26 @@ func (s *Service) tenant(externalID string) (*snapshot.Tenant, time.Duration, *e
 			"the tenant could not be resolved right now").Retry(retryShortly)
 	}
 	return nil, spent, &p
+}
+
+// bound refuses a bound key's request for any tenant but its own, as an
+// unknown tenant is refused, so the key learns nothing about another
+// tenant's existence, state or plan (DR-053, Q-38). It runs before the gate.
+// The scripts and the balance read check the same binding again, inside the
+// store, so this check is the courteous answer and not the guarantee.
+func bound(ex *envelope.Exchange, t *snapshot.Tenant, externalID string) *envelope.Problem {
+	if ex.KeyTenant == "" || ex.KeyTenant == t.ID {
+		return nil
+	}
+	p := foreign(externalID)
+	return &p
+}
+
+// foreign is the answer to a bound key's request for another tenant: exactly
+// the unknown tenant's.
+func foreign(externalID string) envelope.Problem {
+	return envelope.Error(contract.ErrorCodeTenantNotFound, "no tenant has that tenant_external_id").
+		With("tenant_external_id", externalID)
 }
 
 // location returns the tenant's zone, loading each name once. The zone was

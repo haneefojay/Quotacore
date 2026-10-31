@@ -33,7 +33,7 @@ configuration we prescribe, and a penetration test — see [§6](#6-known-gaps).
 
 | Threat | Likelihood | Impact | Mitigation | Residual risk |
 | --- | --- | --- | --- | --- |
-| Leaked runtime key | Medium | High — deduct and read every tenant | Named, scoped, rotatable, revocable immediately, prefix-only logging, per-key rate limiting, optional expiry | A runtime key is **not** bound to a tenant. Possession gives access to every tenant on the instance |
+| Leaked runtime key | Medium | High — deduct and read every tenant | Named, scoped, rotatable, revocable immediately, prefix-only logging, per-key rate limiting, optional expiry | An unbound runtime key reaches every tenant on the instance. A key issued with `tenant_external_id` reaches one tenant, checked inside the script (DR-053), so a leak is bounded to that tenant |
 | Leaked admin key | Low | Severe — full control | Issued deliberately, short-lived by preference, every action audited with the key prefix and before/after values | Full control by design; detection depends on the audit log |
 | Direct write to the fast store | Low | Severe — free service | Bind to localhost or a private network; authenticated, TLS-protected connections; the ceiling invariant enforced in the datastore, not in Go | Total trust. A store write is undetectable from inside the service |
 | Script injection via a tenant or feature identifier | Low | Severe | Keys built by one tested function; all values passed as `ARGV`; the script body is a constant (NFR-S8) | A bypass is P0 and treated as a design failure |
@@ -102,12 +102,12 @@ valid key or host access.
 
 | # | Gap | Severity | Position | Revisit |
 | --- | --- | --- | --- | --- |
-| 1 | A runtime key is not bound to a tenant | High | Documented; mitigated by admin-scope being required for anything that changes a contract, and by the refund ceiling | First candidate for a post-MVP release |
+| 1 | A runtime key is not bound to a tenant | High, for an unbound key | **Closed in v0.2 for a bound key** (`IP-20`, DR-053): a runtime key issued to one tenant cannot address another, and the binding is checked inside the atomic script, not only by the handler. An unbound runtime key, still the default, keeps the original position: admin scope is required to change a contract, and the refund ceiling holds | Issue bound keys by default once the SDKs document them |
 | 2 | No encryption at rest | Low | The host's responsibility; the service holds no data whose compromise it cannot describe | With a managed-deployment story, not before |
 | 3 | The fast store is fully trusted | High, if the boundary is ignored | Bind it privately and say so in the deployment guide | Revisit if a managed data store is ever offered |
 | 4 | An operator with database write access can alter both the ledger and the audit log | Medium | Detected by reconciliation and alerted as P1, not prevented | Only a cryptographic append-only store would change this, at a cost the MVP cannot bear |
 | 5 | No independent penetration test | Medium | No code exists to test | Before the first public release, not before the first pilot |
-| 6 | No per-tenant key issuance without a runtime key per tenant | Low | Deferred deliberately | Post-MVP |
+| 6 | No per-tenant key issuance without a runtime key per tenant | Low | Answered in v0.2 by a bound runtime key per tenant (`IP-20`, DR-053); customer-managed rotation schedules and keys with a subset of the scopes stay deferred | Post-v0.2 |
 | 7 | The v0.4 UI's XSS and redirect surface | Unknown | Not built; requirements recorded for when it is | At the start of v0.4 |
 | 8 | `tenants.display_name` is free text, required, and could hold a person's name | Low | It is an operator label for a tenant list, never a lookup key and never logged (NFR-O6). ADR-0013 puts personal names out of scope, and nothing can enforce that on a free-text label, so the position is documentation: it names the account or workspace, not a person | If a deployment needs it enforced, a configurable pattern on the label, not a schema change |
 | 9 | `/metrics` is unauthenticated, and its series carry `key_prefix` labels | Low | Served on its own listener, `127.0.0.1:9090` by default, with a `warn` at start on any other bind; the API port answers it `404`. A prefix identifies a key and is not a credential (DR-043). Added 2026-10-21 (`IP-13`) | If a deployment must scrape across hosts, a scrape credential or mTLS on that listener |

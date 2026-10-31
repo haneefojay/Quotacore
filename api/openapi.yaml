@@ -1608,6 +1608,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/TenantExternalIdQuery'
       responses:
         '200':
           $ref: '#/components/responses/KeyListOK'
@@ -1634,6 +1635,11 @@ paths:
 
         Scope is visible in the token itself, so a scope mismatch is not a 400-line debugging
         session: `qc_runtime_<prefix>.<secret>` and `qc_admin_<prefix>.<secret>`.
+
+        A runtime key may be bound to one tenant with `tenant_external_id`, and then addresses
+        that tenant and no other: any other tenant is `404 tenant_not_found` on every data-plane
+        route, decided inside the script as well as before it (DR-053). The binding is in the
+        stored row, not in the token, as the scope is. Deleting the tenant revokes its keys.
       security:
         - bearerAuth: []
       x-required-scope: admin
@@ -1650,6 +1656,12 @@ paths:
                   name: acme-prod-deploy
                   scope: runtime
                   expires_at: '2027-01-01T00:00:00+01:00'
+              tenant_key:
+                summary: A runtime key that reaches one tenant only
+                value:
+                  name: acme-prod-01-app
+                  scope: runtime
+                  tenant_external_id: acme-prod-01
       responses:
         '201':
           $ref: '#/components/responses/KeyCreated'
@@ -1659,6 +1671,10 @@ paths:
           $ref: '#/components/responses/ErrorUnauthorized'
         '403':
           $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorTenantNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflictTenantDeleted'
         '413':
           $ref: '#/components/responses/ErrorPayloadTooLarge'
         '429':
@@ -2714,7 +2730,7 @@ components:
             $ref: '#/components/schemas/BalanceResponse'
           examples:
             full:
-              summary: A tenant on a three-feature plan, one of them boolean
+              summary: A tenant on a four-feature plan, one boolean and one an allocation cap
               value:
                 tenant_external_id: acme-prod-01
                 entries:
@@ -2734,6 +2750,17 @@ components:
                     consumed: 0
                     cycle_start: null
                     cycle_end: null
+                  - feature_key: projects
+                    kind: metered
+                    balance: 1
+                    limit: 3
+                    bonus: 0
+                    consumed: 2
+                    cycle_start: null
+                    cycle_end: null
+                    cap:
+                      resource: project
+                      count: 2
                   - feature_key: sso
                     kind: boolean
                     balance: null
@@ -2788,6 +2815,7 @@ components:
                 name: LLM output tokens
                 unit: token
                 kind: metered
+                allocation_cap: false
                 description: Completion tokens billed to the customer
                 state: active
                 version: 3
@@ -2815,6 +2843,7 @@ components:
                     name: LLM output tokens
                     unit: token
                     kind: metered
+                    allocation_cap: false
                     description: Completion tokens billed to the customer
                     state: active
                     version: 3
@@ -2826,6 +2855,7 @@ components:
                     name: API requests
                     unit: request
                     kind: metered
+                    allocation_cap: false
                     description: ''
                     state: active
                     version: 1
@@ -3095,6 +3125,7 @@ components:
                     prefix: 9f2c1a4e7b8d
                     scope: runtime
                     state: active
+                    tenant_external_id: acme-prod-01
                     created_at: '2026-02-11T10:00:00+01:00'
                     expires_at: '2027-01-01T00:00:00+01:00'
                     last_used_at: '2026-09-27T10:11:12+02:00'
@@ -3104,6 +3135,7 @@ components:
                     prefix: 3a7b9c1d5e2f
                     scope: admin
                     state: revoked
+                    tenant_external_id: null
                     created_at: '2025-11-02T08:30:00+01:00'
                     expires_at: null
                     last_used_at: '2026-03-04T16:20:00+01:00'
@@ -3131,6 +3163,7 @@ components:
                 prefix: 9f2c1a4e7b8d
                 scope: runtime
                 state: active
+                tenant_external_id: null
                 created_at: '2026-09-28T14:10:00+02:00'
                 expires_at: '2027-01-01T00:00:00+01:00'
                 key: qc_runtime_9f2c1a4e7b8d.kZ3nQ7xR2vT9wY4bH6mP1sD8fG5jL0cA
@@ -4437,6 +4470,30 @@ components:
             Present only for a `rolling` feature: the width of one bucket, which is the precision
             of the window sum. A unit counts for at least the window less this and at most the
             window (DR-052).
+        cap:
+          allOf:
+            - $ref: '#/components/schemas/AllocationCap'
+          description: |
+            Present only for an allocation-cap feature (`allocation_cap: true`), and absent on
+            every other entry (DR-054).
+
+    AllocationCap:
+      description: |
+        What an allocation cap counts and how many it counts now (UC-10, DR-054). The count is the
+        entry's `consumed`: creations less the refunds of deletions, with any administrative `set`
+        showing through.
+      type: object
+      additionalProperties: false
+      required: [resource, count]
+      properties:
+        resource:
+          allOf:
+            - $ref: '#/components/schemas/Unit'
+          description: The resource type the cap counts, which is the feature's `unit`, such as `project` or `seat`.
+        count:
+          allOf:
+            - $ref: '#/components/schemas/Amount'
+          description: The number of that resource the tenant holds now.
 
     BalanceResponse:
       description: |
@@ -4463,7 +4520,7 @@ components:
         much of it a tenant gets, and a tenant is assigned to exactly one plan (UC-05).
       type: object
       additionalProperties: false
-      required: [id, feature_key, name, unit, kind, description, state, version, created_at, updated_at, archived_at]
+      required: [id, feature_key, name, unit, kind, allocation_cap, description, state, version, created_at, updated_at, archived_at]
       properties:
         id:
           type: string
@@ -4489,6 +4546,12 @@ components:
             (INV-F2).
         kind:
           $ref: '#/components/schemas/FeatureKind'
+        allocation_cap:
+          type: boolean
+          description: |
+            True for a feature that counts entities rather than events, such as seats or projects
+            (UC-10). Fixed at creation. `GET /v1/balance` reports its resource and current count
+            in `cap` (DR-054).
         description:
           type: string
           maxLength: 2000
@@ -4540,6 +4603,14 @@ components:
             Optional, `metered` by default. Fixed at creation: no route changes it, so a boolean
             feature never has a metered assignment to conflict with (F-5, DR-050).
           default: metered
+        allocation_cap:
+          type: boolean
+          description: |
+            Optional, false by default, and fixed at creation. True marks a metered feature that
+            counts entities (UC-10): its plan entitlements must have `reset_interval: never`, and
+            `GET /v1/balance` reports its `cap` (DR-054). True on a `boolean` or `rolling` feature
+            is `400 validation_failed` naming this field.
+          default: false
 
     FeatureUpdate:
       type: object
@@ -5464,7 +5535,7 @@ components:
       description: |
         Key metadata. The secret is never present here and no route will return it (INV-K3).
       additionalProperties: false
-      required: [id, name, prefix, scope, state, created_at, expires_at, last_used_at, revoked_at]
+      required: [id, name, prefix, scope, state, tenant_external_id, created_at, expires_at, last_used_at, revoked_at]
       properties:
         id:
           type: string
@@ -5486,6 +5557,13 @@ components:
           $ref: '#/components/schemas/KeyScope'
         state:
           $ref: '#/components/schemas/KeyState'
+        tenant_external_id:
+          oneOf:
+            - $ref: '#/components/schemas/ExternalId'
+            - type: 'null'
+          description: |
+            The one tenant a bound runtime key can address, or null for a key that reaches every
+            tenant (DR-053). Fixed at issue.
         created_at:
           $ref: '#/components/schemas/Timestamp'
         expires_at:
@@ -5527,8 +5605,15 @@ components:
             - $ref: '#/components/schemas/KeyScope'
           description: |
             Visible in the token itself, so a scope mismatch is not a debugging session. Issuance
-            is an admin action and is audited, and it is a per-customer decision: a runtime key is
-            a credential for the whole instance.
+            is an admin action and is audited, and it is a per-customer decision: a runtime key
+            with no `tenant_external_id` is a credential for the whole instance.
+        tenant_external_id:
+          allOf:
+            - $ref: '#/components/schemas/ExternalId'
+          description: |
+            Optional, runtime keys only: the one tenant the key can address (DR-053). With
+            `scope: admin` it is `400 validation_failed` naming this field. An unknown tenant is
+            `404 tenant_not_found` and a deleted one `409 tenant_deleted`.
         expires_at:
           allOf:
             - $ref: '#/components/schemas/Timestamp'
@@ -5544,7 +5629,7 @@ components:
 
         A lost key is replaced, not recovered (UC-15).
       additionalProperties: false
-      required: [id, name, prefix, scope, state, created_at, expires_at, key]
+      required: [id, name, prefix, scope, state, tenant_external_id, created_at, expires_at, key]
       properties:
         id:
           type: string
@@ -5560,6 +5645,11 @@ components:
           $ref: '#/components/schemas/KeyScope'
         state:
           $ref: '#/components/schemas/KeyState'
+        tenant_external_id:
+          oneOf:
+            - $ref: '#/components/schemas/ExternalId'
+            - type: 'null'
+          description: The tenant the key is bound to, or null for an unbound key (DR-053).
         created_at:
           $ref: '#/components/schemas/Timestamp'
         expires_at:
