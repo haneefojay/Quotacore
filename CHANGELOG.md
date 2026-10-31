@@ -12,6 +12,32 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **Webhook configuration and signing (`IP-21`), the first v0.3 phase.** ADR-0019 (new) re-scopes
+  NFR-S3 to "no outbound connection except a delivery to an endpoint an operator configured" and
+  re-words NFR-C5, and makes webhooks off unless the operator sets `QUOTACORE_WEBHOOK_SIGNING_KEY`
+  (at least 32 bytes, or the service refuses to start). A tenant has one webhook, configured by
+  `PUT|GET|DELETE /v1/admin/tenants/{id}/webhook` and `POST .../webhook/rotate-secret` (four new
+  operations, tag `admin-webhooks`) and by `quotacore tenant webhook get|set|delete|rotate-secret`:
+  an `https` endpoint and 1 to 20 subscriptions, `threshold_crossing` (a percentage used),
+  `absolute_threshold` (a remaining balance), `plan_change` and `cycle_rollover` (DR-055, new). A
+  ledger event crosses a threshold only by falling past it, and a tenant is told once per ledger
+  event, every threshold it crossed listed in one payload whose `event_id` is the ledger's and the
+  `Quotacore-Delivery` header's. The secret is derived from the signing key, the webhook's id and
+  its generation, returned on the create and each rotation, and stored nowhere (`Q-40`, new,
+  answered); the signature is HMAC-SHA256 over the timestamp, the `event_id` and the body, with a
+  300-second replay window and the `event_id` as the JTI (`Q-41`, new, answered). Without the
+  signing key every webhook route answers `501 not_implemented`, which un-reserves the code `Q-34`
+  kept (`Q-42`, new, answered); a threshold names a metered feature only (`Q-43`, new, answered).
+  `webhook_not_found` (404) is a new code. Every webhook change is audited with before and after,
+  `audit_log.subject_type` gains `webhook`, and a tenant's soft delete removes its webhook.
+  Migration `00016` adds `webhooks`. `internal/webhook` (new) holds the secret, the signature, the
+  payload and the match, and opens no connection; delivery is `IP-22`'s.
+  [webhooks.md](docs/architecture/webhooks.md) (new) is the customer's document, with a runnable
+  verification recipe. T-20 (new) proves the audit rows, the plaintext scan for both secrets, one
+  `event_id` across ledger, payload and header, the signature's coverage and window, the recipe
+  passing and failing on one changed byte, and `501` without a key. IP-21 DoD 7 is read by a dated
+  note, because no shipped build has the routes.
+
 - **Per-tenant runtime keys and cap reporting (`IP-20`), the last v0.2 phase.** A runtime key
   issued with `tenant_external_id` is bound to that tenant in its stored row, and reaches no other
   (DR-053, new). A bound key's request for any other tenant, existing, suspended, deleted or never

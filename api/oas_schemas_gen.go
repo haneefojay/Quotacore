@@ -349,6 +349,7 @@ const (
 	AuditEntrySubjectTypeFeature AuditEntrySubjectType = "feature"
 	AuditEntrySubjectTypeAPIKey  AuditEntrySubjectType = "api_key"
 	AuditEntrySubjectTypeSystem  AuditEntrySubjectType = "system"
+	AuditEntrySubjectTypeWebhook AuditEntrySubjectType = "webhook"
 )
 
 // AllValues returns all AuditEntrySubjectType values.
@@ -359,6 +360,7 @@ func (AuditEntrySubjectType) AllValues() []AuditEntrySubjectType {
 		AuditEntrySubjectTypeFeature,
 		AuditEntrySubjectTypeAPIKey,
 		AuditEntrySubjectTypeSystem,
+		AuditEntrySubjectTypeWebhook,
 	}
 }
 
@@ -374,6 +376,8 @@ func (s AuditEntrySubjectType) MarshalText() ([]byte, error) {
 	case AuditEntrySubjectTypeAPIKey:
 		return []byte(s), nil
 	case AuditEntrySubjectTypeSystem:
+		return []byte(s), nil
+	case AuditEntrySubjectTypeWebhook:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -397,6 +401,9 @@ func (s *AuditEntrySubjectType) UnmarshalText(data []byte) error {
 		return nil
 	case AuditEntrySubjectTypeSystem:
 		*s = AuditEntrySubjectTypeSystem
+		return nil
+	case AuditEntrySubjectTypeWebhook:
+		*s = AuditEntrySubjectTypeWebhook
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -1097,6 +1104,7 @@ func (*ErrorBadRequestPlainHeaders) listKeysRes()             {}
 func (*ErrorBadRequestPlainHeaders) listPlansRes()            {}
 func (*ErrorBadRequestPlainHeaders) listUsageEventsRes()      {}
 func (*ErrorBadRequestPlainHeaders) planImpactRes()           {}
+func (*ErrorBadRequestPlainHeaders) putTenantWebhookRes()     {}
 func (*ErrorBadRequestPlainHeaders) revokeKeyRes()            {}
 func (*ErrorBadRequestPlainHeaders) setTenantBalanceRes()     {}
 func (*ErrorBadRequestPlainHeaders) updateFeatureRes()        {}
@@ -1213,6 +1221,7 @@ const (
 	ErrorCodeControlPlaneUnavailable ErrorCode = "control_plane_unavailable"
 	ErrorCodeInternalError           ErrorCode = "internal_error"
 	ErrorCodeNotImplemented          ErrorCode = "not_implemented"
+	ErrorCodeWebhookNotFound         ErrorCode = "webhook_not_found"
 )
 
 // AllValues returns all ErrorCode values.
@@ -1255,6 +1264,7 @@ func (ErrorCode) AllValues() []ErrorCode {
 		ErrorCodeControlPlaneUnavailable,
 		ErrorCodeInternalError,
 		ErrorCodeNotImplemented,
+		ErrorCodeWebhookNotFound,
 	}
 }
 
@@ -1334,6 +1344,8 @@ func (s ErrorCode) MarshalText() ([]byte, error) {
 	case ErrorCodeInternalError:
 		return []byte(s), nil
 	case ErrorCodeNotImplemented:
+		return []byte(s), nil
+	case ErrorCodeWebhookNotFound:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -1453,6 +1465,9 @@ func (s *ErrorCode) UnmarshalText(data []byte) error {
 		return nil
 	case ErrorCodeNotImplemented:
 		*s = ErrorCodeNotImplemented
+		return nil
+	case ErrorCodeWebhookNotFound:
+		*s = ErrorCodeWebhookNotFound
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -1610,6 +1625,7 @@ func (s *ErrorConflictTenantDeletedHeaders) SetResponse(val ErrorResponse) {
 
 func (*ErrorConflictTenantDeletedHeaders) clearTenantOverrideRes() {}
 func (*ErrorConflictTenantDeletedHeaders) createKeyRes()           {}
+func (*ErrorConflictTenantDeletedHeaders) putTenantWebhookRes()    {}
 
 // ErrorConflictTenantHeaders wraps ErrorResponse with response headers.
 type ErrorConflictTenantHeaders struct {
@@ -1710,7 +1726,11 @@ func (s *ErrorControlPlaneUnavailableHeaders) SetResponse(val ErrorResponse) {
 	s.Response = val
 }
 
-func (*ErrorControlPlaneUnavailableHeaders) planImpactRes() {}
+func (*ErrorControlPlaneUnavailableHeaders) deleteTenantWebhookRes()       {}
+func (*ErrorControlPlaneUnavailableHeaders) getTenantWebhookRes()          {}
+func (*ErrorControlPlaneUnavailableHeaders) planImpactRes()                {}
+func (*ErrorControlPlaneUnavailableHeaders) putTenantWebhookRes()          {}
+func (*ErrorControlPlaneUnavailableHeaders) rotateTenantWebhookSecretRes() {}
 
 // Code-specific and additive across versions. Every code-specific field lives here, not beside `code`,
 // which is what keeps the envelope one shape everywhere.
@@ -1844,38 +1864,42 @@ func (s *ErrorForbiddenScopeHeaders) SetResponse(val ErrorResponse) {
 	s.Response = val
 }
 
-func (*ErrorForbiddenScopeHeaders) applyPlanRes()            {}
-func (*ErrorForbiddenScopeHeaders) archiveFeatureRes()       {}
-func (*ErrorForbiddenScopeHeaders) archivePlanRes()          {}
-func (*ErrorForbiddenScopeHeaders) balanceRes()              {}
-func (*ErrorForbiddenScopeHeaders) clearTenantOverrideRes()  {}
-func (*ErrorForbiddenScopeHeaders) createFeatureRes()        {}
-func (*ErrorForbiddenScopeHeaders) createKeyRes()            {}
-func (*ErrorForbiddenScopeHeaders) createPlanRes()           {}
-func (*ErrorForbiddenScopeHeaders) createTenantRes()         {}
-func (*ErrorForbiddenScopeHeaders) deleteFeatureRes()        {}
-func (*ErrorForbiddenScopeHeaders) deletePlanRes()           {}
-func (*ErrorForbiddenScopeHeaders) deleteTenantRes()         {}
-func (*ErrorForbiddenScopeHeaders) forceRolloverRes()        {}
-func (*ErrorForbiddenScopeHeaders) getFeatureRes()           {}
-func (*ErrorForbiddenScopeHeaders) getPlanRes()              {}
-func (*ErrorForbiddenScopeHeaders) getTenantRes()            {}
-func (*ErrorForbiddenScopeHeaders) grantTenantRes()          {}
-func (*ErrorForbiddenScopeHeaders) listAuditRes()            {}
-func (*ErrorForbiddenScopeHeaders) listFeaturesRes()         {}
-func (*ErrorForbiddenScopeHeaders) listKeysRes()             {}
-func (*ErrorForbiddenScopeHeaders) listPlansRes()            {}
-func (*ErrorForbiddenScopeHeaders) listTenantsRes()          {}
-func (*ErrorForbiddenScopeHeaders) listUsageEventsRes()      {}
-func (*ErrorForbiddenScopeHeaders) planImpactRes()           {}
-func (*ErrorForbiddenScopeHeaders) resumeTenantRes()         {}
-func (*ErrorForbiddenScopeHeaders) revokeKeyRes()            {}
-func (*ErrorForbiddenScopeHeaders) setTenantBalanceRes()     {}
-func (*ErrorForbiddenScopeHeaders) suspendTenantRes()        {}
-func (*ErrorForbiddenScopeHeaders) updateFeatureRes()        {}
-func (*ErrorForbiddenScopeHeaders) updatePlanRes()           {}
-func (*ErrorForbiddenScopeHeaders) updateTenantRes()         {}
-func (*ErrorForbiddenScopeHeaders) upsertTenantOverrideRes() {}
+func (*ErrorForbiddenScopeHeaders) applyPlanRes()                 {}
+func (*ErrorForbiddenScopeHeaders) archiveFeatureRes()            {}
+func (*ErrorForbiddenScopeHeaders) archivePlanRes()               {}
+func (*ErrorForbiddenScopeHeaders) balanceRes()                   {}
+func (*ErrorForbiddenScopeHeaders) clearTenantOverrideRes()       {}
+func (*ErrorForbiddenScopeHeaders) createFeatureRes()             {}
+func (*ErrorForbiddenScopeHeaders) createKeyRes()                 {}
+func (*ErrorForbiddenScopeHeaders) createPlanRes()                {}
+func (*ErrorForbiddenScopeHeaders) createTenantRes()              {}
+func (*ErrorForbiddenScopeHeaders) deleteFeatureRes()             {}
+func (*ErrorForbiddenScopeHeaders) deletePlanRes()                {}
+func (*ErrorForbiddenScopeHeaders) deleteTenantRes()              {}
+func (*ErrorForbiddenScopeHeaders) deleteTenantWebhookRes()       {}
+func (*ErrorForbiddenScopeHeaders) forceRolloverRes()             {}
+func (*ErrorForbiddenScopeHeaders) getFeatureRes()                {}
+func (*ErrorForbiddenScopeHeaders) getPlanRes()                   {}
+func (*ErrorForbiddenScopeHeaders) getTenantRes()                 {}
+func (*ErrorForbiddenScopeHeaders) getTenantWebhookRes()          {}
+func (*ErrorForbiddenScopeHeaders) grantTenantRes()               {}
+func (*ErrorForbiddenScopeHeaders) listAuditRes()                 {}
+func (*ErrorForbiddenScopeHeaders) listFeaturesRes()              {}
+func (*ErrorForbiddenScopeHeaders) listKeysRes()                  {}
+func (*ErrorForbiddenScopeHeaders) listPlansRes()                 {}
+func (*ErrorForbiddenScopeHeaders) listTenantsRes()               {}
+func (*ErrorForbiddenScopeHeaders) listUsageEventsRes()           {}
+func (*ErrorForbiddenScopeHeaders) planImpactRes()                {}
+func (*ErrorForbiddenScopeHeaders) putTenantWebhookRes()          {}
+func (*ErrorForbiddenScopeHeaders) resumeTenantRes()              {}
+func (*ErrorForbiddenScopeHeaders) revokeKeyRes()                 {}
+func (*ErrorForbiddenScopeHeaders) rotateTenantWebhookSecretRes() {}
+func (*ErrorForbiddenScopeHeaders) setTenantBalanceRes()          {}
+func (*ErrorForbiddenScopeHeaders) suspendTenantRes()             {}
+func (*ErrorForbiddenScopeHeaders) updateFeatureRes()             {}
+func (*ErrorForbiddenScopeHeaders) updatePlanRes()                {}
+func (*ErrorForbiddenScopeHeaders) updateTenantRes()              {}
+func (*ErrorForbiddenScopeHeaders) upsertTenantOverrideRes()      {}
 
 // ErrorInternalHeaders wraps ErrorResponse with response headers.
 type ErrorInternalHeaders struct {
@@ -1903,41 +1927,45 @@ func (s *ErrorInternalHeaders) SetResponse(val ErrorResponse) {
 	s.Response = val
 }
 
-func (*ErrorInternalHeaders) applyPlanRes()            {}
-func (*ErrorInternalHeaders) archiveFeatureRes()       {}
-func (*ErrorInternalHeaders) archivePlanRes()          {}
-func (*ErrorInternalHeaders) balanceRes()              {}
-func (*ErrorInternalHeaders) checkRes()                {}
-func (*ErrorInternalHeaders) clearTenantOverrideRes()  {}
-func (*ErrorInternalHeaders) consumeRes()              {}
-func (*ErrorInternalHeaders) createFeatureRes()        {}
-func (*ErrorInternalHeaders) createKeyRes()            {}
-func (*ErrorInternalHeaders) createPlanRes()           {}
-func (*ErrorInternalHeaders) createTenantRes()         {}
-func (*ErrorInternalHeaders) deleteFeatureRes()        {}
-func (*ErrorInternalHeaders) deletePlanRes()           {}
-func (*ErrorInternalHeaders) deleteTenantRes()         {}
-func (*ErrorInternalHeaders) forceRolloverRes()        {}
-func (*ErrorInternalHeaders) getFeatureRes()           {}
-func (*ErrorInternalHeaders) getPlanRes()              {}
-func (*ErrorInternalHeaders) getTenantRes()            {}
-func (*ErrorInternalHeaders) grantTenantRes()          {}
-func (*ErrorInternalHeaders) listAuditRes()            {}
-func (*ErrorInternalHeaders) listFeaturesRes()         {}
-func (*ErrorInternalHeaders) listKeysRes()             {}
-func (*ErrorInternalHeaders) listPlansRes()            {}
-func (*ErrorInternalHeaders) listTenantsRes()          {}
-func (*ErrorInternalHeaders) listUsageEventsRes()      {}
-func (*ErrorInternalHeaders) planImpactRes()           {}
-func (*ErrorInternalHeaders) refundRes()               {}
-func (*ErrorInternalHeaders) resumeTenantRes()         {}
-func (*ErrorInternalHeaders) revokeKeyRes()            {}
-func (*ErrorInternalHeaders) setTenantBalanceRes()     {}
-func (*ErrorInternalHeaders) suspendTenantRes()        {}
-func (*ErrorInternalHeaders) updateFeatureRes()        {}
-func (*ErrorInternalHeaders) updatePlanRes()           {}
-func (*ErrorInternalHeaders) updateTenantRes()         {}
-func (*ErrorInternalHeaders) upsertTenantOverrideRes() {}
+func (*ErrorInternalHeaders) applyPlanRes()                 {}
+func (*ErrorInternalHeaders) archiveFeatureRes()            {}
+func (*ErrorInternalHeaders) archivePlanRes()               {}
+func (*ErrorInternalHeaders) balanceRes()                   {}
+func (*ErrorInternalHeaders) checkRes()                     {}
+func (*ErrorInternalHeaders) clearTenantOverrideRes()       {}
+func (*ErrorInternalHeaders) consumeRes()                   {}
+func (*ErrorInternalHeaders) createFeatureRes()             {}
+func (*ErrorInternalHeaders) createKeyRes()                 {}
+func (*ErrorInternalHeaders) createPlanRes()                {}
+func (*ErrorInternalHeaders) createTenantRes()              {}
+func (*ErrorInternalHeaders) deleteFeatureRes()             {}
+func (*ErrorInternalHeaders) deletePlanRes()                {}
+func (*ErrorInternalHeaders) deleteTenantRes()              {}
+func (*ErrorInternalHeaders) deleteTenantWebhookRes()       {}
+func (*ErrorInternalHeaders) forceRolloverRes()             {}
+func (*ErrorInternalHeaders) getFeatureRes()                {}
+func (*ErrorInternalHeaders) getPlanRes()                   {}
+func (*ErrorInternalHeaders) getTenantRes()                 {}
+func (*ErrorInternalHeaders) getTenantWebhookRes()          {}
+func (*ErrorInternalHeaders) grantTenantRes()               {}
+func (*ErrorInternalHeaders) listAuditRes()                 {}
+func (*ErrorInternalHeaders) listFeaturesRes()              {}
+func (*ErrorInternalHeaders) listKeysRes()                  {}
+func (*ErrorInternalHeaders) listPlansRes()                 {}
+func (*ErrorInternalHeaders) listTenantsRes()               {}
+func (*ErrorInternalHeaders) listUsageEventsRes()           {}
+func (*ErrorInternalHeaders) planImpactRes()                {}
+func (*ErrorInternalHeaders) putTenantWebhookRes()          {}
+func (*ErrorInternalHeaders) refundRes()                    {}
+func (*ErrorInternalHeaders) resumeTenantRes()              {}
+func (*ErrorInternalHeaders) revokeKeyRes()                 {}
+func (*ErrorInternalHeaders) rotateTenantWebhookSecretRes() {}
+func (*ErrorInternalHeaders) setTenantBalanceRes()          {}
+func (*ErrorInternalHeaders) suspendTenantRes()             {}
+func (*ErrorInternalHeaders) updateFeatureRes()             {}
+func (*ErrorInternalHeaders) updatePlanRes()                {}
+func (*ErrorInternalHeaders) updateTenantRes()              {}
+func (*ErrorInternalHeaders) upsertTenantOverrideRes()      {}
 
 // ErrorKeyNotFoundHeaders wraps ErrorResponse with response headers.
 type ErrorKeyNotFoundHeaders struct {
@@ -2000,6 +2028,37 @@ func (*ErrorNotFoundResourceHeaders) grantTenantRes()          {}
 func (*ErrorNotFoundResourceHeaders) setTenantBalanceRes()     {}
 func (*ErrorNotFoundResourceHeaders) upsertTenantOverrideRes() {}
 
+// ErrorNotImplementedHeaders wraps ErrorResponse with response headers.
+type ErrorNotImplementedHeaders struct {
+	XRequestID RequestId
+	Response   ErrorResponse
+}
+
+// GetXRequestID returns the value of XRequestID.
+func (s *ErrorNotImplementedHeaders) GetXRequestID() RequestId {
+	return s.XRequestID
+}
+
+// GetResponse returns the value of Response.
+func (s *ErrorNotImplementedHeaders) GetResponse() ErrorResponse {
+	return s.Response
+}
+
+// SetXRequestID sets the value of XRequestID.
+func (s *ErrorNotImplementedHeaders) SetXRequestID(val RequestId) {
+	s.XRequestID = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ErrorNotImplementedHeaders) SetResponse(val ErrorResponse) {
+	s.Response = val
+}
+
+func (*ErrorNotImplementedHeaders) deleteTenantWebhookRes()       {}
+func (*ErrorNotImplementedHeaders) getTenantWebhookRes()          {}
+func (*ErrorNotImplementedHeaders) putTenantWebhookRes()          {}
+func (*ErrorNotImplementedHeaders) rotateTenantWebhookSecretRes() {}
+
 // ErrorPayloadTooLargeHeaders wraps ErrorResponse with response headers.
 type ErrorPayloadTooLargeHeaders struct {
 	XRequestID RequestId
@@ -2040,6 +2099,7 @@ func (*ErrorPayloadTooLargeHeaders) deletePlanRes()           {}
 func (*ErrorPayloadTooLargeHeaders) deleteTenantRes()         {}
 func (*ErrorPayloadTooLargeHeaders) forceRolloverRes()        {}
 func (*ErrorPayloadTooLargeHeaders) grantTenantRes()          {}
+func (*ErrorPayloadTooLargeHeaders) putTenantWebhookRes()     {}
 func (*ErrorPayloadTooLargeHeaders) refundRes()               {}
 func (*ErrorPayloadTooLargeHeaders) resumeTenantRes()         {}
 func (*ErrorPayloadTooLargeHeaders) setTenantBalanceRes()     {}
@@ -2158,40 +2218,44 @@ func (s *ErrorRateLimitedHeaders) SetResponse(val ErrorResponse) {
 	s.Response = val
 }
 
-func (*ErrorRateLimitedHeaders) applyPlanRes()            {}
-func (*ErrorRateLimitedHeaders) archiveFeatureRes()       {}
-func (*ErrorRateLimitedHeaders) archivePlanRes()          {}
-func (*ErrorRateLimitedHeaders) balanceRes()              {}
-func (*ErrorRateLimitedHeaders) checkRes()                {}
-func (*ErrorRateLimitedHeaders) clearTenantOverrideRes()  {}
-func (*ErrorRateLimitedHeaders) createFeatureRes()        {}
-func (*ErrorRateLimitedHeaders) createKeyRes()            {}
-func (*ErrorRateLimitedHeaders) createPlanRes()           {}
-func (*ErrorRateLimitedHeaders) createTenantRes()         {}
-func (*ErrorRateLimitedHeaders) deleteFeatureRes()        {}
-func (*ErrorRateLimitedHeaders) deletePlanRes()           {}
-func (*ErrorRateLimitedHeaders) deleteTenantRes()         {}
-func (*ErrorRateLimitedHeaders) forceRolloverRes()        {}
-func (*ErrorRateLimitedHeaders) getFeatureRes()           {}
-func (*ErrorRateLimitedHeaders) getPlanRes()              {}
-func (*ErrorRateLimitedHeaders) getTenantRes()            {}
-func (*ErrorRateLimitedHeaders) grantTenantRes()          {}
-func (*ErrorRateLimitedHeaders) listAuditRes()            {}
-func (*ErrorRateLimitedHeaders) listFeaturesRes()         {}
-func (*ErrorRateLimitedHeaders) listKeysRes()             {}
-func (*ErrorRateLimitedHeaders) listPlansRes()            {}
-func (*ErrorRateLimitedHeaders) listTenantsRes()          {}
-func (*ErrorRateLimitedHeaders) listUsageEventsRes()      {}
-func (*ErrorRateLimitedHeaders) planImpactRes()           {}
-func (*ErrorRateLimitedHeaders) refundRes()               {}
-func (*ErrorRateLimitedHeaders) resumeTenantRes()         {}
-func (*ErrorRateLimitedHeaders) revokeKeyRes()            {}
-func (*ErrorRateLimitedHeaders) setTenantBalanceRes()     {}
-func (*ErrorRateLimitedHeaders) suspendTenantRes()        {}
-func (*ErrorRateLimitedHeaders) updateFeatureRes()        {}
-func (*ErrorRateLimitedHeaders) updatePlanRes()           {}
-func (*ErrorRateLimitedHeaders) updateTenantRes()         {}
-func (*ErrorRateLimitedHeaders) upsertTenantOverrideRes() {}
+func (*ErrorRateLimitedHeaders) applyPlanRes()                 {}
+func (*ErrorRateLimitedHeaders) archiveFeatureRes()            {}
+func (*ErrorRateLimitedHeaders) archivePlanRes()               {}
+func (*ErrorRateLimitedHeaders) balanceRes()                   {}
+func (*ErrorRateLimitedHeaders) checkRes()                     {}
+func (*ErrorRateLimitedHeaders) clearTenantOverrideRes()       {}
+func (*ErrorRateLimitedHeaders) createFeatureRes()             {}
+func (*ErrorRateLimitedHeaders) createKeyRes()                 {}
+func (*ErrorRateLimitedHeaders) createPlanRes()                {}
+func (*ErrorRateLimitedHeaders) createTenantRes()              {}
+func (*ErrorRateLimitedHeaders) deleteFeatureRes()             {}
+func (*ErrorRateLimitedHeaders) deletePlanRes()                {}
+func (*ErrorRateLimitedHeaders) deleteTenantRes()              {}
+func (*ErrorRateLimitedHeaders) deleteTenantWebhookRes()       {}
+func (*ErrorRateLimitedHeaders) forceRolloverRes()             {}
+func (*ErrorRateLimitedHeaders) getFeatureRes()                {}
+func (*ErrorRateLimitedHeaders) getPlanRes()                   {}
+func (*ErrorRateLimitedHeaders) getTenantRes()                 {}
+func (*ErrorRateLimitedHeaders) getTenantWebhookRes()          {}
+func (*ErrorRateLimitedHeaders) grantTenantRes()               {}
+func (*ErrorRateLimitedHeaders) listAuditRes()                 {}
+func (*ErrorRateLimitedHeaders) listFeaturesRes()              {}
+func (*ErrorRateLimitedHeaders) listKeysRes()                  {}
+func (*ErrorRateLimitedHeaders) listPlansRes()                 {}
+func (*ErrorRateLimitedHeaders) listTenantsRes()               {}
+func (*ErrorRateLimitedHeaders) listUsageEventsRes()           {}
+func (*ErrorRateLimitedHeaders) planImpactRes()                {}
+func (*ErrorRateLimitedHeaders) putTenantWebhookRes()          {}
+func (*ErrorRateLimitedHeaders) refundRes()                    {}
+func (*ErrorRateLimitedHeaders) resumeTenantRes()              {}
+func (*ErrorRateLimitedHeaders) revokeKeyRes()                 {}
+func (*ErrorRateLimitedHeaders) rotateTenantWebhookSecretRes() {}
+func (*ErrorRateLimitedHeaders) setTenantBalanceRes()          {}
+func (*ErrorRateLimitedHeaders) suspendTenantRes()             {}
+func (*ErrorRateLimitedHeaders) updateFeatureRes()             {}
+func (*ErrorRateLimitedHeaders) updatePlanRes()                {}
+func (*ErrorRateLimitedHeaders) updateTenantRes()              {}
+func (*ErrorRateLimitedHeaders) upsertTenantOverrideRes()      {}
 
 // ErrorRefundConflictHeaders wraps ErrorResponse with response headers.
 type ErrorRefundConflictHeaders struct {
@@ -2332,16 +2396,17 @@ func (s *ErrorTenantNotFoundHeaders) SetResponse(val ErrorResponse) {
 	s.Response = val
 }
 
-func (*ErrorTenantNotFoundHeaders) checkRes()           {}
-func (*ErrorTenantNotFoundHeaders) consumeRes()         {}
-func (*ErrorTenantNotFoundHeaders) createKeyRes()       {}
-func (*ErrorTenantNotFoundHeaders) deleteTenantRes()    {}
-func (*ErrorTenantNotFoundHeaders) getTenantRes()       {}
-func (*ErrorTenantNotFoundHeaders) listUsageEventsRes() {}
-func (*ErrorTenantNotFoundHeaders) refundRes()          {}
-func (*ErrorTenantNotFoundHeaders) resumeTenantRes()    {}
-func (*ErrorTenantNotFoundHeaders) suspendTenantRes()   {}
-func (*ErrorTenantNotFoundHeaders) updateTenantRes()    {}
+func (*ErrorTenantNotFoundHeaders) checkRes()            {}
+func (*ErrorTenantNotFoundHeaders) consumeRes()          {}
+func (*ErrorTenantNotFoundHeaders) createKeyRes()        {}
+func (*ErrorTenantNotFoundHeaders) deleteTenantRes()     {}
+func (*ErrorTenantNotFoundHeaders) getTenantRes()        {}
+func (*ErrorTenantNotFoundHeaders) listUsageEventsRes()  {}
+func (*ErrorTenantNotFoundHeaders) putTenantWebhookRes() {}
+func (*ErrorTenantNotFoundHeaders) refundRes()           {}
+func (*ErrorTenantNotFoundHeaders) resumeTenantRes()     {}
+func (*ErrorTenantNotFoundHeaders) suspendTenantRes()    {}
+func (*ErrorTenantNotFoundHeaders) updateTenantRes()     {}
 
 // ErrorUnauthorizedHeaders wraps ErrorResponse with response headers.
 type ErrorUnauthorizedHeaders struct {
@@ -2369,41 +2434,45 @@ func (s *ErrorUnauthorizedHeaders) SetResponse(val ErrorResponse) {
 	s.Response = val
 }
 
-func (*ErrorUnauthorizedHeaders) applyPlanRes()            {}
-func (*ErrorUnauthorizedHeaders) archiveFeatureRes()       {}
-func (*ErrorUnauthorizedHeaders) archivePlanRes()          {}
-func (*ErrorUnauthorizedHeaders) balanceRes()              {}
-func (*ErrorUnauthorizedHeaders) checkRes()                {}
-func (*ErrorUnauthorizedHeaders) clearTenantOverrideRes()  {}
-func (*ErrorUnauthorizedHeaders) consumeRes()              {}
-func (*ErrorUnauthorizedHeaders) createFeatureRes()        {}
-func (*ErrorUnauthorizedHeaders) createKeyRes()            {}
-func (*ErrorUnauthorizedHeaders) createPlanRes()           {}
-func (*ErrorUnauthorizedHeaders) createTenantRes()         {}
-func (*ErrorUnauthorizedHeaders) deleteFeatureRes()        {}
-func (*ErrorUnauthorizedHeaders) deletePlanRes()           {}
-func (*ErrorUnauthorizedHeaders) deleteTenantRes()         {}
-func (*ErrorUnauthorizedHeaders) forceRolloverRes()        {}
-func (*ErrorUnauthorizedHeaders) getFeatureRes()           {}
-func (*ErrorUnauthorizedHeaders) getPlanRes()              {}
-func (*ErrorUnauthorizedHeaders) getTenantRes()            {}
-func (*ErrorUnauthorizedHeaders) grantTenantRes()          {}
-func (*ErrorUnauthorizedHeaders) listAuditRes()            {}
-func (*ErrorUnauthorizedHeaders) listFeaturesRes()         {}
-func (*ErrorUnauthorizedHeaders) listKeysRes()             {}
-func (*ErrorUnauthorizedHeaders) listPlansRes()            {}
-func (*ErrorUnauthorizedHeaders) listTenantsRes()          {}
-func (*ErrorUnauthorizedHeaders) listUsageEventsRes()      {}
-func (*ErrorUnauthorizedHeaders) planImpactRes()           {}
-func (*ErrorUnauthorizedHeaders) refundRes()               {}
-func (*ErrorUnauthorizedHeaders) resumeTenantRes()         {}
-func (*ErrorUnauthorizedHeaders) revokeKeyRes()            {}
-func (*ErrorUnauthorizedHeaders) setTenantBalanceRes()     {}
-func (*ErrorUnauthorizedHeaders) suspendTenantRes()        {}
-func (*ErrorUnauthorizedHeaders) updateFeatureRes()        {}
-func (*ErrorUnauthorizedHeaders) updatePlanRes()           {}
-func (*ErrorUnauthorizedHeaders) updateTenantRes()         {}
-func (*ErrorUnauthorizedHeaders) upsertTenantOverrideRes() {}
+func (*ErrorUnauthorizedHeaders) applyPlanRes()                 {}
+func (*ErrorUnauthorizedHeaders) archiveFeatureRes()            {}
+func (*ErrorUnauthorizedHeaders) archivePlanRes()               {}
+func (*ErrorUnauthorizedHeaders) balanceRes()                   {}
+func (*ErrorUnauthorizedHeaders) checkRes()                     {}
+func (*ErrorUnauthorizedHeaders) clearTenantOverrideRes()       {}
+func (*ErrorUnauthorizedHeaders) consumeRes()                   {}
+func (*ErrorUnauthorizedHeaders) createFeatureRes()             {}
+func (*ErrorUnauthorizedHeaders) createKeyRes()                 {}
+func (*ErrorUnauthorizedHeaders) createPlanRes()                {}
+func (*ErrorUnauthorizedHeaders) createTenantRes()              {}
+func (*ErrorUnauthorizedHeaders) deleteFeatureRes()             {}
+func (*ErrorUnauthorizedHeaders) deletePlanRes()                {}
+func (*ErrorUnauthorizedHeaders) deleteTenantRes()              {}
+func (*ErrorUnauthorizedHeaders) deleteTenantWebhookRes()       {}
+func (*ErrorUnauthorizedHeaders) forceRolloverRes()             {}
+func (*ErrorUnauthorizedHeaders) getFeatureRes()                {}
+func (*ErrorUnauthorizedHeaders) getPlanRes()                   {}
+func (*ErrorUnauthorizedHeaders) getTenantRes()                 {}
+func (*ErrorUnauthorizedHeaders) getTenantWebhookRes()          {}
+func (*ErrorUnauthorizedHeaders) grantTenantRes()               {}
+func (*ErrorUnauthorizedHeaders) listAuditRes()                 {}
+func (*ErrorUnauthorizedHeaders) listFeaturesRes()              {}
+func (*ErrorUnauthorizedHeaders) listKeysRes()                  {}
+func (*ErrorUnauthorizedHeaders) listPlansRes()                 {}
+func (*ErrorUnauthorizedHeaders) listTenantsRes()               {}
+func (*ErrorUnauthorizedHeaders) listUsageEventsRes()           {}
+func (*ErrorUnauthorizedHeaders) planImpactRes()                {}
+func (*ErrorUnauthorizedHeaders) putTenantWebhookRes()          {}
+func (*ErrorUnauthorizedHeaders) refundRes()                    {}
+func (*ErrorUnauthorizedHeaders) resumeTenantRes()              {}
+func (*ErrorUnauthorizedHeaders) revokeKeyRes()                 {}
+func (*ErrorUnauthorizedHeaders) rotateTenantWebhookSecretRes() {}
+func (*ErrorUnauthorizedHeaders) setTenantBalanceRes()          {}
+func (*ErrorUnauthorizedHeaders) suspendTenantRes()             {}
+func (*ErrorUnauthorizedHeaders) updateFeatureRes()             {}
+func (*ErrorUnauthorizedHeaders) updatePlanRes()                {}
+func (*ErrorUnauthorizedHeaders) updateTenantRes()              {}
+func (*ErrorUnauthorizedHeaders) upsertTenantOverrideRes()      {}
 
 // ErrorUnavailableHeaders wraps ErrorResponse with response headers.
 type ErrorUnavailableHeaders struct {
@@ -2476,6 +2545,36 @@ func (*ErrorUnavailableHeaders) updateFeatureRes()        {}
 func (*ErrorUnavailableHeaders) updatePlanRes()           {}
 func (*ErrorUnavailableHeaders) updateTenantRes()         {}
 func (*ErrorUnavailableHeaders) upsertTenantOverrideRes() {}
+
+// ErrorWebhookNotFoundHeaders wraps ErrorResponse with response headers.
+type ErrorWebhookNotFoundHeaders struct {
+	XRequestID RequestId
+	Response   ErrorResponse
+}
+
+// GetXRequestID returns the value of XRequestID.
+func (s *ErrorWebhookNotFoundHeaders) GetXRequestID() RequestId {
+	return s.XRequestID
+}
+
+// GetResponse returns the value of Response.
+func (s *ErrorWebhookNotFoundHeaders) GetResponse() ErrorResponse {
+	return s.Response
+}
+
+// SetXRequestID sets the value of XRequestID.
+func (s *ErrorWebhookNotFoundHeaders) SetXRequestID(val RequestId) {
+	s.XRequestID = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ErrorWebhookNotFoundHeaders) SetResponse(val ErrorResponse) {
+	s.Response = val
+}
+
+func (*ErrorWebhookNotFoundHeaders) deleteTenantWebhookRes()       {}
+func (*ErrorWebhookNotFoundHeaders) getTenantWebhookRes()          {}
+func (*ErrorWebhookNotFoundHeaders) rotateTenantWebhookSecretRes() {}
 
 // Who caused the event.
 // Ref: #/components/schemas/EventSource
@@ -4633,6 +4732,7 @@ func (s *NoContent) SetXRequestID(val RequestId) {
 func (*NoContent) clearTenantOverrideRes() {}
 func (*NoContent) deleteFeatureRes()       {}
 func (*NoContent) deletePlanRes()          {}
+func (*NoContent) deleteTenantWebhookRes() {}
 func (*NoContent) revokeKeyRes()           {}
 
 // An OpenAPI 3.1 document, identical to `api/openapi.yaml`.
@@ -7971,3 +8071,390 @@ func (s *UsageEventListOKHeaders) SetResponse(val UsageEventList) {
 func (*UsageEventListOKHeaders) listUsageEventsRes() {}
 
 type Version int64
+
+// A tenant's webhook as stored. The secret is never present (Q-40).
+// Ref: #/components/schemas/Webhook
+type Webhook struct {
+	TenantExternalID ExternalId `json:"tenant_external_id"`
+	// The endpoint deliveries are posted to.
+	URL string `json:"url"`
+	// The subscription set, in the order it was sent.
+	Subscriptions []WebhookSubscription `json:"subscriptions"`
+	// Which secret signs deliveries: 1 at create, and one more on each rotation. It names the secret
+	// without disclosing it, so an audit row can say a rotation happened.
+	SecretGeneration int64     `json:"secret_generation"`
+	CreatedAt        Timestamp `json:"created_at"`
+	UpdatedAt        Timestamp `json:"updated_at"`
+}
+
+// GetTenantExternalID returns the value of TenantExternalID.
+func (s *Webhook) GetTenantExternalID() ExternalId {
+	return s.TenantExternalID
+}
+
+// GetURL returns the value of URL.
+func (s *Webhook) GetURL() string {
+	return s.URL
+}
+
+// GetSubscriptions returns the value of Subscriptions.
+func (s *Webhook) GetSubscriptions() []WebhookSubscription {
+	return s.Subscriptions
+}
+
+// GetSecretGeneration returns the value of SecretGeneration.
+func (s *Webhook) GetSecretGeneration() int64 {
+	return s.SecretGeneration
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *Webhook) GetCreatedAt() Timestamp {
+	return s.CreatedAt
+}
+
+// GetUpdatedAt returns the value of UpdatedAt.
+func (s *Webhook) GetUpdatedAt() Timestamp {
+	return s.UpdatedAt
+}
+
+// SetTenantExternalID sets the value of TenantExternalID.
+func (s *Webhook) SetTenantExternalID(val ExternalId) {
+	s.TenantExternalID = val
+}
+
+// SetURL sets the value of URL.
+func (s *Webhook) SetURL(val string) {
+	s.URL = val
+}
+
+// SetSubscriptions sets the value of Subscriptions.
+func (s *Webhook) SetSubscriptions(val []WebhookSubscription) {
+	s.Subscriptions = val
+}
+
+// SetSecretGeneration sets the value of SecretGeneration.
+func (s *Webhook) SetSecretGeneration(val int64) {
+	s.SecretGeneration = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *Webhook) SetCreatedAt(val Timestamp) {
+	s.CreatedAt = val
+}
+
+// SetUpdatedAt sets the value of UpdatedAt.
+func (s *Webhook) SetUpdatedAt(val Timestamp) {
+	s.UpdatedAt = val
+}
+
+// WebhookCreatedHeaders wraps WebhookWithSecret with response headers.
+type WebhookCreatedHeaders struct {
+	XRequestID RequestId
+	Response   WebhookWithSecret
+}
+
+// GetXRequestID returns the value of XRequestID.
+func (s *WebhookCreatedHeaders) GetXRequestID() RequestId {
+	return s.XRequestID
+}
+
+// GetResponse returns the value of Response.
+func (s *WebhookCreatedHeaders) GetResponse() WebhookWithSecret {
+	return s.Response
+}
+
+// SetXRequestID sets the value of XRequestID.
+func (s *WebhookCreatedHeaders) SetXRequestID(val RequestId) {
+	s.XRequestID = val
+}
+
+// SetResponse sets the value of Response.
+func (s *WebhookCreatedHeaders) SetResponse(val WebhookWithSecret) {
+	s.Response = val
+}
+
+func (*WebhookCreatedHeaders) putTenantWebhookRes() {}
+
+// WebhookOKHeaders wraps Webhook with response headers.
+type WebhookOKHeaders struct {
+	XRequestID RequestId
+	Response   Webhook
+}
+
+// GetXRequestID returns the value of XRequestID.
+func (s *WebhookOKHeaders) GetXRequestID() RequestId {
+	return s.XRequestID
+}
+
+// GetResponse returns the value of Response.
+func (s *WebhookOKHeaders) GetResponse() Webhook {
+	return s.Response
+}
+
+// SetXRequestID sets the value of XRequestID.
+func (s *WebhookOKHeaders) SetXRequestID(val RequestId) {
+	s.XRequestID = val
+}
+
+// SetResponse sets the value of Response.
+func (s *WebhookOKHeaders) SetResponse(val Webhook) {
+	s.Response = val
+}
+
+func (*WebhookOKHeaders) getTenantWebhookRes() {}
+func (*WebhookOKHeaders) putTenantWebhookRes() {}
+
+// A tenant's webhook, whole. A `PUT` replaces both fields; the secret is not a field, because the
+// service derives it (Q-40).
+// Ref: #/components/schemas/WebhookPut
+type WebhookPut struct {
+	// An absolute `https` URL with a host, no user information and no fragment. Which addresses it may
+	// resolve to is v0.3's egress policy (IP-23).
+	URL string `json:"url"`
+	// 1 to 20 entries, no two the same. A delivery is one per ledger event, listing every threshold that
+	// event crossed, so subscribing to two thresholds never splits one event into two notifications with
+	// one `event_id` (INV-W1).
+	Subscriptions []WebhookSubscription `json:"subscriptions"`
+}
+
+// GetURL returns the value of URL.
+func (s *WebhookPut) GetURL() string {
+	return s.URL
+}
+
+// GetSubscriptions returns the value of Subscriptions.
+func (s *WebhookPut) GetSubscriptions() []WebhookSubscription {
+	return s.Subscriptions
+}
+
+// SetURL sets the value of URL.
+func (s *WebhookPut) SetURL(val string) {
+	s.URL = val
+}
+
+// SetSubscriptions sets the value of Subscriptions.
+func (s *WebhookPut) SetSubscriptions(val []WebhookSubscription) {
+	s.Subscriptions = val
+}
+
+// WebhookSecretOKHeaders wraps WebhookWithSecret with response headers.
+type WebhookSecretOKHeaders struct {
+	XRequestID RequestId
+	Response   WebhookWithSecret
+}
+
+// GetXRequestID returns the value of XRequestID.
+func (s *WebhookSecretOKHeaders) GetXRequestID() RequestId {
+	return s.XRequestID
+}
+
+// GetResponse returns the value of Response.
+func (s *WebhookSecretOKHeaders) GetResponse() WebhookWithSecret {
+	return s.Response
+}
+
+// SetXRequestID sets the value of XRequestID.
+func (s *WebhookSecretOKHeaders) SetXRequestID(val RequestId) {
+	s.XRequestID = val
+}
+
+// SetResponse sets the value of Response.
+func (s *WebhookSecretOKHeaders) SetResponse(val WebhookWithSecret) {
+	s.Response = val
+}
+
+func (*WebhookSecretOKHeaders) rotateTenantWebhookSecretRes() {}
+
+// One entry of a subscription set. A threshold names a metered feature with an anchored cadence and a
+// `value`; `plan_change` and `cycle_rollover` take neither, and sending one is `400 validation_failed`
+// naming the entry. Whether the feature and the value fit the type is checked by the service, because
+// JSON Schema cannot tie two fields to a third's value.
+// Ref: #/components/schemas/WebhookSubscription
+type WebhookSubscription struct {
+	Type       WebhookSubscriptionType `json:"type"`
+	FeatureKey OptFeatureKey           `json:"feature_key"`
+	// For `threshold_crossing`, the percentage of the limit used, 1 to 100. For `absolute_threshold`, the
+	// remaining balance, 0 to 2^53 − 1.
+	Value OptInt64 `json:"value"`
+}
+
+// GetType returns the value of Type.
+func (s *WebhookSubscription) GetType() WebhookSubscriptionType {
+	return s.Type
+}
+
+// GetFeatureKey returns the value of FeatureKey.
+func (s *WebhookSubscription) GetFeatureKey() OptFeatureKey {
+	return s.FeatureKey
+}
+
+// GetValue returns the value of Value.
+func (s *WebhookSubscription) GetValue() OptInt64 {
+	return s.Value
+}
+
+// SetType sets the value of Type.
+func (s *WebhookSubscription) SetType(val WebhookSubscriptionType) {
+	s.Type = val
+}
+
+// SetFeatureKey sets the value of FeatureKey.
+func (s *WebhookSubscription) SetFeatureKey(val OptFeatureKey) {
+	s.FeatureKey = val
+}
+
+// SetValue sets the value of Value.
+func (s *WebhookSubscription) SetValue(val OptInt64) {
+	s.Value = val
+}
+
+// What a subscription is told about (DR-055). `threshold_crossing` is a fraction of the allowance used
+// and `absolute_threshold` a remaining balance, so the two are never confused: 80% of a limit of 1,000
+// and 200 left fire together today and apart after a plan change. `plan_change` matches the ledger's
+// `plan_changed`; `cycle_rollover` matches `cycle_rolled_over` and `force_rolled_over`.
+// Ref: #/components/schemas/WebhookSubscriptionType
+type WebhookSubscriptionType string
+
+const (
+	WebhookSubscriptionTypeThresholdCrossing WebhookSubscriptionType = "threshold_crossing"
+	WebhookSubscriptionTypeAbsoluteThreshold WebhookSubscriptionType = "absolute_threshold"
+	WebhookSubscriptionTypePlanChange        WebhookSubscriptionType = "plan_change"
+	WebhookSubscriptionTypeCycleRollover     WebhookSubscriptionType = "cycle_rollover"
+)
+
+// AllValues returns all WebhookSubscriptionType values.
+func (WebhookSubscriptionType) AllValues() []WebhookSubscriptionType {
+	return []WebhookSubscriptionType{
+		WebhookSubscriptionTypeThresholdCrossing,
+		WebhookSubscriptionTypeAbsoluteThreshold,
+		WebhookSubscriptionTypePlanChange,
+		WebhookSubscriptionTypeCycleRollover,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s WebhookSubscriptionType) MarshalText() ([]byte, error) {
+	switch s {
+	case WebhookSubscriptionTypeThresholdCrossing:
+		return []byte(s), nil
+	case WebhookSubscriptionTypeAbsoluteThreshold:
+		return []byte(s), nil
+	case WebhookSubscriptionTypePlanChange:
+		return []byte(s), nil
+	case WebhookSubscriptionTypeCycleRollover:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *WebhookSubscriptionType) UnmarshalText(data []byte) error {
+	switch WebhookSubscriptionType(data) {
+	case WebhookSubscriptionTypeThresholdCrossing:
+		*s = WebhookSubscriptionTypeThresholdCrossing
+		return nil
+	case WebhookSubscriptionTypeAbsoluteThreshold:
+		*s = WebhookSubscriptionTypeAbsoluteThreshold
+		return nil
+	case WebhookSubscriptionTypePlanChange:
+		*s = WebhookSubscriptionTypePlanChange
+		return nil
+	case WebhookSubscriptionTypeCycleRollover:
+		*s = WebhookSubscriptionTypeCycleRollover
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// The webhook and its signing secret, returned by a create and a rotation and by nothing else. The
+// secret is derived from the operator's signing key, the webhook and its generation, and is stored
+// nowhere (Q-40, NFR-S1).
+// Ref: #/components/schemas/WebhookWithSecret
+type WebhookWithSecret struct {
+	TenantExternalID ExternalId `json:"tenant_external_id"`
+	// The endpoint deliveries are posted to.
+	URL string `json:"url"`
+	// The subscription set, in the order it was sent.
+	Subscriptions []WebhookSubscription `json:"subscriptions"`
+	// The generation this secret is.
+	SecretGeneration int64     `json:"secret_generation"`
+	CreatedAt        Timestamp `json:"created_at"`
+	UpdatedAt        Timestamp `json:"updated_at"`
+	// The HMAC-SHA256 key, used as these exact bytes, that signs every delivery ([webhooks.md]). Shown
+	// once.
+	//
+	// [webhooks.md]: ../../docs/architecture/webhooks.md
+	Secret string `json:"secret"`
+}
+
+// GetTenantExternalID returns the value of TenantExternalID.
+func (s *WebhookWithSecret) GetTenantExternalID() ExternalId {
+	return s.TenantExternalID
+}
+
+// GetURL returns the value of URL.
+func (s *WebhookWithSecret) GetURL() string {
+	return s.URL
+}
+
+// GetSubscriptions returns the value of Subscriptions.
+func (s *WebhookWithSecret) GetSubscriptions() []WebhookSubscription {
+	return s.Subscriptions
+}
+
+// GetSecretGeneration returns the value of SecretGeneration.
+func (s *WebhookWithSecret) GetSecretGeneration() int64 {
+	return s.SecretGeneration
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *WebhookWithSecret) GetCreatedAt() Timestamp {
+	return s.CreatedAt
+}
+
+// GetUpdatedAt returns the value of UpdatedAt.
+func (s *WebhookWithSecret) GetUpdatedAt() Timestamp {
+	return s.UpdatedAt
+}
+
+// GetSecret returns the value of Secret.
+func (s *WebhookWithSecret) GetSecret() string {
+	return s.Secret
+}
+
+// SetTenantExternalID sets the value of TenantExternalID.
+func (s *WebhookWithSecret) SetTenantExternalID(val ExternalId) {
+	s.TenantExternalID = val
+}
+
+// SetURL sets the value of URL.
+func (s *WebhookWithSecret) SetURL(val string) {
+	s.URL = val
+}
+
+// SetSubscriptions sets the value of Subscriptions.
+func (s *WebhookWithSecret) SetSubscriptions(val []WebhookSubscription) {
+	s.Subscriptions = val
+}
+
+// SetSecretGeneration sets the value of SecretGeneration.
+func (s *WebhookWithSecret) SetSecretGeneration(val int64) {
+	s.SecretGeneration = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *WebhookWithSecret) SetCreatedAt(val Timestamp) {
+	s.CreatedAt = val
+}
+
+// SetUpdatedAt sets the value of UpdatedAt.
+func (s *WebhookWithSecret) SetUpdatedAt(val Timestamp) {
+	s.UpdatedAt = val
+}
+
+// SetSecret sets the value of Secret.
+func (s *WebhookWithSecret) SetSecret(val string) {
+	s.Secret = val
+}

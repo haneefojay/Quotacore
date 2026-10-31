@@ -36,7 +36,7 @@ func secretOf(t *testing.T, token string) []byte {
 	return raw
 }
 
-// TestNoKeyIsRecoverableAfterIssuance is IP-09 DoD 1 and IP-20 DoD 4 (NFR-S1): once a key is
+// TestNoKeyIsRecoverableAfterIssuance is IP-09 DoD 1, IP-20 DoD 4 and IP-21 DoD 2 (NFR-S1): once a key is
 // issued, neither the token, its encoded secret nor the secret's raw bytes is
 // in any column of any table, in the log, or in the metrics. The columns are
 // read from pg_catalog, so a column added later is covered without editing
@@ -63,6 +63,13 @@ func TestNoKeyIsRecoverableAfterIssuance(t *testing.T) {
 		t.Fatalf("the bound key in use: %d %s", r.Status, r.Body)
 	}
 	s.app.Keys.Flush(context.Background())
+	// A webhook's signing secret is covered too (IP-21 DoD 2, Q-40): the one a
+	// create returned and the one its rotation did, neither of which is
+	// stored, so neither may be found anywhere.
+	hook := mustStatus(t, s.adminDo(http.MethodPut, "/v1/admin/tenants/"+owner+"/webhook",
+		`{"url":"https://hooks.example.com/","subscriptions":[{"type":"plan_change"}]}`), http.StatusCreated)
+	rotated := mustStatus(t, s.adminDo(http.MethodPost, "/v1/admin/tenants/"+owner+"/webhook/rotate-secret", ""), http.StatusOK)
+	webhookSecrets := []string{str(hook, "secret"), str(rotated, "secret")}
 
 	rows, err := s.seedDB.Query(`
 SELECT c.relname, a.attname, t.typname
@@ -84,6 +91,40 @@ SELECT c.relname, a.attname, t.typname
 	rows.Close()
 	if len(cols) < 40 {
 		t.Fatalf("read %d columns from the catalogue", len(cols))
+	}
+	for _, ws := range webhookSecrets {
+		if !strings.HasPrefix(ws, "qcwh_") {
+			t.Fatalf("a webhook secret is %q", ws)
+		}
+		_, encoded, _ := strings.Cut(ws, "_")
+		for _, c := range cols {
+			var hits int
+			id := `"` + c.column + `"`
+			q := `SELECT count(*) FROM ` + c.table + ` WHERE position($1 in ` + id + `::text) > 0 OR position($2 in ` + id + `::text) > 0`
+			args := []any{ws, encoded}
+			if c.typ == "bytea" {
+				q = `SELECT count(*) FROM ` + c.table + ` WHERE position($1::bytea in ` + id + `) > 0`
+				args = []any{[]byte(ws)}
+			}
+			if err := s.seedDB.QueryRow(q, args...).Scan(&hits); err != nil {
+				t.Fatalf("%s.%s: %v", c.table, c.column, err)
+			}
+			if hits > 0 {
+				t.Errorf("%s.%s holds a webhook secret", c.table, c.column)
+			}
+		}
+		if logs := s.logs.String(); strings.Contains(logs, encoded) {
+			t.Error("the log holds a webhook secret")
+		}
+		families, err := s.reg.Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range families {
+			if strings.Contains(f.String(), encoded) {
+				t.Errorf("the metric %s holds a webhook secret", f.GetName())
+			}
+		}
 	}
 	for _, tok := range tokens {
 		secret := secretOf(t, tok)

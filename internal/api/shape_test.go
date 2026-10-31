@@ -134,14 +134,17 @@ func TestNoProductBehaviour(t *testing.T) {
 		"internal/snapshot":      true,
 		"internal/script":        true,
 		"internal/store":         true,
-		"tools/gendocs":          true,
-		"tools/idemsize":         true,
-		"tools/testreport":       true,
-		"internal/worker":        true,
-		"test/reference":         true,
-		"test/harness":           true,
-		"test/load":              true,
-		"test/chaos":             true,
+		// IP-21's: the webhook secret, signature, payload and matching, with
+		// no network code (DR-055, ADR-0019).
+		"internal/webhook": true,
+		"tools/gendocs":    true,
+		"tools/idemsize":   true,
+		"tools/testreport": true,
+		"internal/worker":  true,
+		"test/reference":   true,
+		"test/harness":     true,
+		"test/load":        true,
+		"test/chaos":       true,
 	}
 	gotPackages := map[string]bool{}
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {

@@ -361,7 +361,8 @@ else {
     # are retired only in a major version, so one whose last surface shipped
     # stays, named here and in its catalogue row (Q-34). The list is the whole
     # exemption, so a code that drops out of the matrix by accident still fails.
-    $reservedCodes = @('not_implemented')
+    # It is empty since IP-21, whose webhook routes raise not_implemented (Q-42).
+    $reservedCodes = @()
     foreach ($c in ($catStatus.Keys | Sort-Object)) {
         if ($reservedCodes -contains $c) { continue }
         if (-not $inMatrix.Contains($c)) {

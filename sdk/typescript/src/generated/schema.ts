@@ -787,6 +787,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/tenants/{id}/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A
+                 *     UUID-shaped value is looked up as an id first and as an `external_id` second. An identifier
+                 *     that names no tenant is `404 tenant_not_found`, never `400`, and is never echoed.
+                 */
+                id: components["parameters"]["TenantIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read a tenant's webhook
+         * @description The endpoint, the subscription set and the secret's generation. The secret itself is never
+         *     in this response (Q-40). A tenant with no webhook is `404 webhook_not_found`.
+         */
+        get: operations["getTenantWebhook"];
+        /**
+         * Configure a tenant's webhook
+         * @description Creates or replaces the tenant's one webhook: an `https` endpoint and the set of things it
+         *     is told about (DR-055). A tenant has at most one; several endpoints per tenant are a later
+         *     release.
+         *
+         *     The first `PUT` creates it and answers `201` with the signing `secret`, **once**. The
+         *     secret is derived from the operator's signing key and is never stored, so no route can
+         *     return it again; a lost secret is replaced with `rotate-secret` (Q-40). A later `PUT`
+         *     replaces the URL and the subscription set, answers `200`, and keeps the secret.
+         *
+         *     The subscription set can name a **threshold crossing**, a percentage of the allowance
+         *     used, and an **absolute threshold**, a remaining balance, separately and on the same
+         *     feature, as well as plan changes and cycle rollovers. A threshold names a metered feature
+         *     whose entitlements are anchored, because only a cycle balance can cross one.
+         *
+         *     Configuring a webhook opens no connection. Delivery is v0.3's later work, and webhooks are
+         *     off unless the operator has set `QUOTACORE_WEBHOOK_SIGNING_KEY`: without it every webhook
+         *     route answers `501 not_implemented` (ADR-0019, Q-42). A soft-deleted tenant is
+         *     `409 tenant_deleted`.
+         */
+        put: operations["putTenantWebhook"];
+        post?: never;
+        /**
+         * Remove a tenant's webhook
+         * @description The tenant is told about nothing from then on, and its secret stops verifying. A tenant
+         *     with no webhook is `404 webhook_not_found`, so a mistyped tenant is never mistaken for a
+         *     removal. A soft delete of the tenant removes its webhook in the same transaction.
+         */
+        delete: operations["deleteTenantWebhook"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/tenants/{id}/webhook/rotate-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A
+                 *     UUID-shaped value is looked up as an id first and as an `external_id` second. An identifier
+                 *     that names no tenant is `404 tenant_not_found`, never `400`, and is never echoed.
+                 */
+                id: components["parameters"]["TenantIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replace a tenant's webhook secret
+         * @description Issues a new secret and returns it, once. The previous secret stops verifying at once, so
+         *     the receiver must be given the new one before the next delivery is expected. Takes no
+         *     body. A tenant with no webhook is `404 webhook_not_found`.
+         */
+        post: operations["rotateTenantWebhookSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/keys": {
         parameters: {
             query?: never;
@@ -1206,7 +1290,7 @@ export interface components {
          *     [error-catalog.md](../../docs/product/error-catalog.md).
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "invalid_amount" | "invalid_window" | "invalid_timezone" | "missing_idempotency_key" | "unauthorized" | "api_key_invalid" | "insufficient_scope" | "feature_not_in_plan" | "feature_archived" | "tenant_suspended" | "tenant_not_found" | "feature_not_found" | "plan_not_found" | "api_key_not_found" | "payload_too_large" | "idempotency_key_reuse" | "plan_in_use" | "feature_in_use" | "feature_key_exists" | "tenant_exists" | "tenant_deleted" | "plan_key_exists" | "refund_exceeds_grant" | "grant_exceeds_ceiling" | "reset_not_supported" | "feature_not_metered" | "feature_not_anchored" | "feature_unit_immutable" | "resource_version_conflict" | "confirmation_required" | "quota_exceeded" | "rate_limited" | "service_unavailable" | "control_plane_unavailable" | "internal_error" | "not_implemented";
+        ErrorCode: "validation_failed" | "invalid_amount" | "invalid_window" | "invalid_timezone" | "missing_idempotency_key" | "unauthorized" | "api_key_invalid" | "insufficient_scope" | "feature_not_in_plan" | "feature_archived" | "tenant_suspended" | "tenant_not_found" | "feature_not_found" | "plan_not_found" | "api_key_not_found" | "payload_too_large" | "idempotency_key_reuse" | "plan_in_use" | "feature_in_use" | "feature_key_exists" | "tenant_exists" | "tenant_deleted" | "plan_key_exists" | "refund_exceeds_grant" | "grant_exceeds_ceiling" | "reset_not_supported" | "feature_not_metered" | "feature_not_anchored" | "feature_unit_immutable" | "resource_version_conflict" | "confirmation_required" | "quota_exceeded" | "rate_limited" | "service_unavailable" | "control_plane_unavailable" | "internal_error" | "not_implemented" | "webhook_not_found";
         /**
          * @description The one error shape, everywhere, and it is non-negotiable. No endpoint returns a bare
          *     `400` or a bare `500` without it.
@@ -2039,7 +2123,7 @@ export interface components {
              *     Postgres restore with `quotacore audit note`; its `subject_id` is null.
              * @enum {string}
              */
-            subject_type: "tenant" | "plan" | "feature" | "api_key" | "system";
+            subject_type: "tenant" | "plan" | "feature" | "api_key" | "system" | "webhook";
             /**
              * @description The resource's internal id, or null when the mutation has no single subject — a plan
              *     `apply-now` touches every assigned tenant, so the tenants are not recorded here one by
@@ -2070,6 +2154,132 @@ export interface components {
             /** @description The page of entries, newest first. An empty page is `[]`, never `null`. */
             entries: components["schemas"]["AuditEntry"][];
             next_cursor?: components["schemas"]["Cursor"] | null;
+        };
+        /**
+         * @description What a subscription is told about (DR-055). `threshold_crossing` is a fraction of the
+         *     allowance used and `absolute_threshold` a remaining balance, so the two are never confused:
+         *     80% of a limit of 1,000 and 200 left fire together today and apart after a plan change.
+         *     `plan_change` matches the ledger's `plan_changed`; `cycle_rollover` matches
+         *     `cycle_rolled_over` and `force_rolled_over`.
+         * @enum {string}
+         */
+        WebhookSubscriptionType: "threshold_crossing" | "absolute_threshold" | "plan_change" | "cycle_rollover";
+        /**
+         * @description One entry of a subscription set. A threshold names a metered feature with an anchored
+         *     cadence and a `value`; `plan_change` and `cycle_rollover` take neither, and sending one is
+         *     `400 validation_failed` naming the entry. Whether the feature and the value fit the type is
+         *     checked by the service, because JSON Schema cannot tie two fields to a third's value.
+         */
+        WebhookSubscription: {
+            type: components["schemas"]["WebhookSubscriptionType"];
+            feature_key?: components["schemas"]["FeatureKey"];
+            /**
+             * Format: int64
+             * @description For `threshold_crossing`, the percentage of the limit used, 1 to 100. For
+             *     `absolute_threshold`, the remaining balance, 0 to 2^53 − 1.
+             */
+            value?: number;
+        };
+        /**
+         * @description A tenant's webhook, whole. A `PUT` replaces both fields; the secret is not a field, because
+         *     the service derives it (Q-40).
+         */
+        WebhookPut: {
+            /**
+             * @description An absolute `https` URL with a host, no user information and no fragment. Which
+             *     addresses it may resolve to is v0.3's egress policy (IP-23).
+             */
+            url: string;
+            /**
+             * @description 1 to 20 entries, no two the same. A delivery is one per ledger event, listing every
+             *     threshold that event crossed, so subscribing to two thresholds never splits one event
+             *     into two notifications with one `event_id` (INV-W1).
+             */
+            subscriptions: components["schemas"]["WebhookSubscription"][];
+        };
+        /** @description A tenant's webhook as stored. The secret is never present (Q-40). */
+        Webhook: {
+            tenant_external_id: components["schemas"]["ExternalId"];
+            /** @description The endpoint deliveries are posted to. */
+            url: string;
+            /** @description The subscription set, in the order it was sent. */
+            subscriptions: components["schemas"]["WebhookSubscription"][];
+            /**
+             * Format: int64
+             * @description Which secret signs deliveries: 1 at create, and one more on each rotation. It names the
+             *     secret without disclosing it, so an audit row can say a rotation happened.
+             */
+            secret_generation: number;
+            created_at: components["schemas"]["Timestamp"];
+            updated_at: components["schemas"]["Timestamp"];
+        };
+        /**
+         * @description The webhook and its signing secret, returned by a create and a rotation and by nothing
+         *     else. The secret is derived from the operator's signing key, the webhook and its
+         *     generation, and is stored nowhere (Q-40, NFR-S1).
+         */
+        WebhookWithSecret: {
+            tenant_external_id: components["schemas"]["ExternalId"];
+            /** @description The endpoint deliveries are posted to. */
+            url: string;
+            /** @description The subscription set, in the order it was sent. */
+            subscriptions: components["schemas"]["WebhookSubscription"][];
+            /**
+             * Format: int64
+             * @description The generation this secret is.
+             */
+            secret_generation: number;
+            created_at: components["schemas"]["Timestamp"];
+            updated_at: components["schemas"]["Timestamp"];
+            /**
+             * @description The HMAC-SHA256 key, used as these exact bytes, that signs every delivery
+             *     ([webhooks.md](../../docs/architecture/webhooks.md)). Shown once.
+             */
+            secret: string;
+        };
+        /** @description One threshold a ledger event crossed, as the subscription named it. */
+        WebhookCrossing: {
+            /**
+             * @description Which kind of threshold, so a percentage is never read as a balance.
+             * @enum {string}
+             */
+            type: "threshold_crossing" | "absolute_threshold";
+            /**
+             * Format: int64
+             * @description The subscription's value, a percentage used or a remaining balance.
+             */
+            value: number;
+        };
+        /**
+         * @description The body of a delivery (v0.3). One per ledger event, so `event_id` is the ledger event's
+         *     own and is also the `Quotacore-Delivery` header (INV-W1). The signature covers this body
+         *     byte for byte; [webhooks.md](../../docs/architecture/webhooks.md) shows how to verify it.
+         */
+        WebhookPayload: {
+            /**
+             * Format: uuid
+             * @description The ledger event's identifier. Deduplicate on it.
+             */
+            event_id: string;
+            event_type: components["schemas"]["EventType"];
+            occurred_at: components["schemas"]["Timestamp"];
+            tenant_external_id: components["schemas"]["ExternalId"];
+            feature_key: components["schemas"]["FeatureKey"];
+            /**
+             * Format: int64
+             * @description The signed change the event made to the balance.
+             */
+            delta: number;
+            /**
+             * Format: int64
+             * @description The balance after the event.
+             */
+            balance: number;
+            /**
+             * @description Every subscribed threshold the event crossed, possibly none when the event is a plan
+             *     change or a rollover the tenant subscribed to.
+             */
+            crossings: components["schemas"]["WebhookCrossing"][];
         };
         /** @description Key metadata. The secret is never present here and no route will return it (INV-K3). */
         Key: {
@@ -2540,6 +2750,42 @@ export interface components {
                 "application/json": components["schemas"]["KeyCreated"];
             };
         };
+        /** @description The tenant's webhook as stored. The secret is never in it (Q-40). */
+        WebhookOK: {
+            headers: {
+                "X-Request-Id": components["headers"]["XRequestId"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Webhook"];
+            };
+        };
+        /**
+         * @description The webhook was created. This response and a rotation's are the only ones that contain the
+         *     signing secret; it is derived, not stored, and cannot be read back (Q-40).
+         */
+        WebhookCreated: {
+            headers: {
+                "X-Request-Id": components["headers"]["XRequestId"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["WebhookWithSecret"];
+            };
+        };
+        /**
+         * @description The secret was replaced. The new one is in this response and nowhere else, and the old one
+         *     no longer verifies.
+         */
+        WebhookSecretOK: {
+            headers: {
+                "X-Request-Id": components["headers"]["XRequestId"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["WebhookWithSecret"];
+            };
+        };
         /**
          * @description A page of audit records, newest first. Kept separate from usage history because they
          *     answer different questions (UC-16).
@@ -2907,6 +3153,19 @@ export interface components {
             };
         };
         /**
+         * @description Either no tenant has that identifier, or the tenant has no webhook. Kept apart so a route
+         *     that reads or removes a webhook never mistakes a typo for an empty configuration.
+         */
+        ErrorWebhookNotFound: {
+            headers: {
+                "X-Request-Id": components["headers"]["XRequestId"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /**
          * @description No API key has that id. Distinct from a successful revocation, so a mistyped id is never
          *     mistaken for a revoked key. List the keys and check the id.
          */
@@ -2981,9 +3240,10 @@ export interface components {
             };
         };
         /**
-         * @description A later-release surface called on an MVP build. Not transient: retrying does not help.
-         *     Upgrade, or use the MVP equivalent. Reserved: no route of this build raises it, because
-         *     boolean features, its last surface, shipped in v0.2 (Q-34).
+         * @description A later-release surface called on a build or an instance that does not provide it. Not
+         *     transient: retrying does not help. Since v0.3 the webhook routes raise it when the
+         *     operator has not set `QUOTACORE_WEBHOOK_SIGNING_KEY`, which is how an instance that has not
+         *     opted into egress answers (Q-42, amending Q-34).
          */
         ErrorNotImplemented: {
             headers: {
@@ -4077,6 +4337,118 @@ export interface operations {
             429: components["responses"]["ErrorRateLimited"];
             500: components["responses"]["ErrorInternal"];
             503: components["responses"]["ErrorUnavailable"];
+        };
+    };
+    getTenantWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A
+                 *     UUID-shaped value is looked up as an id first and as an `external_id` second. An identifier
+                 *     that names no tenant is `404 tenant_not_found`, never `400`, and is never echoed.
+                 */
+                id: components["parameters"]["TenantIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["WebhookOK"];
+            401: components["responses"]["ErrorUnauthorized"];
+            403: components["responses"]["ErrorForbiddenScope"];
+            404: components["responses"]["ErrorWebhookNotFound"];
+            429: components["responses"]["ErrorRateLimited"];
+            500: components["responses"]["ErrorInternal"];
+            501: components["responses"]["ErrorNotImplemented"];
+            503: components["responses"]["ErrorControlPlaneUnavailable"];
+        };
+    };
+    putTenantWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A
+                 *     UUID-shaped value is looked up as an id first and as an `external_id` second. An identifier
+                 *     that names no tenant is `404 tenant_not_found`, never `400`, and is never echoed.
+                 */
+                id: components["parameters"]["TenantIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebhookPut"];
+            };
+        };
+        responses: {
+            200: components["responses"]["WebhookOK"];
+            201: components["responses"]["WebhookCreated"];
+            400: components["responses"]["ErrorBadRequestPlain"];
+            401: components["responses"]["ErrorUnauthorized"];
+            403: components["responses"]["ErrorForbiddenScope"];
+            404: components["responses"]["ErrorTenantNotFound"];
+            409: components["responses"]["ErrorConflictTenantDeleted"];
+            413: components["responses"]["ErrorPayloadTooLarge"];
+            429: components["responses"]["ErrorRateLimited"];
+            500: components["responses"]["ErrorInternal"];
+            501: components["responses"]["ErrorNotImplemented"];
+            503: components["responses"]["ErrorControlPlaneUnavailable"];
+        };
+    };
+    deleteTenantWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A
+                 *     UUID-shaped value is looked up as an id first and as an `external_id` second. An identifier
+                 *     that names no tenant is `404 tenant_not_found`, never `400`, and is never echoed.
+                 */
+                id: components["parameters"]["TenantIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: components["responses"]["NoContent"];
+            401: components["responses"]["ErrorUnauthorized"];
+            403: components["responses"]["ErrorForbiddenScope"];
+            404: components["responses"]["ErrorWebhookNotFound"];
+            429: components["responses"]["ErrorRateLimited"];
+            500: components["responses"]["ErrorInternal"];
+            501: components["responses"]["ErrorNotImplemented"];
+            503: components["responses"]["ErrorControlPlaneUnavailable"];
+        };
+    };
+    rotateTenantWebhookSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A
+                 *     UUID-shaped value is looked up as an id first and as an `external_id` second. An identifier
+                 *     that names no tenant is `404 tenant_not_found`, never `400`, and is never echoed.
+                 */
+                id: components["parameters"]["TenantIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["WebhookSecretOK"];
+            401: components["responses"]["ErrorUnauthorized"];
+            403: components["responses"]["ErrorForbiddenScope"];
+            404: components["responses"]["ErrorWebhookNotFound"];
+            429: components["responses"]["ErrorRateLimited"];
+            500: components["responses"]["ErrorInternal"];
+            501: components["responses"]["ErrorNotImplemented"];
+            503: components["responses"]["ErrorControlPlaneUnavailable"];
         };
     };
     listKeys: {

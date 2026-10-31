@@ -389,6 +389,9 @@ const healthcheckTimeout = 2 * time.Second
 // shownOnce is the warning beside every plaintext a command prints (INV-K3).
 const shownOnce = "warning: this key is shown once and cannot be recovered; store it now (INV-K3)"
 
+// webhookShownOnce is the warning beside a webhook secret (Q-40).
+const webhookShownOnce = "warning: this webhook secret is shown once and cannot be recovered; give it to the receiver now, or rotate it (Q-40)"
+
 func overview(w io.Writer) {
 	fmt.Fprint(w, "quotacore administers a Quotacore service, and is the service.\n\n"+
 		"usage: quotacore <command> [arguments] [flags]\n\n"+

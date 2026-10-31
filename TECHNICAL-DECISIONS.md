@@ -36,6 +36,7 @@ specification and the decisions disagree and one of them is wrong.
 | 0016 | The usage event log is a signed-delta ledger, and it is the recovery source | Accepted | 2026-09-27 | [record](docs/decisions/0016-usage-event-ledger.md) |
 | 0017 | No eviction inside the window, and reversal for what eviction cannot prevent | Accepted | 2026-09-27 | [record](docs/decisions/0017-noeviction-and-duplicate-reversal.md) |
 | 0018 | API keys: the contract's token format, and a SHA-256 verifier on every request | Accepted | 2026-10-19 | [record](docs/decisions/0018-api-key-format-and-verifier.md) |
+| 0019 | Webhook egress: NFR-S3 re-scoped, NFR-C5 re-worded, and a secret derived rather than stored | Accepted | 2026-10-31 | [record](docs/decisions/0019-webhook-egress.md) |
 
 ## The three load-bearing decisions
 
@@ -74,7 +75,7 @@ different product and a different store.
 | Money safety | [0004](docs/decisions/0004-idempotency-prevention-and-detection.md), [0005](docs/decisions/0005-refund-as-first-class-operation.md), [0016](docs/decisions/0016-usage-event-ledger.md), [0017](docs/decisions/0017-noeviction-and-duplicate-reversal.md) |
 | Capacity and durability of the fast store | [0009](docs/decisions/0009-redis-protocol-valkey-default.md), [0017](docs/decisions/0017-noeviction-and-duplicate-reversal.md) |
 | Platform and supply chain | [0009](docs/decisions/0009-redis-protocol-valkey-default.md), [0010](docs/decisions/0010-go-chi-spec-first-openapi.md), [0011](docs/decisions/0011-postgres-only-control-plane.md), [0014](docs/decisions/0014-apache-2-0-license.md) |
-| Security and tenancy | [0012](docs/decisions/0012-hashed-scoped-api-keys.md), [0018](docs/decisions/0018-api-key-format-and-verifier.md), [0013](docs/decisions/0013-single-tenant-flat-model-no-pii.md) |
+| Security and tenancy | [0012](docs/decisions/0012-hashed-scoped-api-keys.md), [0018](docs/decisions/0018-api-key-format-and-verifier.md), [0013](docs/decisions/0013-single-tenant-flat-model-no-pii.md), [0019](docs/decisions/0019-webhook-egress.md) |
 | Scope | [0015](docs/decisions/0015-release-slicing.md) |
 
 ## Conventions

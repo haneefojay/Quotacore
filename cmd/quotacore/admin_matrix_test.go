@@ -104,6 +104,10 @@ func (p panicStore) GetTenant(ctx context.Context, id string) (contract.Tenant, 
 	p.boom()
 	return p.Store.GetTenant(ctx, id)
 }
+func (p panicStore) GetWebhook(ctx context.Context, id string) (admin.StoredWebhook, error) {
+	p.boom()
+	return p.Store.GetWebhook(ctx, id)
+}
 func (p panicStore) ListAudit(ctx context.Context, f admin.AuditFilter, pg admin.Page) ([]contract.AuditEntry, error) {
 	p.boom()
 	return p.Store.ListAudit(ctx, f, pg)
@@ -381,6 +385,17 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	at("tenant_deleted", "POST /v1/admin/keys", adm(http.MethodPost, "/v1/admin/keys",
 		`{"name":"`+uniq("mx-gone")+`","scope":"runtime","tenant_external_id":"`+gone.External+`"}`))
 
+	// A tenant's webhook (IP-21, DR-055).
+	wp := "/v1/admin/tenants/" + tn.ID + "/webhook"
+	hook := `{"url":"https://hooks.example.com/","subscriptions":[{"type":"plan_change"}]}`
+	at("validation_failed", "PUT /v1/admin/tenants/{id}/webhook", adm(http.MethodPut, wp, `{}`))
+	at("tenant_not_found", "PUT /v1/admin/tenants/{id}/webhook", adm(http.MethodPut, unknown+"/webhook", hook))
+	at("tenant_deleted", "PUT /v1/admin/tenants/{id}/webhook", adm(http.MethodPut, gp+"/webhook", hook))
+	at("webhook_not_found", "GET /v1/admin/tenants/{id}/webhook", adm(http.MethodGet, wp, ""))
+	at("webhook_not_found", "DELETE /v1/admin/tenants/{id}/webhook", adm(http.MethodDelete, wp, ""))
+	at("webhook_not_found", "POST /v1/admin/tenants/{id}/webhook/rotate-secret", adm(http.MethodPost, wp+"/rotate-secret", ""))
+	at("tenant_not_found", "GET /v1/admin/tenants/{id}/webhook", adm(http.MethodGet, unknown+"/webhook", ""))
+
 	// The fast store goes away: a list page past the first needs the cursor
 	// key, which this process has not read yet, and a new tenant needs its
 	// opening balances.
@@ -411,6 +426,7 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	at("internal_error", "GET /v1/admin/audit", adm(http.MethodGet, "/v1/admin/audit", ""))
 	at("internal_error", "GET /v1/admin/keys", adm(http.MethodGet, "/v1/admin/keys", ""))
 	at("internal_error", "GET /v1/admin/plans/{id}/impact", adm(http.MethodGet, pp+"/impact", ""))
+	at("internal_error", "GET /v1/admin/tenants/{id}/webhook", adm(http.MethodGet, wp, ""))
 	at("internal_error", "POST /v1/admin/tenants/{id}/grant", adm(http.MethodPost, tp+"/grant", grant))
 	at("internal_error", "DELETE /v1/admin/tenants/{id}/overrides/{feature_key}", adm(http.MethodDelete, tp+"/overrides/"+f, `{"apply_at":"immediate"}`))
 
@@ -425,6 +441,7 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	at("control_plane_unavailable", "GET /v1/admin/audit", adm(http.MethodGet, "/v1/admin/audit", ""))
 	at("control_plane_unavailable", "GET /v1/admin/keys", adm(http.MethodGet, "/v1/admin/keys", ""))
 	at("control_plane_unavailable", "GET /v1/admin/plans/{id}/impact", adm(http.MethodGet, pp+"/impact", ""))
+	at("control_plane_unavailable", "GET /v1/admin/tenants/{id}/webhook", adm(http.MethodGet, wp, ""))
 	at("control_plane_unavailable", "POST /v1/admin/tenants/{id}/grant", adm(http.MethodPost, tp+"/grant", grant))
 	at("control_plane_unavailable", "DELETE /v1/admin/tenants/{id}/overrides/{feature_key}", adm(http.MethodDelete, tp+"/overrides/"+f, `{"apply_at":"immediate"}`))
 
@@ -456,6 +473,22 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 			seen[i] = map[string]bool{}
 		}
 		seen[i][got] = true
+	}
+
+	// An instance without a signing key has not enabled webhooks, and answers
+	// them not_implemented (Q-42); it is a stack of its own.
+	off := newStack(t, func(o *stackOptions) { o.env["QUOTACORE_WEBHOOK_SIGNING_KEY"] = "" })
+	if r := off.adminDo(http.MethodGet, samplePath("/v1/admin/tenants/{id}/webhook"), ""); r.code(t) != "not_implemented" {
+		t.Errorf("a webhook route without a signing key: %d %s", r.Status, r.Body)
+	} else {
+		i := rowOf["GET /v1/admin/tenants/{id}/webhook"]
+		if !rows[i].codes["not_implemented"] {
+			t.Error("the webhook row does not list not_implemented")
+		}
+		if seen[i] == nil {
+			seen[i] = map[string]bool{}
+		}
+		seen[i]["not_implemented"] = true
 	}
 
 	// The admin limit is per client address, so it has a stack of its own
@@ -533,8 +566,8 @@ func TestAnAdminKeyReachesEveryAdminRoute(t *testing.T) {
 			t.Errorf("an admin key on %s: %d %s", op.Endpoint(), r.Status, r.Body)
 		}
 	}
-	if served != 32 {
-		t.Errorf("the contract has %d admin operations, want 32", served)
+	if served != 36 {
+		t.Errorf("the contract has %d admin operations, want 36", served)
 	}
 	// status takes no envelope: refused bare.
 	if r := s.do(http.MethodGet, "/v1/admin/status", "", ""); r.Status != http.StatusUnauthorized || len(r.Body) != 0 {

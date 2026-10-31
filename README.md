@@ -77,8 +77,8 @@ tested and documented: phases `IP-00` to `IP-16` of
 measured NFR and each line of [mvp-scope.md](docs/product/mvp-scope.md) is proved in
 [the v0.1 evidence](docs/release/v0-1-evidence.md), with its named gaps. The runbooks and the
 restore drill were followed on the reference stack and approved on 2026-10-29, and a code review of
-the whole tree followed before the release. The specification behind it is 81 documents, 17
-accepted decisions, 52 domain rules, 37 error codes and 18 named correctness tests. What remains
+the whole tree followed before the release. The specification behind it is 83 documents, 17
+accepted decisions, 52 domain rules, 38 error codes and 18 named correctness tests. What remains
 open is in [the register](docs/product/assumptions-and-open-questions.md#2-open-questions), and none
 of it blocks. Later releases, `IP-17` to `IP-27`, start from v0.1.
 
@@ -108,7 +108,7 @@ The complete index, with what each document settles and who should read it, is
 ├── PROJECT.md             what this is, status, reading order
 ├── PRD.md                 requirements, metrics, scope boundary
 ├── ARCHITECTURE.md        system shape, components, runtime flow
-├── TECHNICAL-DECISIONS.md index of all 18 ADRs
+├── TECHNICAL-DECISIONS.md index of all 19 ADRs
 ├── SECURITY.md            threat model, controls, known gaps
 ├── ROADMAP.md             v0.1 → v0.5, gates, and what is deliberately late
 ├── AGENTS.md              how to work in this repository, and the traps

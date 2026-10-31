@@ -80,7 +80,7 @@ Requirements here are elaborated in [security-model.md](security-model.md).
 | --- | --- |
 | NFR-S1 | No API key is recoverable in plaintext from any persistent store, log, or metric |
 | NFR-S2 | No personally identifiable information is required, accepted, or stored. `external_id` excludes `@` |
-| NFR-S3 | The service makes no outbound connection in the MVP. No telemetry, no update check, no phone-home |
+| NFR-S3 | The service makes no outbound connection in the MVP. No telemetry, no update check, no phone-home. Re-scoped 2026-10-31 by [ADR-0019](../decisions/0019-webhook-egress.md): no outbound connection except a webhook delivery to an endpoint an operator has configured for a tenant, and none at all unless the operator has set `QUOTACORE_WEBHOOK_SIGNING_KEY`. No telemetry, no update check, no phone-home, ever |
 | NFR-S4 | All state-changing operations require authentication and authorisation, with no anonymous admin path after bootstrap |
 | NFR-S5 | Admin actions are attributable to a key and auditable with before and after values |
 | NFR-S6 | The service runs unprivileged, on a non-root port, with a read-only filesystem outside its data volumes |
@@ -122,7 +122,7 @@ Requirements here are elaborated in [security-model.md](security-model.md).
 | NFR-C2 | Default datastore image is BSD-3-Clause licensed. The Redis licence change from RSALv2/SSPLv1 to AGPLv3 at version 8, and its implications, are documented in ADR-0009 rather than discovered during an upgrade |
 | NFR-C3 | SBOM generated at build time, including the Go module graph and container base image |
 | NFR-C4 | No copyleft dependency in the runtime path without an explicit decision record |
-| NFR-C5 | Data residency is the customer's, because the data is on the customer's host. No data leaves the host in the MVP |
+| NFR-C5 | Data residency is the customer's, because the data is on the customer's host. No data leaves the host in the MVP. Re-worded 2026-10-31 by [ADR-0019](../decisions/0019-webhook-egress.md): data does not leave the host as data; a webhook delivery carries identifiers and amounts to an endpoint the operator chose, every field listed in [webhooks.md](webhooks.md) §2.1 |
 | NFR-C6 | Audit and event retention are configurable, bounded by default, and applied by a background job rather than by an API call (DR-044) |
 
 ## 9. Explicitly not required

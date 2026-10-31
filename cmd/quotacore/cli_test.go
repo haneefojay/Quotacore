@@ -194,6 +194,11 @@ func TestEveryCommandCallsItsRow(t *testing.T) {
 	run("tenant", "resume", tn, "--version", tv, "--reason", "paid")
 	s.flush()
 	run("events", tn, "--feature", f)
+	run("tenant", "webhook", "set", tn, "--endpoint", "https://hooks.example.com/", "--subscribe", "plan_change",
+		"--subscribe", "threshold_crossing:"+f+":80")
+	run("tenant", "webhook", "get", tn)
+	run("tenant", "webhook", "rotate-secret", tn)
+	run("tenant", "webhook", "delete", tn)
 	k := run("key", "create", "--name", uniq("ck"), "--scope", "runtime")
 	run("key", "list")
 	run("key", "revoke", k["id"].(string))

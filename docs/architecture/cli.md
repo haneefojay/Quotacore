@@ -48,6 +48,10 @@ command the table does not have, or a method, path or operation that is not the 
 | `tenant resume <tenant>` | `POST /v1/admin/tenants/{id}/resume` (`resumeTenant`) | yes |
 | `tenant override set <tenant>` | `POST /v1/admin/tenants/{id}/overrides` (`upsertTenantOverride`) | yes |
 | `tenant override clear <tenant> <feature_key>` | `DELETE /v1/admin/tenants/{id}/overrides/{feature_key}` (`clearTenantOverride`) | yes |
+| `tenant webhook get <tenant>` | `GET /v1/admin/tenants/{id}/webhook` (`getTenantWebhook`) | no |
+| `tenant webhook set <tenant>` | `PUT /v1/admin/tenants/{id}/webhook` (`putTenantWebhook`) | yes |
+| `tenant webhook delete <tenant>` | `DELETE /v1/admin/tenants/{id}/webhook` (`deleteTenantWebhook`) | yes |
+| `tenant webhook rotate-secret <tenant>` | `POST /v1/admin/tenants/{id}/webhook/rotate-secret` (`rotateTenantWebhookSecret`) | yes |
 | `grant <tenant>` | `POST /v1/admin/tenants/{id}/grant` (`grantTenant`) | yes |
 | `set <tenant>` | `POST /v1/admin/tenants/{id}/set` (`setTenantBalance`) | yes |
 | `rollover <tenant>` | `POST /v1/admin/tenants/{id}/force-rollover` (`forceRollover`) | yes |
@@ -72,7 +76,10 @@ A tenant is addressed by its `external_id` or its id, and a plan by its key or i
 contract's path parameters allow; a key is addressed by its id. `key create --tenant <external_id>` binds a
 runtime key to one tenant, which it alone can address, and `key list --tenant` lists that tenant's
 keys (DR-053); `feature create --allocation-cap` marks a metered feature that counts entities
-(DR-054). Both were added 2026-10-31 by `IP-20`. `quotacore <command> --help` prints
+(DR-054). Both were added 2026-10-31 by `IP-20`. `tenant webhook set` takes `--endpoint` and one
+`--subscribe` per entry, each `plan_change`, `cycle_rollover`,
+`threshold_crossing:<feature>:<percent>` or `absolute_threshold:<feature>:<remaining>` (DR-055);
+added 2026-10-31 by `IP-21`. `quotacore <command> --help` prints
 its flags and its route, from the same table the binary dispatches on.
 
 ## 2. Environment
@@ -100,7 +107,7 @@ as one. `TestEveryCatalogueCodeHasOneExitCode` holds this table to
 | 2 | Usage: an unknown command, a bad or missing flag, a missing variable | — |
 | 3 | Client error: the request is wrong, or the contract refuses it before it is sent | `validation_failed`, `invalid_amount`, `invalid_window`, `invalid_timezone`, `missing_idempotency_key`, `payload_too_large`, `feature_not_in_plan`, `feature_archived`, `tenant_suspended`, `not_implemented` |
 | 4 | Credential | `unauthorized`, `api_key_invalid`, `insufficient_scope` |
-| 5 | Not found | `tenant_not_found`, `feature_not_found`, `plan_not_found`, `api_key_not_found` |
+| 5 | Not found | `tenant_not_found`, `feature_not_found`, `plan_not_found`, `api_key_not_found`, `webhook_not_found` |
 | 6 | Conflict, including a confirmation the operator must give | `idempotency_key_reuse`, `plan_in_use`, `feature_in_use`, `feature_key_exists`, `tenant_exists`, `tenant_deleted`, `plan_key_exists`, `refund_exceeds_grant`, `grant_exceeds_ceiling`, `reset_not_supported`, `feature_not_metered`, `feature_not_anchored`, `feature_unit_immutable`, `resource_version_conflict`, `confirmation_required` |
 | 7 | Quota exhausted. No v0.1 command can be answered with it, since no admin route returns it; it is reserved for the data-plane commands of v0.5 | `quota_exceeded` |
 | 8 | Rate limited | `rate_limited` |
@@ -129,8 +136,9 @@ fence is held), `9` (Postgres or the data store did not answer) or `10`.
 ## 5. What a command never does
 
 - **Print a secret it was not asked to create.** `key create` and `init` are the only commands that
-  can print a plaintext key, each prints it once on stdout, and each writes to stderr that it
-  cannot be shown again ([INV-K3](../product/state-machines.md#6-api-key)). No command echoes the admin key,
+  can print a plaintext key, and `tenant webhook set` (on a create) and
+  `tenant webhook rotate-secret` the only ones that can print a webhook secret; each prints it
+  once on stdout, and each writes to stderr that it cannot be shown again ([INV-K3](../product/state-machines.md#6-api-key)). No command echoes the admin key,
   the `Authorization` header or a request body, on success or on failure.
 - **Retry a write.** A grant has no `Idempotency-Key`, so a retried grant is a second grant. A read
   under `--all` waits out one `rate_limited` answer per page; nothing else is retried.

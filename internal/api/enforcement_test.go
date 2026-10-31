@@ -187,10 +187,6 @@ func TestErrorsTotalCodesAreTheCatalogue(t *testing.T) {
 		enum[string(c)] = true
 	}
 	catalogue := catalogueCodes(t)
-	// not_implemented is reserved: no endpoint answers it, so no series
-	// carries it (Q-34).
-	delete(catalogue, "not_implemented")
-	delete(enum, "not_implemented")
 	compare := func(aName string, a map[string]bool, bName string, b map[string]bool) {
 		for c := range a {
 			if !b[c] {

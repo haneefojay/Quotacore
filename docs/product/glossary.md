@@ -53,7 +53,7 @@ most of the confusion in this product comes from words that sound right and mean
 | **Hard reset** | Discarding the current balance and starting a new cycle at the moment of a plan assignment change (DR-013) | A revocation, a suspension, or a migration. The previous balance is discarded, not carried |
 | **Idempotency key** | A client-supplied key identifying one logical `consume` or `refund`, reused across every retry of that operation | A request ID, a deduplication of requests, or an optional convenience. It is required, and its absence is `400 missing_idempotency_key` |
 | **Idempotency window** | 24 hours from application. A key first seen after that is treated as new (DR-029) | A retention period for events, or a guarantee for keys used after 24 h |
-| **JTI** | The JSON Web Token identifier, used as the webhooks signing scheme's replay guard (v0.3) | The idempotency key. Different mechanism, different purpose |
+| **JTI** | The JSON Web Token identifier, used as the webhooks signing scheme's replay guard (v0.3). Amended 2026-10-31 (`IP-21`): the scheme's JTI is the delivery's `event_id`, which a receiver already keeps to deduplicate (Q-41) | The idempotency key. Different mechanism, different purpose |
 | **JTBD-n** | A job to be done, in [foundation-and-personas.md](foundation-and-personas.md) | A feature request |
 | **Ledger** (`usage_events`) | Append-only signed-delta record of every applied balance mutation, in Postgres | The balance. The balance is authoritative at runtime; the ledger is history and reconstruction |
 | **Limit** | The plan entitlement's allowance for a cycle, an `int64` in the feature's unit | The balance. A tenant's balance is at or below its limit, and below it once they consume |

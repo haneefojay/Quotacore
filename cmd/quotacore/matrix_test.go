@@ -291,11 +291,6 @@ func TestT08EveryRefusalChangesNothing(t *testing.T) {
 	}
 
 	for code := range catalogue(t) {
-		// not_implemented is reserved: boolean features were its last surface,
-		// and no route of this build raises it (Q-34, IP-17).
-		if code == "not_implemented" {
-			continue
-		}
 		if !covered[code] {
 			t.Errorf("%s is not provoked", code)
 		}

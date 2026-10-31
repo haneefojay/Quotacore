@@ -367,6 +367,9 @@ func assemble(ctx context.Context, cfg Config, log *slog.Logger, dbConn *sql.DB,
 		ConfirmThreshold: cfg.PlanApplyConfirmThreshold,
 		ConfirmationTTL:  cfg.ConfirmationTTL,
 		ReadOnly:         readOnly,
+		// Webhooks are on only when the operator set a signing key
+		// (ADR-0019).
+		WebhookSigningKey: cfg.WebhookSigningKey,
 		Drained: func(ctx context.Context) {
 			if n, err := db.PendingReanchors(ctx, dbConn); err == nil {
 				cycles.ReanchorsPending.Set(float64(n))

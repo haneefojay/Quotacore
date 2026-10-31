@@ -202,6 +202,9 @@ func newStack(t *testing.T, opts ...func(*stackOptions)) *stack {
 		// limit is lifted unless a test is about it.
 		"QUOTACORE_RATELIMIT_ADMIN_RPM": "6000000",
 		"QUOTACORE_LOG_LEVEL":           "debug",
+		// Webhooks are on in every stack unless a test turns them off, so
+		// each route is served (IP-21). The value is a fixture, not a secret.
+		"QUOTACORE_WEBHOOK_SIGNING_KEY": testWebhookKey,
 		// The metrics listener is httptest's, so the configured address is
 		// only validated.
 		"QUOTACORE_METRICS_ADDR": "127.0.0.1:0",

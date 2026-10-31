@@ -35,7 +35,7 @@ started, and deliberately at the bottom rather than the top:
 [`IP-01`](docs/roadmaps/v0-1-enforcement-path.md#ip-01--repository-toolchain-and-ci-foundation) built
 the repository, the toolchain and the pipeline, contains no product behaviour, and closed on
 2026-09-27. [`IP-02`](docs/roadmaps/v0-1-enforcement-path.md#ip-02--the-openapi-contract) then wrote
-the contract the code is written against — 41 operations, 68 schemas, 37 error codes, served at
+the contract the code is written against — 45 operations, 76 schemas, 38 error codes, served at
 `/openapi.json` with a generated reference at `/docs` — and closed on 2026-09-28.
 [`IP-03`](docs/roadmaps/v0-1-enforcement-path.md#ip-03--cycle-engine-and-boundary-matrix), the cycle
 engine and its boundary matrix, started and closed on 2026-09-28.
@@ -89,7 +89,7 @@ Each is a testable property with a test behind it, not a slogan.
 | --- | --- |
 | [PRD.md](PRD.md) | Requirements, personas, success metrics, scope boundary |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System shape, components, data model, runtime flow |
-| [TECHNICAL-DECISIONS.md](TECHNICAL-DECISIONS.md) | Index of all 18 ADRs with rationale and revisit triggers |
+| [TECHNICAL-DECISIONS.md](TECHNICAL-DECISIONS.md) | Index of all 19 ADRs with rationale and revisit triggers |
 | [SECURITY.md](SECURITY.md) | Threat model, controls, gaps, incident response |
 | [ROADMAP.md](ROADMAP.md) | Release sequencing and what gates each phase |
 | [AGENTS.md](AGENTS.md) | How to work in this repository: reading order by task, change recipes, traps, definition of done |
@@ -99,7 +99,7 @@ Each is a testable property with a test behind it, not a slogan.
 
 ## Documentation map
 
-81 documents. `docs/README.md` is the full index with reading paths. `docs/roadmaps/roadmap-index.md`
+83 documents. `docs/README.md` is the full index with reading paths. `docs/roadmaps/roadmap-index.md`
 is the execution plan: 28 phases, with the specification gate now passed.
 
 ```

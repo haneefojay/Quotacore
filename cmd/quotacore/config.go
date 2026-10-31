@@ -9,6 +9,7 @@ import (
 
 	"github.com/quotacore/quotacore/internal/admin"
 	"github.com/quotacore/quotacore/internal/auth"
+	"github.com/quotacore/quotacore/internal/webhook"
 )
 
 const IdempotencyWindow = 24 * time.Hour
@@ -33,6 +34,10 @@ type Config struct {
 	Migrate               bool
 	BootstrapAdminKey     string
 	BootstrapKeyIsAcked   bool
+	// WebhookSigningKey is QUOTACORE_WEBHOOK_SIGNING_KEY, the key every
+	// webhook secret is derived from (IP-21, Q-40). Empty leaves webhooks
+	// off, and their routes answer 501 not_implemented (ADR-0019, Q-42).
+	WebhookSigningKey []byte
 
 	// The IP-07 keys of deployment.md section 4.
 	RequestTimeout      time.Duration
@@ -314,6 +319,15 @@ func Load(getenv Getenv) (Config, error) {
 		if err != nil || tok.Label != auth.Admin {
 			return c, fmt.Errorf("refusing to start: QUOTACORE_BOOTSTRAP_ADMIN_KEY is not an admin key in the qc_admin_<prefix>.<secret> format (ADR-0018); deployment.md section 4.1 shows how to mint one")
 		}
+	}
+	// A short signing key would make every webhook secret guessable, so it
+	// refuses start rather than enabling webhooks weakly. The message never
+	// contains the value (DR-043).
+	if raw := getenv("QUOTACORE_WEBHOOK_SIGNING_KEY"); raw != "" {
+		if len(raw) < webhook.MinSigningKey {
+			return c, fmt.Errorf("refusing to start: QUOTACORE_WEBHOOK_SIGNING_KEY is shorter than %d bytes; generate one with openssl rand -base64 32 (deployment.md section 4)", webhook.MinSigningKey)
+		}
+		c.WebhookSigningKey = []byte(raw)
 	}
 	return c, nil
 }

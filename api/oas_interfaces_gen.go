@@ -57,6 +57,10 @@ type DeleteTenantRes interface {
 	deleteTenantRes()
 }
 
+type DeleteTenantWebhookRes interface {
+	deleteTenantWebhookRes()
+}
+
 type ForceRolloverRes interface {
 	forceRolloverRes()
 }
@@ -71,6 +75,10 @@ type GetPlanRes interface {
 
 type GetTenantRes interface {
 	getTenantRes()
+}
+
+type GetTenantWebhookRes interface {
+	getTenantWebhookRes()
 }
 
 type GrantTenantRes interface {
@@ -105,6 +113,10 @@ type PlanImpactRes interface {
 	planImpactRes()
 }
 
+type PutTenantWebhookRes interface {
+	putTenantWebhookRes()
+}
+
 type ReadyzRes interface {
 	readyzRes()
 }
@@ -119,6 +131,10 @@ type ResumeTenantRes interface {
 
 type RevokeKeyRes interface {
 	revokeKeyRes()
+}
+
+type RotateTenantWebhookSecretRes interface {
+	rotateTenantWebhookSecretRes()
 }
 
 type SetTenantBalanceRes interface {

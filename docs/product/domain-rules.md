@@ -521,6 +521,31 @@ script checks is structural.
 *Verified by:* T-19, which attempts every cross-tenant address through the router and through the
 script runner directly.
 
+### DR-055 — A tenant's webhook is told about subscribed events, one delivery per ledger event, signed with a derived secret
+A tenant has at most one webhook: an absolute `https` endpoint and a set of 1 to 20 distinct
+subscriptions. A `threshold_crossing` names a metered feature and a percentage used, 1 to 100; an
+`absolute_threshold` names a metered feature and a remaining balance; `plan_change` matches the
+ledger's `plan_changed`, and `cycle_rollover` its `cycle_rolled_over` and `force_rolled_over`. A
+ledger event crosses a `threshold_crossing` of p when its balance falls from above (100 − p)% of the
+limit to at or below it, and an `absolute_threshold` of n when it falls from above n to at or below
+n; only a fall crosses, and a rise re-arms. The tenant is told about an event when it matches a
+`plan_change` or `cycle_rollover` subscription or crosses a subscribed threshold, and is told once:
+the payload carries the ledger event's `event_id` and lists every threshold the event crossed, so
+two thresholds never become two deliveries with one `event_id`. The signing secret is derived from
+`QUOTACORE_WEBHOOK_SIGNING_KEY`, the webhook's id and its generation and is stored nowhere; it is
+returned on the create and on each rotation only, and a rotation ends the previous one at once
+(Q-40). Every create, replace, rotation and removal is audited with before and after, which carry
+the generation and never the secret (DR-041). A tenant's soft delete removes its webhook in the
+same transaction. Without a signing key, every webhook route answers `501 not_implemented`
+(ADR-0019, Q-42).
+*Rationale:* a threshold is defined by the event that crosses it, so whether to notify is derivable
+from the ledger alone, and a payload per ledger event is what makes `event_id` a sufficient
+deduplication key (INV-W1).
+*Consequence:* a threshold on a boolean or rolling feature is refused, because neither has a cycle
+balance to fall (Q-43).
+*Verified by:* T-20, which audits each change, scans every store for the secret, ties the payload's
+`event_id` to the ledger row and the delivery header, and runs the documented verification recipe.
+
 ## Availability and failure
 
 ### DR-036 — The data plane is authoritative at runtime; the control plane is authoritative for schedule

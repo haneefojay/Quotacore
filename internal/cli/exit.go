@@ -33,7 +33,7 @@ func ExitFor(code contract.ErrorCode) int {
 	case contract.ErrorCodeUnauthorized, contract.ErrorCodeAPIKeyInvalid, contract.ErrorCodeInsufficientScope:
 		return ExitCredential
 	case contract.ErrorCodeTenantNotFound, contract.ErrorCodeFeatureNotFound, contract.ErrorCodePlanNotFound,
-		contract.ErrorCodeAPIKeyNotFound:
+		contract.ErrorCodeAPIKeyNotFound, contract.ErrorCodeWebhookNotFound:
 		return ExitNotFound
 	case contract.ErrorCodeIdempotencyKeyReuse, contract.ErrorCodePlanInUse, contract.ErrorCodeFeatureInUse,
 		contract.ErrorCodeFeatureKeyExists, contract.ErrorCodeTenantExists, contract.ErrorCodeTenantDeleted,

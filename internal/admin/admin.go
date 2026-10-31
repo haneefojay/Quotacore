@@ -64,6 +64,19 @@ type NewKey struct {
 	TenantExternalID string
 }
 
+// StoredWebhook is a tenant's webhook and its row id, from which, with the
+// generation, the route derives the secret it returns (Q-40).
+type StoredWebhook struct {
+	ID      string
+	Webhook contract.Webhook
+}
+
+// WebhookInput is a webhook PUT the route has validated (DR-055).
+type WebhookInput struct {
+	URL           string
+	Subscriptions []contract.WebhookSubscription
+}
+
 type NewFeature struct {
 	Key, Name, Unit, Description string
 	Kind                         string // metered, boolean or rolling, fixed at creation (DR-050, DR-052)
@@ -296,6 +309,13 @@ type Store interface {
 	// finished.
 	DrainReanchors(ctx context.Context, tenantIDs []string, max int, drain DrainFunc) (int, error)
 
+	// The tenant's one webhook (IP-21). PutWebhook reports whether it
+	// created it; a tenant with none is webhook_not_found on the other three.
+	GetWebhook(ctx context.Context, id string) (StoredWebhook, error)
+	PutWebhook(ctx context.Context, a Actor, id string, in WebhookInput) (StoredWebhook, bool, error)
+	RotateWebhookSecret(ctx context.Context, a Actor, id string) (StoredWebhook, error)
+	DeleteWebhook(ctx context.Context, a Actor, id string) error
+
 	ListAudit(ctx context.Context, f AuditFilter, p Page) ([]contract.AuditEntry, error)
 	ListEvents(ctx context.Context, tenantID string, f EventFilter, p Page) (EventPage, error)
 
@@ -378,6 +398,10 @@ type Options struct {
 	// Drained runs after every drain tick, which is where the gauge of
 	// pending re-anchors is refreshed (IP-13 D10); nil does nothing.
 	Drained func(ctx context.Context)
+	// WebhookSigningKey is QUOTACORE_WEBHOOK_SIGNING_KEY, from which every
+	// webhook secret is derived (Q-40). Empty disables webhooks, and their
+	// routes answer 501 not_implemented (ADR-0019, Q-42).
+	WebhookSigningKey []byte
 }
 
 // StatusInfo is what GET /v1/admin/status reports beyond its probes.
@@ -418,6 +442,7 @@ type Service struct {
 	readOnly    func() bool
 	drained     func(ctx context.Context)
 	forget      func(tenantIDs []string)
+	webhookKey  []byte
 }
 
 func New(opts Options) *Service {
@@ -437,6 +462,7 @@ func New(opts Options) *Service {
 		now:         opts.Now,
 		readOnly:    opts.ReadOnly,
 		drained:     opts.Drained,
+		webhookKey:  opts.WebhookSigningKey,
 	}
 	if s.readOnly == nil {
 		s.readOnly = func() bool { return false }
@@ -506,6 +532,11 @@ func (s *Service) Handlers() map[string]http.HandlerFunc {
 		"forceRollover":        s.writable(s.forceRollover),
 		"upsertTenantOverride": s.writable(s.upsertOverride),
 		"clearTenantOverride":  s.writable(s.clearOverride),
+
+		"putTenantWebhook":          s.webhooks(s.putWebhook),
+		"getTenantWebhook":          s.webhooks(s.getWebhook),
+		"deleteTenantWebhook":       s.webhooks(s.deleteWebhook),
+		"rotateTenantWebhookSecret": s.webhooks(s.rotateWebhookSecret),
 
 		"listUsageEvents": s.listEvents,
 		"listAudit":       s.listAudit,

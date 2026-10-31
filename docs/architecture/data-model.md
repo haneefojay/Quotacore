@@ -410,7 +410,7 @@ CREATE TABLE audit_log (
   actor_key_id uuid REFERENCES api_keys(id) ON DELETE SET NULL,
   actor        text NOT NULL,                    -- 'bootstrap', 'cli:<host>', or key name
   action       text NOT NULL,                    -- 'tenant.create', 'plan.apply_now', …
-  subject_type text NOT NULL,                    -- 'tenant', 'plan', 'feature', 'api_key', 'system'
+  subject_type text NOT NULL,                    -- 'tenant', 'plan', 'feature', 'api_key', 'system', 'webhook'
   subject_id   uuid,
   before       jsonb,
   after        jsonb,
@@ -418,7 +418,7 @@ CREATE TABLE audit_log (
   created_at   timestamptz NOT NULL DEFAULT now(),
   reason       text,                             -- archive, delete, suspend, resume
   CONSTRAINT audit_log_subject_type
-    CHECK (subject_type IN ('tenant', 'plan', 'feature', 'api_key', 'system'))
+    CHECK (subject_type IN ('tenant', 'plan', 'feature', 'api_key', 'system', 'webhook'))
 );
 
 CREATE INDEX audit_log_subject_idx ON audit_log (subject_type, subject_id, created_at DESC);
@@ -441,6 +441,10 @@ api_keys` for that reason.
 > require a reason on the wire, and the table had no column to keep it in, so the reason was
 > required and then discarded. It is last because a migration adds it, and a fresh database and an
 > upgraded one must have the same column order.
+
+> **Amended 2026-10-31 (`IP-21`).** `subject_type` gains `webhook`, for the create, replace,
+> rotation and removal of a tenant's webhook (section 2.16, DR-055), and the contract's
+> `AuditEntry.subject_type` gains it with it.
 
 > **Amended 2026-10-28 (`IP-16`, Q-28).** `subject_type` gains `system`, for a row about the
 > installation rather than one resource, and the contract's `AuditEntry.subject_type` gains it with
@@ -661,6 +665,30 @@ instant before which every event the writer accepted has been written, dead-lett
 a gap; `last_seen_at` is refreshed on a heartbeat while the writer lives. A clean drain sets
 `closed_at`. A session left open whose `last_seen_at` has gone stale is a crash, and a rebuild
 reads it as a gap for every tenant from `settled_through` to `last_seen_at` plus a heartbeat.
+
+### 2.16 Webhooks
+
+```sql
+CREATE TABLE webhooks (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id         uuid NOT NULL UNIQUE REFERENCES tenants(id) ON DELETE RESTRICT,
+  url               text NOT NULL,
+  subscriptions     jsonb NOT NULL,
+  secret_generation bigint NOT NULL DEFAULT 1,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT webhooks_url_https CHECK (url LIKE 'https://%' AND char_length(url) <= 2048),
+  CONSTRAINT webhooks_subscriptions_array CHECK (jsonb_typeof(subscriptions) = 'array'),
+  CONSTRAINT webhooks_generation_positive CHECK (secret_generation >= 1)
+);
+```
+
+Added 2026-10-31 by `IP-21` (DR-055, ADR-0019). A tenant's one webhook: its endpoint and its
+subscription set, stored as the API renders them. **The signing secret is not a column.** It is
+derived from `QUOTACORE_WEBHOOK_SIGNING_KEY`, the row's `id` and `secret_generation`, so the
+database holds a counter and never the secret, and a rotation is the counter moving (Q-40, NFR-S1).
+A tenant's soft delete removes its row in the same transaction, audited, so a deleted tenant has no
+egress. `tenant_id` restricts, because a tenant row is never removed.
 
 ---
 

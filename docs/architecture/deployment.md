@@ -253,6 +253,14 @@ reading the source.
 | `QUOTACORE_RATELIMIT_ADMIN_RPM` | `60` | Per client address, with a burst of the same size, on every `/v1/admin/*` route and before authentication. The address is the peer, or the right-most `X-Forwarded-For` entry not in `QUOTACORE_TRUSTED_PROXIES` when the peer is a trusted proxy. The admin API is human-driven |
 | `QUOTACORE_RATE_LIMITER_MAX_KEYS` | `100000` | Bounded, so a key-churn flood is not a memory attack |
 
+### 4.5a Webhooks
+
+Added 2026-10-31 (`IP-21`, [ADR-0019](../decisions/0019-webhook-egress.md)).
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `QUOTACORE_WEBHOOK_SIGNING_KEY` | *(none)* | Enables webhooks. Every tenant's webhook secret is derived from it (Q-40), so it is a deployment secret like the database URL: environment only, never in the database or a log. At least 32 bytes, or the service **refuses to start**; generate one with `openssl rand -base64 32`. Unset, every webhook route answers `501 not_implemented` (Q-42). Changing it rotates every tenant's secret at once, which is the lever for a leaked key and a hazard otherwise |
+
 ### 4.6 The CLI
 
 Added 2026-10-27 (`IP-14`). Read by the administration commands, not by the service; the full

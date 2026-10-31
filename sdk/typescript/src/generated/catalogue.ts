@@ -39,7 +39,8 @@ export const errorCodes = [
   "service_unavailable",
   "control_plane_unavailable",
   "internal_error",
-  "not_implemented"
+  "not_implemented",
+  "webhook_not_found"
 ] as const;
 
 export type ErrorCode = (typeof errorCodes)[number];
@@ -238,6 +239,11 @@ export const catalogue: { readonly [C in ErrorCode]: CatalogueEntry } = {
   not_implemented: {
     status: 501,
     retryable: "no",
-    clientAction: "Upgrade, or use the MVP equivalent",
+    clientAction: "Enable the surface, or upgrade",
+  },
+  webhook_not_found: {
+    status: 404,
+    retryable: "no",
+    clientAction: "Configure one with PUT. A soft delete of the tenant removed its webhook",
   },
 };

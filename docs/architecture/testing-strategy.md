@@ -321,6 +321,27 @@ series with and without bound keys, and no `tenant` label (NFR-O2). Read `GET /v
 tenant holding an allocation cap, a plain metered, a boolean and a rolling feature, and assert
 `cap` is on the first alone and counts creations less refunds (DR-054).
 
+### T-20 — A webhook delivery is verifiable
+
+```
+Given  a tenant whose webhook subscribes to 50% used and to 5 left on a feature with a limit of 10
+When   a consume takes the balance from 10 to 4
+Then   one payload lists both crossings, labelled apart
+And    its event_id, the ledger row's id and the Quotacore-Delivery header are one value
+And    the signature verifies with the secret the create returned, and not after a rotation
+```
+
+Create, replace, rotate and remove a webhook and assert one audit row each with before and after,
+none holding a secret, and that a tenant's soft delete removes its webhook with a row of its own
+(DR-041). Scan every column of every table, the log and the metrics for the created and the
+rotated secret (NFR-S1, Q-40). Assert the signature fails when the body, the timestamp or the
+`event_id` changes and outside 300 seconds either way, and that a threshold crossing and an
+absolute threshold fire on their own lines and only on a fall (DR-055). Extract the verification
+recipe from [webhooks.md](webhooks.md) §4, run it against a real signature and assert it passes,
+then change one byte and assert it fails. Start an instance without
+`QUOTACORE_WEBHOOK_SIGNING_KEY` and assert every webhook route is `501 not_implemented` after
+authentication and writes nothing (Q-42).
+
 ---
 
 ## 3. Property tests
