@@ -30,6 +30,11 @@ type adjustment struct {
 	// rather than limit plus bonus, because it raises the bonus with the
 	// balance (D3).
 	grant bool
+	// prior is the limit and bonus the change started from, which a grant and
+	// a set can state from the script's reply because neither moves the limit
+	// and only a grant moves the bonus. Nil for a rollover, whose prior limit
+	// the reply does not carry.
+	prior func(out script.AdminOutcome) (limit, bonus int64)
 	run   func(ctx context.Context, e held) (script.AdminOutcome, error)
 }
 
@@ -73,12 +78,15 @@ func (s *Service) resolve(t *snapshot.LoadedTenant, feature string) (held, error
 }
 
 // balanceAudit is what a balance route records before and after: the
-// balance, and the cycle it is on.
+// balance, the limit and bonus that make its ceiling, and the cycle it is on
+// (DR-041, IP-18). A zero is recorded as zero, so a bonus of 0 is not read as
+// a bonus nobody recorded; only a rollover's before, whose prior limit and
+// bonus the script does not report, leaves the two out.
 type balanceAudit struct {
 	FeatureKey string `json:"feature_key"`
 	Balance    int64  `json:"balance"`
-	Limit      int64  `json:"limit,omitempty"`
-	Bonus      int64  `json:"bonus,omitempty"`
+	Limit      *int64 `json:"limit,omitempty"`
+	Bonus      *int64 `json:"bonus,omitempty"`
 	CycleIndex int64  `json:"cycle_index"`
 }
 
@@ -92,6 +100,7 @@ func (s *Service) grant(w http.ResponseWriter, r *http.Request) {
 		func(b *body) adjustment {
 			amount, _ := b.integer("amount", true, 0, limitCeiling)
 			return adjustment{action: "tenant.grant", event: "granted", grant: true,
+				prior: func(out script.AdminOutcome) (int64, int64) { return out.Limit, out.Bonus - amount },
 				run: func(ctx context.Context, h held) (script.AdminOutcome, error) {
 					return s.scripts.Grant(ctx, h.request(amount))
 				}}
@@ -103,6 +112,7 @@ func (s *Service) setBalance(w http.ResponseWriter, r *http.Request) {
 		func(b *body) adjustment {
 			value, _ := b.integer("value", true, 0, limitCeiling)
 			return adjustment{action: "tenant.set", event: "set",
+				prior: func(out script.AdminOutcome) (int64, int64) { return out.Limit, out.Bonus },
 				run: func(ctx context.Context, h held) (script.AdminOutcome, error) {
 					return s.scripts.Set(ctx, h.request(value))
 				}}
@@ -191,7 +201,12 @@ func (s *Service) adjust(w http.ResponseWriter, r *http.Request, fields []string
 			if out.Before != nil {
 				before.Balance = *out.Before
 			}
-			after := &balanceAudit{FeatureKey: feature, Balance: out.Balance, Limit: out.Limit, Bonus: out.Bonus, CycleIndex: out.Index}
+			if a.prior != nil {
+				limit, bonus := a.prior(out)
+				before.Limit, before.Bonus = &limit, &bonus
+			}
+			limit, bonus := out.Limit, out.Bonus
+			after := &balanceAudit{FeatureKey: feature, Balance: out.Balance, Limit: &limit, Bonus: &bonus, CycleIndex: out.Index}
 			if delta, known := out.Delta(); known && delta != 0 {
 				ev := dataplane.Event{
 					RequestID: actor(r).RequestID, TenantID: h.tenant.ID, FeatureKey: feature, Type: a.event,

@@ -245,7 +245,21 @@ only. Documented in the API reference, because it surprises people, and it is th
 support grant for a long extension is repeated rather than issued once.
 *Alternative rejected:* carrying bonus forward, which requires deciding how a carried bonus
 interacts with a shrinking plan limit.
-*Verified by:* T-04, and T-05 for the return to zero at rollover.
+*Verified by:* T-04, T-05 for the return to zero at rollover, and T-17 for three consecutive cycles' grants.
+
+### DR-051 — A grant or a set is reversed by a set
+Neither `grant` nor `set` has an undo. A `set` is reversed by a `set` to the balance its audit row
+records as `before` (DR-041), and a grant by a `set` to the balance less the amount granted. A
+reversal is itself an administrative mutation: it is audited with its own reason and recorded as a
+`set` with its own signed delta (DR-042), so the history shows the correction and its reversal
+rather than an edit to either. A `set` never lowers the bonus, so a reversed grant's bonus, and the
+ceiling it raised (DR-019), stay until the boundary returns the bonus to zero (DR-020, Q-35).
+*Rationale:* a reversal route would need to identify the change it undoes and to decide what an
+undo means after the balance has moved again; a `set` from the audited figure has neither problem,
+and the ledger and the audit log already make it attributable.
+*Consequence:* within the cycle of a reversed grant, a refund may restore consumption up to the
+raised ceiling. That is bounded by the cycle and by real consumption, and is accepted.
+*Verified by:* T-17.
 
 ### DR-021 — Refunds credit the current cycle
 A refund always credits the balance of the cycle in effect when the refund is applied. Refunds
@@ -488,7 +502,7 @@ Every create, update, archive, delete, grant, set, override, apply-now, force-ro
 issue and key revocation writes an `audit_log` row with actor, action, subject, before, after
 and request identifier.
 *Consequence:* the audit log is the authoritative record of who changed a customer's entitlement.
-*Verified by:* NFR-S5, which requires an admin action to be attributable to a key and to record before and after values.
+*Verified by:* NFR-S5, which requires an admin action to be attributable to a key and to record before and after values, and T-17 for the balance, limit and bonus a grant and a set record on each side.
 
 ### DR-042 — Every applied balance mutation is recorded as a signed delta
 `consume`, `refund`, `grant`, `set`, plan apply-now and cycle rollover each attempt exactly one

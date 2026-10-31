@@ -258,6 +258,26 @@ one. Assert that the balance route reports all four entitlements by their own ki
 path's cost is asserted beside it: one store call per boolean `check` and `consume`, counted in the
 client, and a p99 at or below the metered path's against the real store.
 
+### T-17 — A correction reconciles
+
+```
+Given  limit 1000, a consume of 300           → balance 700, bonus 0
+When   a grant of 50 is applied               → balance 750, bonus 50
+And    a set of 400, then of 900, then of 900 → balance 400, 900, 900
+Then   the ledger holds granted +50, set −350 and set +500, and nothing for the equal set
+And    balance = 1000 + Σ(delta), and verify-tenant is clean
+```
+
+Assert that each of the four is audited once with `before` and `after` balance, limit and bonus,
+its reason and the admin key that made it, and that each ledger row joins its audit row by request
+id, so the reason for a correction can be shown to the customer it moved (DR-041, DR-042).
+Assert that no grant or set moves the cycle index, either window field or the tenant's anchor. A
+`set` above `limit + bonus` and a grant past `2^53 − 1` are `409 grant_exceeds_ceiling` and leave
+the hash, the audit log and the ledger as they were, decided inside the script (DR-019). Grants in
+three consecutive cycles each leave the bonus at that cycle's grant alone (DR-020, INV-C5). A set
+and a grant are each reversed by a set, audited and ledgered like any other, and the reversed
+grant's bonus stays until the boundary (DR-051).
+
 ---
 
 ## 3. Property tests

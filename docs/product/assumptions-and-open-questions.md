@@ -131,7 +131,9 @@ before v0.1. [Q-32](#2-open-questions) was added and answered on 2026-10-31 by `
 that ADR-0015 and the phase map disagree on when the SDKs may start: built now, published after v0.2.
 [Q-33](#2-open-questions) and [Q-34](#2-open-questions) were added and answered on 2026-10-31 by
 `IP-17`, each with its default: a boolean consume writes no ledger row, and `not_implemented` is
-reserved rather than retired once boolean features, its only surface, ship.
+reserved rather than retired once boolean features, its only surface, ship. [Q-35](#2-open-questions) was
+added and answered on 2026-10-31 by `IP-18` with its default: reversing a grant is a `set`, which
+leaves the bonus until the boundary.
 
 | ID | Question | Proposed default | Deadline | Blocks | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -169,6 +171,7 @@ reserved rather than retired once boolean features, its only surface, ship.
 | Q-32 | ADR-0015 places the SDKs after v0.2, because a package published against a moving API is permanent maintenance, while the phase map gates `IP-26` only on `IP-16`. May `IP-26` be built before v0.2? | **Built, not published.** `IP-26` is built and tested in the repository from 2026-10-31, and the package is published to npm only once v0.2's contract has landed, so ADR-0015's objection, which is to publishing, stands without a superseding ADR. The owner chose this on 2026-10-31. Publication, the npm organisation and its token are the owner's | Before `IP-26` publishes | [v0-5-sdks.md](../roadmaps/v0-5-sdks.md#ip-26--typescript-sdk), [ADR-0015](../decisions/0015-release-slicing.md) | answered — v0-5-sdks.md, IP-26 |
 | Q-33 | A boolean entitlement has no counter (DR-050). Does a `consume` against one write a row to the usage ledger, so a customer's use of an included feature is in the history? | **No.** The ledger records signed, non-zero deltas (DR-042, `usage_events_delta_nonzero`) and an inclusion has none; a zero-delta row type would reverse an invariant for a convenience. Use is counted in `quotacore_consume_total` like every call, and replays are recognised by the idempotency record as for a metered consume | Before `IP-17` closes | `POST /v1/consume` on a boolean feature | answered — DR-050, IP-17 |
 | Q-34 | `not_implemented` was raised only by `POST /v1/admin/features` with `kind: boolean`. Once `IP-17` ships boolean features no route raises it, and the specification checker's F1 and the endpoint matrix test both require every catalogued code to be reachable. Retire the code, or keep it? | **Keep it, reserved.** A code is retired only in a major version (`ErrorCode` in the contract), clients and the SDK already branch on it, and the next later-release surface will raise it again. The catalogue row says reserved, and F1 and the matrix test name it as their one exemption, so a code that falls out of the matrix by accident still fails | Before `IP-17` closes | error-catalog §2 and §3 | answered — error-catalog, IP-17 |
+| Q-35 | Neither `grant` nor `set` has an undo, and a reversal is a `set` (DR-051). A `set` never lowers the bonus, so a reversed grant leaves its raised ceiling until the boundary. Should a grant's reversal also take the bonus back, by a revoke or a negative grant? | **No, not in v0.2.** The bonus ends at the boundary (DR-020), and the ceiling it leaves only lets a refund restore real consumption within the cycle. A revoke would be a new endpoint, a new ledger type and a new decision about a bonus already spent, for a correction a `set` already makes | Before `IP-18` closes | `POST /v1/admin/tenants/{id}/set` as a reversal | answered — DR-051, IP-18 |
 ---
 
 ## 3. How this register is maintained

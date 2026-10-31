@@ -602,6 +602,10 @@ export interface paths {
          *     `value` is `0` to `limit + bonus`. Above that is `409 grant_exceeds_ceiling`: grant first.
          *     Setting `0`, or suspending the tenant, is how to stop a tenant until its boundary; a
          *     negative balance is not representable in v0.1 (Q-23).
+         *
+         *     A set is also how a grant or an earlier set is reversed: there is no undo route. Set the
+         *     balance to the `before` the audit row records, or to the balance less the amount granted;
+         *     the grant's bonus stays until the boundary (DR-051, Q-35).
          */
         post: operations["setTenantBalance"];
         delete?: never;
