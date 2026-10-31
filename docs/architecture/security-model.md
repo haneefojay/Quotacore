@@ -129,12 +129,12 @@ the first candidate for a post-MVP release.
 | --- | --- |
 | PII | None required, none accepted, none stored. `external_id` excludes `@` **at the schema level**, so an email address cannot become a tenant identifier (DR-034, NFR-S2) |
 | `metadata` | A bounded correlation object. Not indexed, excluded from logs, never returned by an endpoint, and documented as not a data store |
-| Secrets at rest | API keys are SHA-256 digests of 256-bit random secrets (ADR-0018). Nothing else in the schema is secret. Connection strings come from the environment, not the database |
+| Secrets at rest | API keys are SHA-256 digests of 256-bit random secrets (ADR-0018). Nothing else in the schema is secret. Connection strings come from the environment, not the database. Amended 2026-10-31 (`IP-21`): a webhook secret is derived from `QUOTACORE_WEBHOOK_SIGNING_KEY`, which is in the environment, and is in no column; the database holds only its generation (ADR-0019, Q-40) |
 | Secrets in transit | TLS, and `rediss://` for the data store. A plaintext `redis://` connection is a configuration error the service warns about at startup and honours only with an explicit override |
 | Data in the ledger | Amounts, deltas, balances, request identifiers, and the customer's optional metadata. Billing-relevant, not personal |
 | Data in logs | No `external_id` values, no tenant names, no `metadata` content, no secrets (NFR-O6, DR-043) |
 | Retention | Events 90 days, audit 400 days, both configurable, both applied by a bounded background job and never by an API call (DR-044, NFR-C6) |
-| Egress | None in the MVP. No telemetry, no update check, no crash reporting, no usage measurement. v0.3 webhooks are the only egress, operator-configured (NFR-S3) |
+| Egress | None in the MVP. No telemetry, no update check, no crash reporting, no usage measurement. v0.3 webhooks are the only egress, operator-configured (NFR-S3), and off unless the operator sets a signing key (ADR-0019) |
 | Backups | Postgres only. The fast store is not backed up, because it is rebuildable and a backup of it would be a second copy of revenue-bearing state to protect (NFR-OPS4) |
 | Deletion | Tenants are soft-deleted. Hard deletion of a tenant with ledger history is not exposed, because the history is the customer's contractual record (DR-035, INV-P3) |
 | Multi-tenancy | One customer per instance. This is a **security boundary**, which is why it is an ADR rather than a scaling choice: a compromise of one instance is a compromise of one customer's data |
@@ -147,7 +147,7 @@ the first candidate for a post-MVP release.
 | Credential stuffing against the admin API | 256-bit secrets make guessing infeasible; rate limiting per key and per IP; no default credentials | An attacker with a valid admin key has full control, by design |
 | Lua injection through a feature key or tenant id | Keys built by one tested function; values passed as `ARGV`; the script body is a constant (NFR-S8) | A bypass is P0 |
 | Integer overflow in an amount | `int64` parsed strictly; Lua arithmetic in doubles is a real hazard, so amounts are validated and bounded before the script and the script range-checks (see below) | **Lua uses doubles.** `2^53` is where integer arithmetic stops being exact. Amounts above that are rejected with `400 validation_failed` and the limit is documented |
-| Replay of a webhook (v0.3) | HMAC signature with a timestamp and a JTI, and a documented receiver-side replay window | Receiver-side idempotency remains the receiver's responsibility |
+| Replay of a webhook (v0.3) | HMAC signature with a timestamp and a JTI, and a documented receiver-side replay window. Amended 2026-10-31 (`IP-21`): HMAC-SHA256 over the timestamp, the `event_id` and the body; the JTI is the `event_id` and the window 300 seconds ([webhooks.md](webhooks.md) §3) | Receiver-side idempotency remains the receiver's responsibility |
 | Webhook SSRF (v0.3) | Endpoints must be `https`, private and link-local ranges are refused by default with an explicit override, redirects are not followed, and DNS is re-checked on connect | A customer who deliberately points a webhook at their own infrastructure is not an attack |
 | Ledger tampering by an operator | Audit log is append-only by convention, the ledger has a four-way reconciliation check, and a mismatch is a P1 alert | An operator with database write access can alter both. Detected by reconciliation, not prevented. Stated plainly |
 | Denial of service via key churn | Key creation is admin-only and rate-limited | An admin key holder can exhaust memory with keys. Bounded cache, and the metric makes it visible |

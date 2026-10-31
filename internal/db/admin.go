@@ -781,6 +781,11 @@ func (a *Admin) DeleteTenant(ctx context.Context, actor admin.Actor, id, reason 
 		if err != nil {
 			return Classify(OpWrite, err)
 		}
+		// A deleted tenant is told about nothing (DR-055): its webhook goes in
+		// the same transaction, audited, so no delivery can follow the delete.
+		if err := removeWebhook(ctx, tx, actor, before.ID.String(), "tenant deleted", false); err != nil {
+			return err
+		}
 		for i := range keys {
 			k, err := scanAdminKey(tx.QueryRowContext(ctx, `UPDATE api_keys SET state = 'revoked', revoked_at = $2
  WHERE id = $1 RETURNING `+keyRow, keys[i].ID, at.UTC()))

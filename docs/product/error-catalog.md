@@ -80,6 +80,7 @@ caller get charged for the failure?
 | `feature_not_found` | 404 | Unknown feature key on the admin API | no | no | Check the key |
 | `plan_not_found` | 404 | Unknown plan on the admin API | no | no | Check the plan identifier |
 | `api_key_not_found` | 404 | Revoking a key id that names no key | no | no | List the keys and check the id. Revoking a key that is already revoked succeeds |
+| `webhook_not_found` | 404 | Reading, removing or rotating the secret of a webhook the tenant does not have (v0.3, DR-055) | no | no | Configure one with `PUT`. A soft delete of the tenant removed its webhook |
 | `payload_too_large` | 413 | `metadata` above the size limit | no | no | Shrink `metadata`. It is a correlation aid, not a data store |
 | `idempotency_key_reuse` | 409 | Key reused for a different operation | no | no, with a **new** key | Use a distinct key per logical operation (DR-028) |
 | `plan_in_use` | 409 | Delete attempted while referenced | no | no | Archive instead |
@@ -106,7 +107,7 @@ caller get charged for the failure?
 | `service_unavailable` | 503 | Data store unreachable, or the atomic script could not be evaluated | **no partial change**. A timeout after the command reached the store cannot tell whether it ran, so a mutation was applied whole or not at all | yes, with backoff and jitter, and with the **same** `Idempotency-Key`, which replays an applied mutation rather than charging it twice | Fail open or closed **in your application**, deliberately (DR-037) |
 | `control_plane_unavailable` | 503 | Postgres unreachable and the tenant is not in the snapshot | no | yes | Retry. Cached tenants are unaffected, which is why this code exists separately |
 | `internal_error` | 500 | A defect | **must be no** | yes, with a new idempotency key only if the previous attempt is known not to have applied | Quote the `request_id`. A `500` on a mutation always means nothing was applied, because the mutation is atomic |
-| `not_implemented` | 501 | A v0.2+ surface called on an MVP build. **Reserved** from `IP-17`: no route of this build raises it (Q-34) | no | no | Upgrade, or use the MVP equivalent |
+| `not_implemented` | 501 | A later-release surface called on a build or an instance that does not provide it: since `IP-21`, a webhook route on an instance without `QUOTACORE_WEBHOOK_SIGNING_KEY` (Q-42) | no | no | Enable the surface, or upgrade |
 
 > **Amended 2026-10-19 (`IP-07`).** The `service_unavailable` row said no state changes. The chaos
 > table in [testing-strategy.md](../architecture/testing-strategy.md) §6 already allows "a success with a
@@ -159,6 +160,15 @@ caller get charged for the failure?
 > field as unknown with `validation_failed`, so an old build never issues an unbound key in place of
 > a bound one.
 
+> **Amended 2026-10-31 (`IP-21`).** `webhook_not_found` is new: a read, removal or rotation of a
+> tenant's webhook when the tenant has none, kept apart from `tenant_not_found` so a typo in the
+> tenant is never read as an empty configuration. `not_implemented` is no longer reserved: the
+> webhook routes answer it after authentication on an instance whose operator has not set the
+> signing key, which is how an instance that has not opted into egress answers (ADR-0019, Q-42),
+> and Q-34's prediction that the next later-release surface would raise it again is what happened.
+> The webhook cell lists `control_plane_unavailable` and not `service_unavailable`, because the
+> routes read and write only Postgres.
+
 **The 500 guarantee.** A `500` on `consume` or `refund` always means the balance is unchanged.
 The mutation is a single atomic script execution, so there is no state in which a deduction was
 partially applied. This is a strong, testable guarantee and it is what makes a client-side retry
@@ -194,6 +204,7 @@ The complete mapping, so no error can be documented in one place and forgotten i
 | `DELETE /v1/admin/tenants/{id}/overrides/{feature_key}` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `feature_not_found`, `tenant_deleted`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
 | `GET /v1/admin/tenants/{id}/events` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
 | `GET /v1/admin/audit` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
+| `PUT /v1/admin/tenants/{id}/webhook`, `GET /v1/admin/tenants/{id}/webhook`, `DELETE /v1/admin/tenants/{id}/webhook`, `POST /v1/admin/tenants/{id}/webhook/rotate-secret` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `webhook_not_found`, `tenant_deleted`, `payload_too_large`, `rate_limited`, `control_plane_unavailable`, `internal_error`, `not_implemented` |
 | `POST /v1/admin/keys`, `GET /v1/admin/keys`, `DELETE /v1/admin/keys/{id}` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `api_key_not_found`, `tenant_not_found`, `tenant_deleted`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
 | `GET /v1/admin/status`, `GET /healthz`, `GET /readyz` | none |
 | `GET /metrics`, `GET /openapi.json`, `GET /docs` | none |

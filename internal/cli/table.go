@@ -124,6 +124,16 @@ var commands = []Command{
 	{Name: "tenant override clear", Op: "clearTenantOverride", Args: []string{"tenant", "feature_key"}, Writes: true,
 		Summary: "Clear one feature's override", setup: overrideClear},
 
+	// A tenant's webhook (IP-21, DR-055).
+	{Name: "tenant webhook get", Op: "getTenantWebhook", Args: []string{"tenant"},
+		Summary: "Show a tenant's webhook; its secret is never shown"},
+	{Name: "tenant webhook set", Op: "putTenantWebhook", Args: []string{"tenant"}, Writes: true,
+		Summary: "Create or replace a tenant's webhook; a create prints its secret once", setup: webhookSet},
+	{Name: "tenant webhook delete", Op: "deleteTenantWebhook", Args: []string{"tenant"}, Writes: true,
+		Summary: "Remove a tenant's webhook"},
+	{Name: "tenant webhook rotate-secret", Op: "rotateTenantWebhookSecret", Args: []string{"tenant"}, Writes: true,
+		Summary: "Replace a tenant's webhook secret, printed once; the old one stops verifying"},
+
 	// The three an operator reaches for in a dispute (DoD 2).
 	{Name: "grant", Op: "grantTenant", Args: []string{"tenant"}, Writes: true,
 		Summary: "Add bonus quota for the current cycle; a retried grant is a second grant", setup: grant},
@@ -419,6 +429,44 @@ func overrideSet(f *flags) build {
 		}
 		return send(b)
 	}
+}
+
+// webhookSet builds a webhook PUT: the endpoint and one --subscribe per
+// entry, each plan_change, cycle_rollover, threshold_crossing:<feature>:<percent>
+// or absolute_threshold:<feature>:<remaining>.
+func webhookSet(f *flags) build {
+	endpoint := f.str("endpoint", "the https URL deliveries are posted to; --url is the service's own")
+	subs := f.list("subscribe", "plan_change, cycle_rollover, threshold_crossing:<feature>:<percent> or absolute_threshold:<feature>:<remaining>; repeat it")
+	f.need("endpoint", "subscribe")
+	return func([]string) (request, error) {
+		b := &contract.WebhookPut{URL: *endpoint}
+		for _, v := range *subs {
+			sub, err := subscription(v)
+			if err != nil {
+				return request{}, err
+			}
+			b.Subscriptions = append(b.Subscriptions, sub)
+		}
+		return send(b)
+	}
+}
+
+func subscription(v string) (contract.WebhookSubscription, error) {
+	parts := strings.Split(v, ":")
+	sub := contract.WebhookSubscription{Type: contract.WebhookSubscriptionType(parts[0])}
+	switch {
+	case len(parts) == 1 && (parts[0] == "plan_change" || parts[0] == "cycle_rollover"):
+		return sub, nil
+	case len(parts) == 3 && (parts[0] == "threshold_crossing" || parts[0] == "absolute_threshold"):
+		n, err := parseInt("subscribe", parts[2])
+		if err != nil {
+			return sub, err
+		}
+		sub.FeatureKey = contract.NewOptFeatureKey(contract.FeatureKey(parts[1]))
+		sub.Value = contract.NewOptInt64(n)
+		return sub, nil
+	}
+	return sub, usagef("--subscribe %q is not plan_change, cycle_rollover, threshold_crossing:<feature>:<percent> or absolute_threshold:<feature>:<remaining>", v)
 }
 
 func overrideClear(f *flags) build {

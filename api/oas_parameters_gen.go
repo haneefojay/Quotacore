@@ -84,6 +84,14 @@ type DeleteTenantParams struct {
 	ID string
 }
 
+// DeleteTenantWebhookParams is parameters of deleteTenantWebhook operation.
+type DeleteTenantWebhookParams struct {
+	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
+	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
+	// is `404 tenant_not_found`, never `400`, and is never echoed.
+	ID string
+}
+
 // ForceRolloverParams is parameters of forceRollover operation.
 type ForceRolloverParams struct {
 	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
@@ -108,6 +116,14 @@ type GetPlanParams struct {
 
 // GetTenantParams is parameters of getTenant operation.
 type GetTenantParams struct {
+	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
+	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
+	// is `404 tenant_not_found`, never `400`, and is never echoed.
+	ID string
+}
+
+// GetTenantWebhookParams is parameters of getTenantWebhook operation.
+type GetTenantWebhookParams struct {
 	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
 	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
 	// is `404 tenant_not_found`, never `400`, and is never echoed.
@@ -218,6 +234,14 @@ type PlanImpactParams struct {
 	ID string
 }
 
+// PutTenantWebhookParams is parameters of putTenantWebhook operation.
+type PutTenantWebhookParams struct {
+	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
+	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
+	// is `404 tenant_not_found`, never `400`, and is never echoed.
+	ID string
+}
+
 // RefundParams is parameters of refund operation.
 type RefundParams struct {
 	// One key per logical operation, reused across every attempt including retries. Derive it from your
@@ -244,6 +268,14 @@ type ResumeTenantParams struct {
 type RevokeKeyParams struct {
 	// A key identifier (the UUID, not the secret).
 	ID uuid.UUID
+}
+
+// RotateTenantWebhookSecretParams is parameters of rotateTenantWebhookSecret operation.
+type RotateTenantWebhookSecretParams struct {
+	// A tenant identifier. Either the UUID or the `external_id`; both address a tenant. A UUID-shaped
+	// value is looked up as an id first and as an `external_id` second. An identifier that names no tenant
+	// is `404 tenant_not_found`, never `400`, and is never echoed.
+	ID string
 }
 
 // SetTenantBalanceParams is parameters of setTenantBalance operation.

@@ -158,9 +158,9 @@ func TestNoRefIsUnresolvedAndNoComponentIsDead(t *testing.T) {
 		}
 		used[target] = true
 	}
-	// ErrorNotImplemented is kept so not_implemented keeps its 501, though no
-	// route answers it any more (Q-34).
-	reserved := map[string]bool{"components/responses/ErrorNotImplemented": true}
+	// WebhookPayload is the body a delivery carries, which no route of this API returns: it is
+	// documented for the receiver and sent by the delivery worker (IP-21, IP-22).
+	reserved := map[string]bool{"components/schemas/WebhookPayload": true}
 	for target := range defined {
 		if !used[target] && !reserved[target] {
 			t.Errorf("%s is defined and never referenced", target)

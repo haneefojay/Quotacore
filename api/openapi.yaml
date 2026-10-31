@@ -78,6 +78,10 @@ tags:
     description: Tenants, their plan assignment, grants, overrides and usage history.
   - name: admin-keys
     description: API key issuance and revocation. A key is never readable after issue.
+  - name: admin-webhooks
+    description: |
+      A tenant's webhook: its endpoint, what it is told about, and the secret that signs it
+      (v0.3). Configuring one opens no connection.
   - name: admin-observe
     description: Status and audit. The two routes an operator reads when something is wrong.
   - name: operational
@@ -1589,6 +1593,167 @@ paths:
         '503':
           $ref: '#/components/responses/ErrorUnavailable'
   
+  /v1/admin/tenants/{id}/webhook:
+    parameters:
+      - $ref: '#/components/parameters/TenantIdPath'
+    put:
+      tags: [admin-webhooks]
+      operationId: putTenantWebhook
+      summary: Configure a tenant's webhook
+      description: |
+        Creates or replaces the tenant's one webhook: an `https` endpoint and the set of things it
+        is told about (DR-055). A tenant has at most one; several endpoints per tenant are a later
+        release.
+
+        The first `PUT` creates it and answers `201` with the signing `secret`, **once**. The
+        secret is derived from the operator's signing key and is never stored, so no route can
+        return it again; a lost secret is replaced with `rotate-secret` (Q-40). A later `PUT`
+        replaces the URL and the subscription set, answers `200`, and keeps the secret.
+
+        The subscription set can name a **threshold crossing**, a percentage of the allowance
+        used, and an **absolute threshold**, a remaining balance, separately and on the same
+        feature, as well as plan changes and cycle rollovers. A threshold names a metered feature
+        whose entitlements are anchored, because only a cycle balance can cross one.
+
+        Configuring a webhook opens no connection. Delivery is v0.3's later work, and webhooks are
+        off unless the operator has set `QUOTACORE_WEBHOOK_SIGNING_KEY`: without it every webhook
+        route answers `501 not_implemented` (ADR-0019, Q-42). A soft-deleted tenant is
+        `409 tenant_deleted`.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookPut'
+            examples:
+              thresholds:
+                summary: Tell the endpoint at 80% used, at 100 left, and on a plan change
+                value:
+                  url: https://hooks.example.com/quotacore
+                  subscriptions:
+                    - type: threshold_crossing
+                      feature_key: api.requests
+                      value: 80
+                    - type: absolute_threshold
+                      feature_key: api.requests
+                      value: 100
+                    - type: plan_change
+      responses:
+        '200':
+          $ref: '#/components/responses/WebhookOK'
+        '201':
+          $ref: '#/components/responses/WebhookCreated'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequestPlain'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorTenantNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflictTenantDeleted'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '501':
+          $ref: '#/components/responses/ErrorNotImplemented'
+        '503':
+          $ref: '#/components/responses/ErrorControlPlaneUnavailable'
+    get:
+      tags: [admin-webhooks]
+      operationId: getTenantWebhook
+      summary: Read a tenant's webhook
+      description: |
+        The endpoint, the subscription set and the secret's generation. The secret itself is never
+        in this response (Q-40). A tenant with no webhook is `404 webhook_not_found`.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      responses:
+        '200':
+          $ref: '#/components/responses/WebhookOK'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorWebhookNotFound'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '501':
+          $ref: '#/components/responses/ErrorNotImplemented'
+        '503':
+          $ref: '#/components/responses/ErrorControlPlaneUnavailable'
+    delete:
+      tags: [admin-webhooks]
+      operationId: deleteTenantWebhook
+      summary: Remove a tenant's webhook
+      description: |
+        The tenant is told about nothing from then on, and its secret stops verifying. A tenant
+        with no webhook is `404 webhook_not_found`, so a mistyped tenant is never mistaken for a
+        removal. A soft delete of the tenant removes its webhook in the same transaction.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      responses:
+        '204':
+          $ref: '#/components/responses/NoContent'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorWebhookNotFound'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '501':
+          $ref: '#/components/responses/ErrorNotImplemented'
+        '503':
+          $ref: '#/components/responses/ErrorControlPlaneUnavailable'
+
+  /v1/admin/tenants/{id}/webhook/rotate-secret:
+    parameters:
+      - $ref: '#/components/parameters/TenantIdPath'
+    post:
+      tags: [admin-webhooks]
+      operationId: rotateTenantWebhookSecret
+      summary: Replace a tenant's webhook secret
+      description: |
+        Issues a new secret and returns it, once. The previous secret stops verifying at once, so
+        the receiver must be given the new one before the next delivery is expected. Takes no
+        body. A tenant with no webhook is `404 webhook_not_found`.
+      security:
+        - bearerAuth: []
+      x-required-scope: admin
+      responses:
+        '200':
+          $ref: '#/components/responses/WebhookSecretOK'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbiddenScope'
+        '404':
+          $ref: '#/components/responses/ErrorWebhookNotFound'
+        '429':
+          $ref: '#/components/responses/ErrorRateLimited'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+        '501':
+          $ref: '#/components/responses/ErrorNotImplemented'
+        '503':
+          $ref: '#/components/responses/ErrorControlPlaneUnavailable'
+
   /v1/admin/keys:
     get:
       tags: [admin-keys]
@@ -2245,6 +2410,13 @@ components:
           request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
           details:
             tenant_external_id: acme-prod-01
+    WebhookNotFound:
+      summary: A tenant with no webhook
+      value:
+        error:
+          code: webhook_not_found
+          message: the tenant has no webhook
+          request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
     TenantNotFound:
       summary: Unknown or soft-deleted tenant
       description: |
@@ -2586,17 +2758,16 @@ components:
           details:
             tenant_external_id: acme-prod-01
     NotImplemented:
-      summary: A later-release surface called on an MVP build
+      summary: Webhooks called on an instance that has not enabled them
       description: |
-        The remedy is to upgrade, or to use the MVP equivalent. This is not a transient failure
-        and retrying does not help.
+        The remedy is to enable the surface, which for webhooks is setting
+        `QUOTACORE_WEBHOOK_SIGNING_KEY` (Q-42), or to upgrade. This is not a transient failure and
+        retrying does not help.
       value:
         error:
           code: not_implemented
-          message: this endpoint is not available in v0.1
+          message: webhooks are not enabled on this instance
           request_id: 01J8Z6M2QK9V3X7B4C0N5TDEFA
-          details:
-            available_in: v0.2
 
   responses:
 
@@ -3168,6 +3339,84 @@ components:
                 expires_at: '2027-01-01T00:00:00+01:00'
                 key: qc_runtime_9f2c1a4e7b8d.kZ3nQ7xR2vT9wY4bH6mP1sD8fG5jL0cA
 
+    WebhookOK:
+      x-status: 200
+      description: The tenant's webhook as stored. The secret is never in it (Q-40).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Webhook'
+          examples:
+            webhook:
+              summary: Two thresholds on one feature, and plan changes
+              value:
+                tenant_external_id: acme-prod-01
+                url: https://hooks.example.com/quotacore
+                subscriptions:
+                  - type: threshold_crossing
+                    feature_key: api.requests
+                    value: 80
+                  - type: absolute_threshold
+                    feature_key: api.requests
+                    value: 100
+                  - type: plan_change
+                secret_generation: 1
+                created_at: '2026-10-31T14:10:00+00:00'
+                updated_at: '2026-10-31T14:10:00+00:00'
+
+    WebhookCreated:
+      x-status: 201
+      description: |
+        The webhook was created. This response and a rotation's are the only ones that contain the
+        signing secret; it is derived, not stored, and cannot be read back (Q-40).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/WebhookWithSecret'
+          examples:
+            created:
+              summary: The one time this secret is visible
+              value:
+                tenant_external_id: acme-prod-01
+                url: https://hooks.example.com/quotacore
+                subscriptions:
+                  - type: cycle_rollover
+                secret_generation: 1
+                created_at: '2026-10-31T14:10:00+00:00'
+                updated_at: '2026-10-31T14:10:00+00:00'
+                secret: qcwh_exampleexampleexampleexampleexampleexamplea
+
+    WebhookSecretOK:
+      x-status: 200
+      description: |
+        The secret was replaced. The new one is in this response and nowhere else, and the old one
+        no longer verifies.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/WebhookWithSecret'
+          examples:
+            rotated:
+              summary: Generation 2 replaces generation 1
+              value:
+                tenant_external_id: acme-prod-01
+                url: https://hooks.example.com/quotacore
+                subscriptions:
+                  - type: cycle_rollover
+                secret_generation: 2
+                created_at: '2026-10-31T14:10:00+00:00'
+                updated_at: '2026-10-31T15:00:00+00:00'
+                secret: qcwh_exampleexampleexampleexampleexampleexampleb
+
     AuditEntryListOK:
       x-status: 200
       description: |
@@ -3736,6 +3985,25 @@ components:
             resource_version_conflict:
               $ref: '#/components/examples/ResourceVersionConflict'
 
+    ErrorWebhookNotFound:
+      x-status: 404
+      x-codes: [tenant_not_found, webhook_not_found]
+      description: |
+        Either no tenant has that identifier, or the tenant has no webhook. Kept apart so a route
+        that reads or removes a webhook never mistakes a typo for an empty configuration.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            webhook_not_found:
+              $ref: '#/components/examples/WebhookNotFound'
+            tenant_not_found:
+              $ref: '#/components/examples/TenantNotFound'
+
     ErrorKeyNotFound:
       x-status: 404
       x-codes: [api_key_not_found]
@@ -3840,9 +4108,10 @@ components:
       x-status: 501
       x-codes: [not_implemented]
       description: |
-        A later-release surface called on an MVP build. Not transient: retrying does not help.
-        Upgrade, or use the MVP equivalent. Reserved: no route of this build raises it, because
-        boolean features, its last surface, shipped in v0.2 (Q-34).
+        A later-release surface called on a build or an instance that does not provide it. Not
+        transient: retrying does not help. Since v0.3 the webhook routes raise it when the
+        operator has not set `QUOTACORE_WEBHOOK_SIGNING_KEY`, which is how an instance that has not
+        opted into egress answers (Q-42, amending Q-34).
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'
@@ -4182,6 +4451,7 @@ components:
         - control_plane_unavailable
         - internal_error
         - not_implemented
+        - webhook_not_found
 
     ErrorResponse:
       type: object
@@ -5474,7 +5744,7 @@ components:
               value: plan.apply_now
         subject_type:
           type: string
-          enum: [tenant, plan, feature, api_key, system]
+          enum: [tenant, plan, feature, api_key, system, webhook]
           description: |
             Which kind of resource changed, so a log reader can filter by it. `system` is a note
             about the installation itself, such as the truncation an operator records after a
@@ -5529,6 +5799,180 @@ components:
           oneOf:
             - $ref: '#/components/schemas/Cursor'
             - type: 'null'
+
+    WebhookSubscriptionType:
+      type: string
+      enum: [threshold_crossing, absolute_threshold, plan_change, cycle_rollover]
+      description: |
+        What a subscription is told about (DR-055). `threshold_crossing` is a fraction of the
+        allowance used and `absolute_threshold` a remaining balance, so the two are never confused:
+        80% of a limit of 1,000 and 200 left fire together today and apart after a plan change.
+        `plan_change` matches the ledger's `plan_changed`; `cycle_rollover` matches
+        `cycle_rolled_over` and `force_rolled_over`.
+
+    WebhookSubscription:
+      type: object
+      description: |
+        One entry of a subscription set. A threshold names a metered feature with an anchored
+        cadence and a `value`; `plan_change` and `cycle_rollover` take neither, and sending one is
+        `400 validation_failed` naming the entry. Whether the feature and the value fit the type is
+        checked by the service, because JSON Schema cannot tie two fields to a third's value.
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          $ref: '#/components/schemas/WebhookSubscriptionType'
+        feature_key:
+          $ref: '#/components/schemas/FeatureKey'
+        value:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9007199254740991
+          description: |
+            For `threshold_crossing`, the percentage of the limit used, 1 to 100. For
+            `absolute_threshold`, the remaining balance, 0 to 2^53 − 1.
+
+    WebhookPut:
+      type: object
+      description: |
+        A tenant's webhook, whole. A `PUT` replaces both fields; the secret is not a field, because
+        the service derives it (Q-40).
+      additionalProperties: false
+      required: [url, subscriptions]
+      properties:
+        url:
+          type: string
+          minLength: 9
+          maxLength: 2048
+          description: |
+            An absolute `https` URL with a host, no user information and no fragment. Which
+            addresses it may resolve to is v0.3's egress policy (IP-23).
+        subscriptions:
+          type: array
+          minItems: 1
+          maxItems: 20
+          description: |
+            1 to 20 entries, no two the same. A delivery is one per ledger event, listing every
+            threshold that event crossed, so subscribing to two thresholds never splits one event
+            into two notifications with one `event_id` (INV-W1).
+          items:
+            $ref: '#/components/schemas/WebhookSubscription'
+
+    Webhook:
+      type: object
+      description: A tenant's webhook as stored. The secret is never present (Q-40).
+      additionalProperties: false
+      required: [tenant_external_id, url, subscriptions, secret_generation, created_at, updated_at]
+      properties:
+        tenant_external_id:
+          $ref: '#/components/schemas/ExternalId'
+        url:
+          type: string
+          description: The endpoint deliveries are posted to.
+        subscriptions:
+          type: array
+          description: The subscription set, in the order it was sent.
+          items:
+            $ref: '#/components/schemas/WebhookSubscription'
+        secret_generation:
+          type: integer
+          format: int64
+          minimum: 1
+          description: |
+            Which secret signs deliveries: 1 at create, and one more on each rotation. It names the
+            secret without disclosing it, so an audit row can say a rotation happened.
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    WebhookWithSecret:
+      type: object
+      description: |
+        The webhook and its signing secret, returned by a create and a rotation and by nothing
+        else. The secret is derived from the operator's signing key, the webhook and its
+        generation, and is stored nowhere (Q-40, NFR-S1).
+      additionalProperties: false
+      required: [tenant_external_id, url, subscriptions, secret_generation, created_at, updated_at, secret]
+      properties:
+        tenant_external_id:
+          $ref: '#/components/schemas/ExternalId'
+        url:
+          type: string
+          description: The endpoint deliveries are posted to.
+        subscriptions:
+          type: array
+          description: The subscription set, in the order it was sent.
+          items:
+            $ref: '#/components/schemas/WebhookSubscription'
+        secret_generation:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The generation this secret is.
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+        secret:
+          type: string
+          pattern: '^qcwh_[A-Za-z0-9_-]{43}$'
+          description: |
+            The HMAC-SHA256 key, used as these exact bytes, that signs every delivery
+            ([webhooks.md](../../docs/architecture/webhooks.md)). Shown once.
+
+    WebhookCrossing:
+      type: object
+      description: One threshold a ledger event crossed, as the subscription named it.
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          enum: [threshold_crossing, absolute_threshold]
+          description: Which kind of threshold, so a percentage is never read as a balance.
+        value:
+          type: integer
+          format: int64
+          description: The subscription's value, a percentage used or a remaining balance.
+
+    WebhookPayload:
+      type: object
+      description: |
+        The body of a delivery (v0.3). One per ledger event, so `event_id` is the ledger event's
+        own and is also the `Quotacore-Delivery` header (INV-W1). The signature covers this body
+        byte for byte; [webhooks.md](../../docs/architecture/webhooks.md) shows how to verify it.
+      additionalProperties: false
+      required: [event_id, event_type, occurred_at, tenant_external_id, feature_key, delta, balance, crossings]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: The ledger event's identifier. Deduplicate on it.
+        event_type:
+          $ref: '#/components/schemas/EventType'
+        occurred_at:
+          $ref: '#/components/schemas/Timestamp'
+        tenant_external_id:
+          $ref: '#/components/schemas/ExternalId'
+        feature_key:
+          $ref: '#/components/schemas/FeatureKey'
+        delta:
+          type: integer
+          format: int64
+          description: The signed change the event made to the balance.
+        balance:
+          type: integer
+          format: int64
+          description: The balance after the event.
+        crossings:
+          type: array
+          description: |
+            Every subscribed threshold the event crossed, possibly none when the event is a plan
+            change or a rollover the tenant subscribed to.
+          items:
+            $ref: '#/components/schemas/WebhookCrossing'
 
     Key:
       type: object

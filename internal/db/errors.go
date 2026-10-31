@@ -72,6 +72,7 @@ var (
 	ErrValidation           = &Error{Code: api.ErrorCodeValidationFailed}
 	ErrTenantDeleted        = &Error{Code: api.ErrorCodeTenantDeleted}
 	ErrKeyNotFound          = &Error{Code: api.ErrorCodeAPIKeyNotFound}
+	ErrWebhookNotFound      = &Error{Code: api.ErrorCodeWebhookNotFound}
 	ErrVersionConflict      = &Error{Code: api.ErrorCodeResourceVersionConflict}
 
 	// The refusals below are never customer-visible. A duplicate event is the
@@ -181,11 +182,20 @@ var constraints = map[string]constraintRule{
 	// feature's. The routes refuse both first, naming the same fields.
 	"api_keys_tenant_runtime_only":    validation("tenant_external_id"),
 	"features_allocation_cap_metered": validation("allocation_cap"),
+	// DR-055: the route refuses a URL that is not https and a set that is not
+	// an array first, naming the same fields; one webhook per tenant is
+	// written under the tenant's lock, and the generation only grows.
+	"webhooks_url_https":           validation("url"),
+	"webhooks_subscriptions_array": validation("subscriptions"),
+	"webhooks_generation_positive": {err: &Error{Code: api.ErrorCodeInternalError, Reason: "webhook generation"}},
+	"webhooks_pkey":                {err: &Error{Code: api.ErrorCodeInternalError, Reason: "primary key"}},
+	"webhooks_tenant_id_key":       {err: &Error{Code: api.ErrorCodeInternalError, Reason: "one webhook per tenant"}},
 
 	// Foreign keys.
 	"plan_entitlements_plan_id_fkey":               {missing: ErrPlanNotFound},
 	"plan_entitlements_feature_id_fkey":            {missing: ErrFeatureNotFound},
 	"tenants_plan_id_fkey":                         {missing: ErrPlanNotFound},
+	"webhooks_tenant_id_fkey":                      {missing: ErrTenantNotFound},
 	"tenant_entitlement_overrides_tenant_id_fkey":  {missing: ErrTenantNotFound},
 	"tenant_entitlement_overrides_feature_id_fkey": {missing: ErrFeatureNotFound},
 	"usage_events_tenant_id_fkey":                  {missing: ErrTenantNotFound},

@@ -118,6 +118,8 @@ func message(code contract.ErrorCode) string {
 		return "no tenant has that identifier"
 	case contract.ErrorCodeAPIKeyNotFound:
 		return "no API key has that id"
+	case contract.ErrorCodeWebhookNotFound:
+		return "the tenant has no webhook"
 	case contract.ErrorCodeFeatureKeyExists:
 		return "a feature with that key exists"
 	case contract.ErrorCodePlanKeyExists:

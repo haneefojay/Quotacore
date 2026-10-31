@@ -18,4 +18,5 @@ var regexMap = map[string]ogenregex.Regexp{
 	"^[a-z_]+\\.[a-z_]+$":                                      ogenregex.MustCompile("^[a-z_]+\\.[a-z_]+$"),
 	"^cnf_[0-9A-HJKMNP-TV-Z]{26}$":                             ogenregex.MustCompile("^cnf_[0-9A-HJKMNP-TV-Z]{26}$"),
 	"^qc_(runtime|admin)_[0-9a-f]{8,64}\\.[A-Za-z0-9_-]{16,}$": ogenregex.MustCompile("^qc_(runtime|admin)_[0-9a-f]{8,64}\\.[A-Za-z0-9_-]{16,}$"),
+	"^qcwh_[A-Za-z0-9_-]{43}$":                                 ogenregex.MustCompile("^qcwh_[A-Za-z0-9_-]{43}$"),
 }

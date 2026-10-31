@@ -136,6 +136,11 @@ func (c *client) finish(cmd Command, r result) int {
 		if cmd.Op == "createKey" {
 			fmt.Fprintln(c.errw, shownOnce)
 		}
+		// A webhook's create and every rotation carry its signing secret,
+		// which is derived and stored nowhere (Q-40); a replace does not.
+		if cmd.Op == "rotateTenantWebhookSecret" || (cmd.Op == "putTenantWebhook" && r.status == 201) {
+			fmt.Fprintln(c.errw, webhookShownOnce)
+		}
 		return ExitOK
 	}
 	return c.refused(r)

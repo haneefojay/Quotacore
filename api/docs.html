@@ -134,6 +134,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <li><code>DELETE</code> <span class="path">/v1/admin/keys/{id}</span></li>
 </ul>
 </li>
+<li><a href="#tag-admin-webhooks">admin-webhooks</a>
+<ul>
+<li><code>GET</code> <span class="path">/v1/admin/tenants/{id}/webhook</span></li>
+<li><code>PUT</code> <span class="path">/v1/admin/tenants/{id}/webhook</span></li>
+<li><code>DELETE</code> <span class="path">/v1/admin/tenants/{id}/webhook</span></li>
+<li><code>POST</code> <span class="path">/v1/admin/tenants/{id}/webhook/rotate-secret</span></li>
+</ul>
+</li>
 <li><a href="#tag-admin-observe">admin-observe</a>
 <ul>
 <li><code>GET</code> <span class="path">/v1/admin/audit</span></li>
@@ -1673,6 +1681,172 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p>The two codes are separate because cached tenants are unaffected when Postgres is<br>unreachable, and conflating them would make an incident impossible to diagnose<br>(DR-036).</p>
 </td></tr>
 </table>
+<h2 id="tag-admin-webhooks">admin-webhooks</h2>
+<p>A tenant&#39;s webhook: its endpoint, what it is told about, and the secret that signs it<br>(v0.3). Configuring one opens no connection.</p>
+<h3><span class="method method-get">GET</span> <span class="path">/v1/admin/tenants/{id}/webhook</span></h3>
+<p><strong>Read a tenant&#39;s webhook</strong></p>
+<p>The endpoint, the subscription set and the secret&#39;s generation. The secret itself is never<br>in this response (Q-40). A tenant with no webhook is <code>404 webhook_not_found</code>.</p>
+<p class="muted">Operation ID: <code>getTenantWebhook</code></p>
+<h4>Authorisation</h4>
+<p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
+<h4>Parameters</h4>
+<table>
+<tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant. A<br>UUID-shaped value is looked up as an id first and as an <code>external_id</code> second. An identifier<br>that names no tenant is <code>404 tenant_not_found</code>, never <code>400</code>, and is never echoed.</p>
+</td></tr>
+</table>
+<h4>Responses</h4>
+<table>
+<tr><th>Status</th><th>Content</th><th>Schema</th><th>Headers</th><th>Description</th></tr>
+<tr><td><code>200</code></td><td>application/json</td><td><a href="#schema-webhook"><code>Webhook</code></a></td><td><code>X-Request-Id</code></td><td><p>The tenant&#39;s webhook as stored. The secret is never in it (Q-40).</p>
+</td></tr>
+<tr><td><code>401</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>No usable credential. <code>api_key_invalid</code> covers unknown, revoked, expired and malformed<br>keys, and there is no recovery path for any of them: rotate.</p>
+</td></tr>
+<tr><td><code>403</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A valid key with the wrong scope. <code>403</code> and not <code>404</code>, because the caller is already<br>authenticated and hiding the endpoint helps nobody (FS-18).</p>
+</td></tr>
+<tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Either no tenant has that identifier, or the tenant has no webhook. Kept apart so a route<br>that reads or removes a webhook never mistakes a typo for an empty configuration.</p>
+</td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>501</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A later-release surface called on a build or an instance that does not provide it. Not<br>transient: retrying does not help. Since v0.3 the webhook routes raise it when the<br>operator has not set <code>QUOTACORE_WEBHOOK_SIGNING_KEY</code>, which is how an instance that has not<br>opted into egress answers (Q-42, amending Q-34).</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>Postgres did not answer. A route that reads only the control plane cannot answer<br><code>service_unavailable</code>, because it never touches the data store. Retryable with backoff and<br>jitter.</p>
+</td></tr>
+</table>
+<h3><span class="method method-put">PUT</span> <span class="path">/v1/admin/tenants/{id}/webhook</span></h3>
+<p><strong>Configure a tenant&#39;s webhook</strong></p>
+<p>Creates or replaces the tenant&#39;s one webhook: an <code>https</code> endpoint and the set of things it<br>is told about (DR-055). A tenant has at most one; several endpoints per tenant are a later<br>release.</p>
+<p>The first <code>PUT</code> creates it and answers <code>201</code> with the signing <code>secret</code>, <strong>once</strong>. The<br>secret is derived from the operator&#39;s signing key and is never stored, so no route can<br>return it again; a lost secret is replaced with <code>rotate-secret</code> (Q-40). A later <code>PUT</code><br>replaces the URL and the subscription set, answers <code>200</code>, and keeps the secret.</p>
+<p>The subscription set can name a <strong>threshold crossing</strong>, a percentage of the allowance<br>used, and an <strong>absolute threshold</strong>, a remaining balance, separately and on the same<br>feature, as well as plan changes and cycle rollovers. A threshold names a metered feature<br>whose entitlements are anchored, because only a cycle balance can cross one.</p>
+<p>Configuring a webhook opens no connection. Delivery is v0.3&#39;s later work, and webhooks are<br>off unless the operator has set <code>QUOTACORE_WEBHOOK_SIGNING_KEY</code>: without it every webhook<br>route answers <code>501 not_implemented</code> (ADR-0019, Q-42). A soft-deleted tenant is<br><code>409 tenant_deleted</code>.</p>
+<p class="muted">Operation ID: <code>putTenantWebhook</code></p>
+<h4>Authorisation</h4>
+<p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
+<h4>Parameters</h4>
+<table>
+<tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant. A<br>UUID-shaped value is looked up as an id first and as an <code>external_id</code> second. An identifier<br>that names no tenant is <code>404 tenant_not_found</code>, never <code>400</code>, and is never echoed.</p>
+</td></tr>
+</table>
+<h4>Request body</h4>
+<p>The body is <strong><a href="#schema-webhookput"><code>WebhookPut</code></a></strong> and is required. Undeclared fields are rejected with <code>400 validation_failed</code>.</p>
+<h5>Example: thresholds</h5>
+<pre><code>{
+  &#34;subscriptions&#34;: [
+    {
+      &#34;feature_key&#34;: &#34;api.requests&#34;,
+      &#34;type&#34;: &#34;threshold_crossing&#34;,
+      &#34;value&#34;: 80
+    },
+    {
+      &#34;feature_key&#34;: &#34;api.requests&#34;,
+      &#34;type&#34;: &#34;absolute_threshold&#34;,
+      &#34;value&#34;: 100
+    },
+    {
+      &#34;type&#34;: &#34;plan_change&#34;
+    }
+  ],
+  &#34;url&#34;: &#34;https://hooks.example.com/quotacore&#34;
+}</code></pre>
+<h4>Responses</h4>
+<table>
+<tr><th>Status</th><th>Content</th><th>Schema</th><th>Headers</th><th>Description</th></tr>
+<tr><td><code>200</code></td><td>application/json</td><td><a href="#schema-webhook"><code>Webhook</code></a></td><td><code>X-Request-Id</code></td><td><p>The tenant&#39;s webhook as stored. The secret is never in it (Q-40).</p>
+</td></tr>
+<tr><td><code>201</code></td><td>application/json</td><td><a href="#schema-webhookwithsecret"><code>WebhookWithSecret</code></a></td><td><code>X-Request-Id</code></td><td><p>The webhook was created. This response and a rotation&#39;s are the only ones that contain the<br>signing secret; it is derived, not stored, and cannot be read back (Q-40).</p>
+</td></tr>
+<tr><td><code>400</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The request was rejected and nothing changed. Validation errors aggregate, so one response<br>names every offending field.</p>
+</td></tr>
+<tr><td><code>401</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>No usable credential. <code>api_key_invalid</code> covers unknown, revoked, expired and malformed<br>keys, and there is no recovery path for any of them: rotate.</p>
+</td></tr>
+<tr><td><code>403</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A valid key with the wrong scope. <code>403</code> and not <code>404</code>, because the caller is already<br>authenticated and hiding the endpoint helps nobody (FS-18).</p>
+</td></tr>
+<tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Unknown or soft-deleted tenant. A soft-deleted tenant is treated exactly as absent, which<br>is why this is also the answer after a soft delete (T-15).</p>
+</td></tr>
+<tr><td><code>409</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The tenant is deleted, which is terminal, so nothing about it can change (T-7).</p>
+</td></tr>
+<tr><td><code>413</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>The body was refused <strong>before it was parsed</strong> (NFR-T6). Absent from every read route, and<br>from <code>DELETE .../overrides/{feature_key}</code>, which takes no body.</p>
+</td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>501</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A later-release surface called on a build or an instance that does not provide it. Not<br>transient: retrying does not help. Since v0.3 the webhook routes raise it when the<br>operator has not set <code>QUOTACORE_WEBHOOK_SIGNING_KEY</code>, which is how an instance that has not<br>opted into egress answers (Q-42, amending Q-34).</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>Postgres did not answer. A route that reads only the control plane cannot answer<br><code>service_unavailable</code>, because it never touches the data store. Retryable with backoff and<br>jitter.</p>
+</td></tr>
+</table>
+<h3><span class="method method-delete">DELETE</span> <span class="path">/v1/admin/tenants/{id}/webhook</span></h3>
+<p><strong>Remove a tenant&#39;s webhook</strong></p>
+<p>The tenant is told about nothing from then on, and its secret stops verifying. A tenant<br>with no webhook is <code>404 webhook_not_found</code>, so a mistyped tenant is never mistaken for a<br>removal. A soft delete of the tenant removes its webhook in the same transaction.</p>
+<p class="muted">Operation ID: <code>deleteTenantWebhook</code></p>
+<h4>Authorisation</h4>
+<p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
+<h4>Parameters</h4>
+<table>
+<tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant. A<br>UUID-shaped value is looked up as an id first and as an <code>external_id</code> second. An identifier<br>that names no tenant is <code>404 tenant_not_found</code>, never <code>400</code>, and is never echoed.</p>
+</td></tr>
+</table>
+<h4>Responses</h4>
+<table>
+<tr><th>Status</th><th>Content</th><th>Schema</th><th>Headers</th><th>Description</th></tr>
+<tr><td><code>204</code></td><td>—</td><td>—</td><td><code>X-Request-Id</code></td><td><p>Done, and there is nothing to return. <code>X-Request-Id</code> is still on the response: NFR-S10 says<br>every response carries it, and a <code>204</code> is a response.</p>
+</td></tr>
+<tr><td><code>401</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>No usable credential. <code>api_key_invalid</code> covers unknown, revoked, expired and malformed<br>keys, and there is no recovery path for any of them: rotate.</p>
+</td></tr>
+<tr><td><code>403</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A valid key with the wrong scope. <code>403</code> and not <code>404</code>, because the caller is already<br>authenticated and hiding the endpoint helps nobody (FS-18).</p>
+</td></tr>
+<tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Either no tenant has that identifier, or the tenant has no webhook. Kept apart so a route<br>that reads or removes a webhook never mistakes a typo for an empty configuration.</p>
+</td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>501</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A later-release surface called on a build or an instance that does not provide it. Not<br>transient: retrying does not help. Since v0.3 the webhook routes raise it when the<br>operator has not set <code>QUOTACORE_WEBHOOK_SIGNING_KEY</code>, which is how an instance that has not<br>opted into egress answers (Q-42, amending Q-34).</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>Postgres did not answer. A route that reads only the control plane cannot answer<br><code>service_unavailable</code>, because it never touches the data store. Retryable with backoff and<br>jitter.</p>
+</td></tr>
+</table>
+<h3><span class="method method-post">POST</span> <span class="path">/v1/admin/tenants/{id}/webhook/rotate-secret</span></h3>
+<p><strong>Replace a tenant&#39;s webhook secret</strong></p>
+<p>Issues a new secret and returns it, once. The previous secret stops verifying at once, so<br>the receiver must be given the new one before the next delivery is expected. Takes no<br>body. A tenant with no webhook is <code>404 webhook_not_found</code>.</p>
+<p class="muted">Operation ID: <code>rotateTenantWebhookSecret</code></p>
+<h4>Authorisation</h4>
+<p>Requires `bearerAuth`, held by a key with the <code>admin</code> scope.</p>
+<h4>Parameters</h4>
+<table>
+<tr><th>Name</th><th>In</th><th>Required</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>id</code></td><td><code>path</code></td><td>yes</td><td>string</td><td><p>A tenant identifier. Either the UUID or the <code>external_id</code>; both address a tenant. A<br>UUID-shaped value is looked up as an id first and as an <code>external_id</code> second. An identifier<br>that names no tenant is <code>404 tenant_not_found</code>, never <code>400</code>, and is never echoed.</p>
+</td></tr>
+</table>
+<h4>Responses</h4>
+<table>
+<tr><th>Status</th><th>Content</th><th>Schema</th><th>Headers</th><th>Description</th></tr>
+<tr><td><code>200</code></td><td>application/json</td><td><a href="#schema-webhookwithsecret"><code>WebhookWithSecret</code></a></td><td><code>X-Request-Id</code></td><td><p>The secret was replaced. The new one is in this response and nowhere else, and the old one<br>no longer verifies.</p>
+</td></tr>
+<tr><td><code>401</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>No usable credential. <code>api_key_invalid</code> covers unknown, revoked, expired and malformed<br>keys, and there is no recovery path for any of them: rotate.</p>
+</td></tr>
+<tr><td><code>403</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A valid key with the wrong scope. <code>403</code> and not <code>404</code>, because the caller is already<br>authenticated and hiding the endpoint helps nobody (FS-18).</p>
+</td></tr>
+<tr><td><code>404</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>Either no tenant has that identifier, or the tenant has no webhook. Kept apart so a route<br>that reads or removes a webhook never mistakes a typo for an empty configuration.</p>
+</td></tr>
+<tr><td><code>429</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>This service is rate-limiting the key. Distinct from <code>quota_exceeded</code>, which is the<br>tenant&#39;s allowance rather than the service&#39;s protection (DR-040).</p>
+</td></tr>
+<tr><td><code>500</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A defect, and <strong>nothing was applied</strong>. On <code>consume</code> or <code>refund</code> a <code>500</code> always means the<br>balance is unchanged, because the mutation is a single atomic script execution, so a<br>client-side retry is safe.</p>
+<p>Quote the <code>request_id</code>.</p>
+</td></tr>
+<tr><td><code>501</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code></td><td><p>A later-release surface called on a build or an instance that does not provide it. Not<br>transient: retrying does not help. Since v0.3 the webhook routes raise it when the<br>operator has not set <code>QUOTACORE_WEBHOOK_SIGNING_KEY</code>, which is how an instance that has not<br>opted into egress answers (Q-42, amending Q-34).</p>
+</td></tr>
+<tr><td><code>503</code></td><td>application/json</td><td><a href="#schema-errorresponse"><code>ErrorResponse</code></a></td><td><code>X-Request-Id</code>, <code>Retry-After</code></td><td><p>Postgres did not answer. A route that reads only the control plane cannot answer<br><code>service_unavailable</code>, because it never touches the data store. Retryable with backoff and<br>jitter.</p>
+</td></tr>
+</table>
 <h2 id="tag-admin-observe">admin-observe</h2>
 <p>Status and audit. The two routes an operator reads when something is wrong.</p>
 <h3><span class="method method-get">GET</span> <span class="path">/v1/admin/audit</span></h3>
@@ -1947,7 +2121,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <p class="muted">Type <code>string</code></p>
 <p>The only field to branch on. Stable, permanent, lower snake case. A code may be retired<br>only in a major version, and only if no client could reasonably depend on it.</p>
 <p>The enum is the catalogue by reference, and a contract test asserts the two match, so the<br>service cannot raise a code that is not in<br>[error-catalog.md](../../docs/product/error-catalog.md).</p>
-<p>One of: <code>validation_failed</code>, <code>invalid_amount</code>, <code>invalid_window</code>, <code>invalid_timezone</code>, <code>missing_idempotency_key</code>, <code>unauthorized</code>, <code>api_key_invalid</code>, <code>insufficient_scope</code>, <code>feature_not_in_plan</code>, <code>feature_archived</code>, <code>tenant_suspended</code>, <code>tenant_not_found</code>, <code>feature_not_found</code>, <code>plan_not_found</code>, <code>api_key_not_found</code>, <code>payload_too_large</code>, <code>idempotency_key_reuse</code>, <code>plan_in_use</code>, <code>feature_in_use</code>, <code>feature_key_exists</code>, <code>tenant_exists</code>, <code>tenant_deleted</code>, <code>plan_key_exists</code>, <code>refund_exceeds_grant</code>, <code>grant_exceeds_ceiling</code>, <code>reset_not_supported</code>, <code>feature_not_metered</code>, <code>feature_not_anchored</code>, <code>feature_unit_immutable</code>, <code>resource_version_conflict</code>, <code>confirmation_required</code>, <code>quota_exceeded</code>, <code>rate_limited</code>, <code>service_unavailable</code>, <code>control_plane_unavailable</code>, <code>internal_error</code>, <code>not_implemented</code></p>
+<p>One of: <code>validation_failed</code>, <code>invalid_amount</code>, <code>invalid_window</code>, <code>invalid_timezone</code>, <code>missing_idempotency_key</code>, <code>unauthorized</code>, <code>api_key_invalid</code>, <code>insufficient_scope</code>, <code>feature_not_in_plan</code>, <code>feature_archived</code>, <code>tenant_suspended</code>, <code>tenant_not_found</code>, <code>feature_not_found</code>, <code>plan_not_found</code>, <code>api_key_not_found</code>, <code>payload_too_large</code>, <code>idempotency_key_reuse</code>, <code>plan_in_use</code>, <code>feature_in_use</code>, <code>feature_key_exists</code>, <code>tenant_exists</code>, <code>tenant_deleted</code>, <code>plan_key_exists</code>, <code>refund_exceeds_grant</code>, <code>grant_exceeds_ceiling</code>, <code>reset_not_supported</code>, <code>feature_not_metered</code>, <code>feature_not_anchored</code>, <code>feature_unit_immutable</code>, <code>resource_version_conflict</code>, <code>confirmation_required</code>, <code>quota_exceeded</code>, <code>rate_limited</code>, <code>service_unavailable</code>, <code>control_plane_unavailable</code>, <code>internal_error</code>, <code>not_implemented</code>, <code>webhook_not_found</code></p>
 <h3 id="schema-errorresponse">ErrorResponse</h3>
 <p class="muted">Type <code>object</code></p>
 <p>The one error shape, everywhere, and it is non-negotiable. No endpoint returns a bare<br><code>400</code> or a bare <code>500</code> without it.</p>
@@ -2678,6 +2852,114 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <tr><td><code>entries</code></td><td><code>array</code></td><td>yes</td><td><p>The page of entries, newest first. An empty page is <code>[]</code>, never <code>null</code>.</p>
 </td></tr>
 <tr><td><code>next_cursor</code></td><td>—</td><td>no</td><td></td></tr>
+</table>
+<h3 id="schema-webhooksubscriptiontype">WebhookSubscriptionType</h3>
+<p class="muted">Type <code>string</code></p>
+<p>What a subscription is told about (DR-055). <code>threshold_crossing</code> is a fraction of the<br>allowance used and <code>absolute_threshold</code> a remaining balance, so the two are never confused:<br>80% of a limit of 1,000 and 200 left fire together today and apart after a plan change.<br><code>plan_change</code> matches the ledger&#39;s <code>plan_changed</code>; <code>cycle_rollover</code> matches<br><code>cycle_rolled_over</code> and <code>force_rolled_over</code>.</p>
+<p>One of: <code>threshold_crossing</code>, <code>absolute_threshold</code>, <code>plan_change</code>, <code>cycle_rollover</code></p>
+<h3 id="schema-webhooksubscription">WebhookSubscription</h3>
+<p class="muted">Type <code>object</code></p>
+<p>One entry of a subscription set. A threshold names a metered feature with an anchored<br>cadence and a <code>value</code>; <code>plan_change</code> and <code>cycle_rollover</code> take neither, and sending one is<br><code>400 validation_failed</code> naming the entry. Whether the feature and the value fit the type is<br>checked by the service, because JSON Schema cannot tie two fields to a third&#39;s value.</p>
+<ul>
+<li><p><strong>Undeclared fields are rejected.</strong> A field that is not in this schema is a <code>400 validation_failed</code>.</p>
+</li>
+</ul>
+<table>
+<tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+<tr><td><code>type</code></td><td><a href="#schema-webhooksubscriptiontype"><code>WebhookSubscriptionType</code></a></td><td>yes</td><td></td></tr>
+<tr><td><code>feature_key</code></td><td><a href="#schema-featurekey"><code>FeatureKey</code></a></td><td>no</td><td></td></tr>
+<tr><td><code>value</code></td><td><code>integer (int64)</code></td><td>no</td><td><p>For <code>threshold_crossing</code>, the percentage of the limit used, 1 to 100. For<br><code>absolute_threshold</code>, the remaining balance, 0 to 2^53 − 1.</p>
+</td></tr>
+</table>
+<h3 id="schema-webhookput">WebhookPut</h3>
+<p class="muted">Type <code>object</code></p>
+<p>A tenant&#39;s webhook, whole. A <code>PUT</code> replaces both fields; the secret is not a field, because<br>the service derives it (Q-40).</p>
+<ul>
+<li><p><strong>Undeclared fields are rejected.</strong> A field that is not in this schema is a <code>400 validation_failed</code>.</p>
+</li>
+</ul>
+<table>
+<tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+<tr><td><code>url</code></td><td><code>string</code></td><td>yes</td><td><p>An absolute <code>https</code> URL with a host, no user information and no fragment. Which<br>addresses it may resolve to is v0.3&#39;s egress policy (IP-23).</p>
+</td></tr>
+<tr><td><code>subscriptions</code></td><td><code>array</code></td><td>yes</td><td><p>1 to 20 entries, no two the same. A delivery is one per ledger event, listing every<br>threshold that event crossed, so subscribing to two thresholds never splits one event<br>into two notifications with one <code>event_id</code> (INV-W1).</p>
+</td></tr>
+</table>
+<h3 id="schema-webhook">Webhook</h3>
+<p class="muted">Type <code>object</code></p>
+<p>A tenant&#39;s webhook as stored. The secret is never present (Q-40).</p>
+<ul>
+<li><p><strong>Undeclared fields are rejected.</strong> A field that is not in this schema is a <code>400 validation_failed</code>.</p>
+</li>
+</ul>
+<table>
+<tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+<tr><td><code>tenant_external_id</code></td><td><a href="#schema-externalid"><code>ExternalId</code></a></td><td>yes</td><td></td></tr>
+<tr><td><code>url</code></td><td><code>string</code></td><td>yes</td><td><p>The endpoint deliveries are posted to.</p>
+</td></tr>
+<tr><td><code>subscriptions</code></td><td><code>array</code></td><td>yes</td><td><p>The subscription set, in the order it was sent.</p>
+</td></tr>
+<tr><td><code>secret_generation</code></td><td><code>integer (int64)</code></td><td>yes</td><td><p>Which secret signs deliveries: 1 at create, and one more on each rotation. It names the<br>secret without disclosing it, so an audit row can say a rotation happened.</p>
+</td></tr>
+<tr><td><code>created_at</code></td><td><a href="#schema-timestamp"><code>Timestamp</code></a></td><td>yes</td><td></td></tr>
+<tr><td><code>updated_at</code></td><td><a href="#schema-timestamp"><code>Timestamp</code></a></td><td>yes</td><td></td></tr>
+</table>
+<h3 id="schema-webhookwithsecret">WebhookWithSecret</h3>
+<p class="muted">Type <code>object</code></p>
+<p>The webhook and its signing secret, returned by a create and a rotation and by nothing<br>else. The secret is derived from the operator&#39;s signing key, the webhook and its<br>generation, and is stored nowhere (Q-40, NFR-S1).</p>
+<ul>
+<li><p><strong>Undeclared fields are rejected.</strong> A field that is not in this schema is a <code>400 validation_failed</code>.</p>
+</li>
+</ul>
+<table>
+<tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+<tr><td><code>tenant_external_id</code></td><td><a href="#schema-externalid"><code>ExternalId</code></a></td><td>yes</td><td></td></tr>
+<tr><td><code>url</code></td><td><code>string</code></td><td>yes</td><td><p>The endpoint deliveries are posted to.</p>
+</td></tr>
+<tr><td><code>subscriptions</code></td><td><code>array</code></td><td>yes</td><td><p>The subscription set, in the order it was sent.</p>
+</td></tr>
+<tr><td><code>secret_generation</code></td><td><code>integer (int64)</code></td><td>yes</td><td><p>The generation this secret is.</p>
+</td></tr>
+<tr><td><code>created_at</code></td><td><a href="#schema-timestamp"><code>Timestamp</code></a></td><td>yes</td><td></td></tr>
+<tr><td><code>updated_at</code></td><td><a href="#schema-timestamp"><code>Timestamp</code></a></td><td>yes</td><td></td></tr>
+<tr><td><code>secret</code></td><td><code>string</code></td><td>yes</td><td><p>The HMAC-SHA256 key, used as these exact bytes, that signs every delivery<br>([webhooks.md](../../docs/architecture/webhooks.md)). Shown once.</p>
+</td></tr>
+</table>
+<h3 id="schema-webhookcrossing">WebhookCrossing</h3>
+<p class="muted">Type <code>object</code></p>
+<p>One threshold a ledger event crossed, as the subscription named it.</p>
+<ul>
+<li><p><strong>Undeclared fields are rejected.</strong> A field that is not in this schema is a <code>400 validation_failed</code>.</p>
+</li>
+</ul>
+<table>
+<tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+<tr><td><code>type</code></td><td><code>string</code></td><td>yes</td><td><p>Which kind of threshold, so a percentage is never read as a balance.</p>
+</td></tr>
+<tr><td><code>value</code></td><td><code>integer (int64)</code></td><td>yes</td><td><p>The subscription&#39;s value, a percentage used or a remaining balance.</p>
+</td></tr>
+</table>
+<h3 id="schema-webhookpayload">WebhookPayload</h3>
+<p class="muted">Type <code>object</code></p>
+<p>The body of a delivery (v0.3). One per ledger event, so <code>event_id</code> is the ledger event&#39;s<br>own and is also the <code>Quotacore-Delivery</code> header (INV-W1). The signature covers this body<br>byte for byte; [webhooks.md](../../docs/architecture/webhooks.md) shows how to verify it.</p>
+<ul>
+<li><p><strong>Undeclared fields are rejected.</strong> A field that is not in this schema is a <code>400 validation_failed</code>.</p>
+</li>
+</ul>
+<table>
+<tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+<tr><td><code>event_id</code></td><td><code>string (uuid)</code></td><td>yes</td><td><p>The ledger event&#39;s identifier. Deduplicate on it.</p>
+</td></tr>
+<tr><td><code>event_type</code></td><td><a href="#schema-eventtype"><code>EventType</code></a></td><td>yes</td><td></td></tr>
+<tr><td><code>occurred_at</code></td><td><a href="#schema-timestamp"><code>Timestamp</code></a></td><td>yes</td><td></td></tr>
+<tr><td><code>tenant_external_id</code></td><td><a href="#schema-externalid"><code>ExternalId</code></a></td><td>yes</td><td></td></tr>
+<tr><td><code>feature_key</code></td><td><a href="#schema-featurekey"><code>FeatureKey</code></a></td><td>yes</td><td></td></tr>
+<tr><td><code>delta</code></td><td><code>integer (int64)</code></td><td>yes</td><td><p>The signed change the event made to the balance.</p>
+</td></tr>
+<tr><td><code>balance</code></td><td><code>integer (int64)</code></td><td>yes</td><td><p>The balance after the event.</p>
+</td></tr>
+<tr><td><code>crossings</code></td><td><code>array</code></td><td>yes</td><td><p>Every subscribed threshold the event crossed, possibly none when the event is a plan<br>change or a rollover the tenant subscribed to.</p>
+</td></tr>
 </table>
 <h3 id="schema-key">Key</h3>
 <p class="muted">Type <code>object</code></p>

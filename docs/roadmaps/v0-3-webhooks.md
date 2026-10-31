@@ -12,7 +12,7 @@ Read [roadmap-index.md](roadmap-index.md) first.
 
 | ID | Phase | Depends on | Status |
 | --- | --- | --- | --- |
-| `IP-21` | Webhook configuration and signing | `IP-16` | `BLOCKED` |
+| `IP-21` | Webhook configuration and signing | `IP-16` | `COMPLETE` |
 | `IP-22` | Delivery, retries and dead letters | `IP-21` | `BLOCKED` |
 | `IP-23` | Egress protections and delivery metrics | `IP-22` | `BLOCKED` |
 
@@ -38,7 +38,7 @@ follow, and each is a phase rather than a task inside a phase:
 
 ## IP-21 — Webhook configuration and signing
 
-**Status** `BLOCKED`, gated on `IP-16`, and on the ADR that re-scopes NFR-S3.
+**Status** `COMPLETE`. Opened and closed 2026-10-31, after `IP-16` and with [ADR-0019](../decisions/0019-webhook-egress.md), the ADR that re-scopes NFR-S3, as its gate. 7 of 7 DoD items met by T-20.
 
 **Objective.** A per-tenant endpoint, a secret, and an event-type subscription set, with signatures a
 customer can verify.
@@ -75,6 +75,22 @@ customer can verify.
    against a real signature and asserts it passes — then tampers with one byte and asserts it fails.
 7. The route returns `501 not_implemented` on a v0.1 or v0.2 build (NFR-S1 for the version check is
    NFR-S9's sibling, the version route).
+
+   > **Amended 2026-10-31 (`IP-21`) — item 7 read for an instance.** No v0.1 or v0.2 build has the
+   > webhook routes, so none can answer them; a v0.1 build answers a bare `404` for an unknown
+   > path. The item is read as: an instance that has not enabled webhooks, by leaving
+   > `QUOTACORE_WEBHOOK_SIGNING_KEY` unset, answers every webhook route `501 not_implemented` after
+   > authentication (Q-42). That is also what a v0.2 release cut from a branch that contains the
+   > routes answers. `not_implemented` is therefore no longer reserved (Q-34).
+
+**As built (2026-10-31).** One webhook per tenant, configured by
+`PUT|GET|DELETE /v1/admin/tenants/{id}/webhook` and `POST .../webhook/rotate-secret`, and by
+`quotacore tenant webhook`. The secret is derived from the operator's signing key and stored
+nowhere (Q-40); the signature is HMAC-SHA256 over the timestamp, the `event_id` and the body, with
+a 300-second window (Q-41). `internal/webhook` holds the signature, the payload and DR-055's match
+of a ledger event against a subscription set, and opens no connection: delivery is `IP-22`'s, which
+feeds it the ledger's events. [webhooks.md](../architecture/webhooks.md) is the customer's
+document, and its verification recipe is run by a test.
 
 **Exit criteria.** A customer can configure a subscription and verify that a delivery is genuinely
 from Quotacore.

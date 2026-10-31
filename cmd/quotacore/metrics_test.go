@@ -192,8 +192,7 @@ func TestTheServedCodeLabelsAreTheCatalogue(t *testing.T) {
 		}
 	}
 	for code := range catalogue(t) {
-		// not_implemented is reserved and answered by no endpoint (Q-34).
-		if !codes[code] && code != "not_implemented" {
+		if !codes[code] {
 			t.Errorf("%s is in error-catalog.md and no errors_total series carries it", code)
 		}
 	}

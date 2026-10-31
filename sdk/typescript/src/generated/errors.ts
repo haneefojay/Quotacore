@@ -184,9 +184,14 @@ export class InternalError extends QuotacoreError {
   declare readonly code: "internal_error";
 }
 
-/** `501 not_implemented`. Upgrade, or use the MVP equivalent */
+/** `501 not_implemented`. Enable the surface, or upgrade */
 export class NotImplementedError extends QuotacoreError {
   declare readonly code: "not_implemented";
+}
+
+/** `404 webhook_not_found`. Configure one with PUT. A soft delete of the tenant removed its webhook */
+export class WebhookNotFoundError extends QuotacoreError {
+  declare readonly code: "webhook_not_found";
 }
 
 /** The class for each code. A code not listed here is raised as a plain QuotacoreError. */
@@ -228,4 +233,5 @@ export const errorClasses: { readonly [C in ErrorCode]: typeof QuotacoreError } 
   control_plane_unavailable: ControlPlaneUnavailableError,
   internal_error: InternalError,
   not_implemented: NotImplementedError,
+  webhook_not_found: WebhookNotFoundError,
 };
