@@ -158,8 +158,11 @@ func TestNoRefIsUnresolvedAndNoComponentIsDead(t *testing.T) {
 		}
 		used[target] = true
 	}
+	// ErrorNotImplemented is kept so not_implemented keeps its 501, though no
+	// route answers it any more (Q-34).
+	reserved := map[string]bool{"components/responses/ErrorNotImplemented": true}
 	for target := range defined {
-		if !used[target] {
+		if !used[target] && !reserved[target] {
 			t.Errorf("%s is defined and never referenced", target)
 		}
 	}
