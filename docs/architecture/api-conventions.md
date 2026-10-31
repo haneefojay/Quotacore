@@ -229,7 +229,7 @@ minus `consumed` is the balance before the original deduction, which is why both
 > response and balance entry carries `kind`. For `kind: boolean` the counter fields, `balance`,
 > `limit`, `bonus`, `consumed` on a balance entry, and the cycle fields, are `null`: an inclusion has
 > none of them (DR-050). An amount above `1`, or any `refund`, against a boolean feature is
-> `409 feature_not_metered`. A plan entitlement's `limit` and `reset_interval` follow section 7.4:
+> `409 feature_not_metered`. A plan entitlement's limit and reset interval follow section 7.4:
 > both required, both `null` for a boolean feature and both set for a metered one.
 
 ### 7.2 `check`
