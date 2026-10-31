@@ -76,6 +76,11 @@ Every answer carries a `kind`. A `boolean` feature is on or off: it has no count
 `FeatureNotMeteredError`. A feature the plan does not include throws `FeatureNotInPlanError`, which
 is not the same as `QuotaExceededError` on a metered feature with nothing left.
 
+A `rolling` feature is counted over a sliding window, such as `rolling_1h`, and every call to it
+must name that window in `window`; a missing or different one throws `InvalidWindowError`. Its
+answers carry `window` and `window_precision_seconds`, `balance` is what remains in the window, and
+`bonus` and the cycle fields are `null`.
+
 ## When the outcome is unknown
 
 If every attempt of a `consume` or `refund` fails in a way that might have been applied, such as

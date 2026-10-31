@@ -75,9 +75,12 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 	// A boolean entitlement has no balance hash (DR-050): its entry is its
 	// presence, so only the metered features are read, and a tenant whose
 	// asked-for features are all boolean costs no round trip at all.
+	// A rolling entitlement has no balance hash either (DR-052): its entry is
+	// its window, read by the rolling check with an amount of zero, which
+	// writes nothing.
 	var counted []string
 	for _, f := range features {
-		if !plan[f].Boolean {
+		if plan[f].Anchored() {
 			counted = append(counted, f)
 		}
 	}
@@ -100,6 +103,16 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 	for _, f := range features {
 		if plan[f].Boolean {
 			entries = append(entries, booleanEntry(f))
+			continue
+		}
+		if e := plan[f]; !e.Rolling.IsZero() {
+			out, err := s.scripts.CheckRolling(r.Context(), script.RollingRequest{TenantID: t.ID, FeatureKey: f,
+				Limit: e.Limit, Window: e.Rolling, At: ex.Accepted})
+			if err != nil {
+				fail(s.scriptError(ex, err))
+				return
+			}
+			entries = append(entries, rollingEntry(f, e.Rolling, out))
 			continue
 		}
 		st := stored[read]

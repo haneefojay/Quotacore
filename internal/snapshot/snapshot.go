@@ -363,7 +363,9 @@ func (s *Snapshot) Decide(t *Tenant, featureKey string, at time.Time) Resolution
 //
 // A boolean feature is never pinned, because it has no cadence to keep: it is
 // the tenant's while the plan includes it (DR-050), and it is listed with
-// Boolean set so a caller that enforces a counter skips it.
+// Boolean set so a caller that enforces a counter skips it. A rolling feature
+// is never pinned either, for the same reason (DR-052), and is listed with
+// Rolling set.
 func (t *Tenant) Features(at time.Time) map[string]Entitlement {
 	out := make(map[string]Entitlement, len(t.Pins))
 	for f := range t.Pins {
@@ -373,7 +375,7 @@ func (t *Tenant) Features(at time.Time) map[string]Entitlement {
 	}
 	if t.Plan != nil {
 		for f, e := range t.Plan.Entitlements {
-			if e.Boolean {
+			if e.Boolean || !e.Rolling.IsZero() {
 				out[f] = e
 			}
 		}
@@ -388,7 +390,7 @@ func (t *Tenant) Features(at time.Time) map[string]Entitlement {
 func (t *Tenant) Entitlement(featureKey string, at time.Time) (Entitlement, bool) {
 	pin, pinned := t.Pins[featureKey]
 	if !pinned && t.Plan != nil {
-		if e, ok := t.Plan.Entitlements[featureKey]; ok && e.Boolean {
+		if e, ok := t.Plan.Entitlements[featureKey]; ok && (e.Boolean || !e.Rolling.IsZero()) {
 			return e, true
 		}
 	}
@@ -504,6 +506,11 @@ func Effective(t *Tenant, featureKey string, at time.Time) Resolution {
 	r.InPlan = true
 	if e.Boolean {
 		r.Boolean = true
+		return r
+	}
+	if !e.Rolling.IsZero() {
+		r.Rolling = e.Rolling
+		r.Limit = e.Limit
 		return r
 	}
 	r.Limit = e.Limit

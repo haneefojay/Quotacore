@@ -12,6 +12,31 @@ exists, because a future implementer needs to know which statements are new.
 
 ### Added
 
+- **Rolling windows (`IP-19`), the third v0.2 phase.** A feature created with `kind: rolling` is
+  counted against a `limit` over one of seven sliding windows, `rolling_5m` to `rolling_30d`, which
+  its plan entitlement fixes in a new `window` field (DR-052, new). It has no reset interval, no
+  anchor, no cycle and no bonus, and shares no key, script or rule with an anchored feature
+  (ADR-0008). Every call names the window; one that is absent, unknown, different, or sent to an
+  anchored or boolean feature is `400 invalid_window`. The window is counted in 60 buckets in one
+  hash per tenant-feature (`qc:{t:…}:f:<feature>`), so a unit counts for at least the window less
+  one bucket and at most the window, which never refuses a request an exact count would admit
+  (`Q-36`, new, answered). Three new scripts, `consume_rolling.lua`, `check_rolling.lua` and
+  `refund_rolling.lua`, share one window block and consume.lua's idempotency block byte for byte;
+  each is one round trip. A consume is all or nothing, a refund takes the newest buckets first and
+  is `409 refund_exceeds_grant` above the window sum, and a check writes nothing. Responses carry
+  `kind: rolling`, the remaining as `balance`, `null` bonus and cycle fields, and new optional
+  `window` and `window_precision_seconds`; a rolling denial carries `next_release_at`. A grant, set,
+  force-rollover or override on a rolling feature is `409 feature_not_anchored` (new code).
+  Rolling consumption writes no ledger row (`Q-37`, new, answered). Migration `00014` adds the
+  `rolling` kind and `plan_entitlements.rolling_window_seconds`, and replaces the IP-17 pair check
+  with `plan_entitlements_shape`. T-18 (new) proves 200 concurrent consumes against 100 apply
+  exactly 100, a metered and a rolling feature side by side in one key each, a bounded and expiring
+  bucket hash, a skewed clock counted rather than lost, `invalid_window` on every mismatch, and the
+  calendar engine byte-identical to its pinned digests. The load suite gains a rolling row at
+  2,000/s against a metered run on the same stack. The CLI takes `<feature>=<limit>/<window>` and
+  `--kind rolling`, and the TypeScript SDK is regenerated. `Q-11` and `Q-30` are answered with
+  their defaults.
+
 - **`set` and `grant` as first-class operations (`IP-18`), the second v0.2 phase.** `IP-10` built
   both; this phase specified what was left and proved every item. A grant or a set has no undo, and
   is reversed by a `set` from the figure its audit row records (DR-051, new); a reversed grant keeps

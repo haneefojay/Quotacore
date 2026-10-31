@@ -44,6 +44,9 @@ type Load struct {
 	Timeout     time.Duration
 	// RunID makes every Idempotency-Key unique across runs.
 	RunID string
+	// Window is the rolling window every request names, for features seeded
+	// by SeedRolling (DR-052); empty for anchored features.
+	Window string
 }
 
 // Result is a run's figures. Latencies are in microseconds.
@@ -128,7 +131,7 @@ func Run(ctx context.Context, l Load) Result {
 				tenant := l.Tenants[j.i%int64(len(l.Tenants))]
 				feature := l.Features[(j.i/int64(len(l.Tenants)))%int64(len(l.Features))]
 				body := `{"feature_key":"` + feature + `","amount":` + strconv.FormatInt(l.Amount, 10) +
-					`,"tenant_external_id":"` + tenant + `"}`
+					`,"tenant_external_id":"` + tenant + `"` + windowField(l.Window) + `}`
 				req, _ := http.NewRequestWithContext(ctx, http.MethodPost, l.URL+path, strings.NewReader(body))
 				req.Header.Set("Authorization", "Bearer "+l.Keys[j.i%int64(len(l.Keys))])
 				req.Header.Set("Content-Type", "application/json")
@@ -210,6 +213,15 @@ func Run(ctx context.Context, l Load) Result {
 		}
 	}
 	return res
+}
+
+// windowField is the request's window member, or nothing for an anchored
+// feature.
+func windowField(window string) string {
+	if window == "" {
+		return ""
+	}
+	return `,"window":"` + window + `"`
 }
 
 // errorCode is the envelope's code, read without decoding the body.

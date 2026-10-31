@@ -19,7 +19,10 @@ yes<Equal<ListItem<"listFeatures">, components["schemas"]["Feature"]>>();
 // A boolean entitlement's counter fields are null (DR-050), so every one is nullable, and kind
 // says which reading applies.
 yes<Equal<components["schemas"]["MeteredResponse"]["balance"], number | null>>();
-yes<Equal<components["schemas"]["BalanceEntry"]["kind"], "metered" | "boolean">>();
+yes<Equal<components["schemas"]["BalanceEntry"]["kind"], "metered" | "boolean" | "rolling">>();
+// A rolling entitlement names its window (DR-052); the field is absent for any other kind.
+yes<Equal<components["schemas"]["BalanceEntry"]["window"],
+  "rolling_5m" | "rolling_15m" | "rolling_1h" | "rolling_6h" | "rolling_24h" | "rolling_7d" | "rolling_30d" | undefined>>();
 yes<Equal<components["schemas"]["PlanEntitlement"]["limit"], number | null>>();
 // @ts-expect-error a required path parameter cannot be left out
 void ((a: AdminClient) => a.getTenant({}));

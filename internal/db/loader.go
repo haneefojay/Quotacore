@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/quotacore/quotacore/internal/cycle"
+	"github.com/quotacore/quotacore/internal/rolling"
 	"github.com/quotacore/quotacore/internal/snapshot"
 )
 
@@ -46,7 +47,7 @@ const loadTenant = `
 SELECT t.id, t.external_id, t.state, t.timezone, t.anchor_at, t.version, p.id, p.key, p.version,
        coalesce((SELECT jsonb_agg(jsonb_build_object(
                     'feature', f.key, 'limit', e.limit_value, 'interval', e.interval,
-                    'archived', f.state = 'archived'))
+                    'window', e.rolling_window_seconds, 'archived', f.state = 'archived'))
                    FROM plan_entitlements e JOIN features f ON f.id = e.feature_id
                   WHERE e.plan_id = p.id), '[]'::jsonb),
        coalesce((SELECT jsonb_agg(jsonb_build_object(
@@ -68,6 +69,7 @@ type loadedRow struct {
 	Feature  string     `json:"feature"`
 	Limit    *int64     `json:"limit"`
 	Interval *string    `json:"interval"`
+	Window   *int64     `json:"window"`
 	Archived bool       `json:"archived"`
 	Until    *time.Time `json:"until"`
 }
@@ -132,9 +134,20 @@ func loadTenantRow(ctx context.Context, q querier, tenantID, lock string) (*snap
 	}
 	plan.Entitlements = make(map[string]snapshot.Entitlement, len(ents))
 	for _, e := range ents {
+		if e.Window != nil {
+			// A rolling entitlement: a limit over a sliding window, with no
+			// cadence and no pin (DR-052). plan_entitlements_shape keeps the
+			// interval null beside a window and the limit set.
+			w, ok := rolling.FromSeconds(*e.Window)
+			if !ok || e.Limit == nil || e.Interval != nil {
+				return nil, fmt.Errorf("entitlement for %s has window %d, which is not a rolling entitlement", e.Feature, *e.Window)
+			}
+			plan.Entitlements[e.Feature] = snapshot.Entitlement{Limit: *e.Limit, Rolling: w, Archived: e.Archived}
+			continue
+		}
 		if e.Limit == nil && e.Interval == nil {
 			// A boolean entitlement: an inclusion, with no counter and no
-			// cadence (DR-050). plan_entitlements_limit_pair keeps the two
+			// cadence (DR-050). plan_entitlements_shape keeps the two
 			// null together, and internal/db writes a null pair only for a
 			// boolean feature.
 			plan.Entitlements[e.Feature] = snapshot.Entitlement{Boolean: true, Archived: e.Archived}

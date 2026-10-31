@@ -13,6 +13,7 @@ import (
 
 	"github.com/quotacore/quotacore/api"
 	"github.com/quotacore/quotacore/internal/admin"
+	"github.com/quotacore/quotacore/internal/rolling"
 )
 
 // Admin is the Postgres implementation of admin.Store. Every write runs in
@@ -343,9 +344,18 @@ func (a *Admin) DeleteFeature(ctx context.Context, actor admin.Actor, key, reaso
 
 const planRow = `p.id, p.key, p.name, p.description, p.state, p.version, p.created_at, p.updated_at, p.archived_at,
  coalesce((SELECT jsonb_agg(jsonb_build_object('feature_key', f.key, 'limit', e.limit_value,
-                  'reset_interval', e.interval) ORDER BY f.key)
+                  'reset_interval', e.interval) || ` + windowJSON + ` ORDER BY f.key)
              FROM plan_entitlements e JOIN features f ON f.id = e.feature_id
             WHERE e.plan_id = p.id), '[]'::jsonb)`
+
+// windowJSON is a rolling entitlement's window as its wire name, merged into
+// the entitlement's object, and nothing at all for any other kind, so a metered
+// or boolean entitlement reads exactly as it did before IP-19 (DR-052).
+const windowJSON = `CASE e.rolling_window_seconds
+   WHEN 300 THEN '{"window":"rolling_5m"}'::jsonb WHEN 900 THEN '{"window":"rolling_15m"}'::jsonb
+   WHEN 3600 THEN '{"window":"rolling_1h"}'::jsonb WHEN 21600 THEN '{"window":"rolling_6h"}'::jsonb
+   WHEN 86400 THEN '{"window":"rolling_24h"}'::jsonb WHEN 604800 THEN '{"window":"rolling_7d"}'::jsonb
+   WHEN 2592000 THEN '{"window":"rolling_30d"}'::jsonb ELSE '{}'::jsonb END`
 
 func scanPlan(r rowScanner) (api.Plan, error) {
 	var (
@@ -438,8 +448,8 @@ func (a *Admin) CreatePlan(ctx context.Context, actor admin.Actor, in admin.NewP
 			if err := entitlementKind(kind, e, i); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO plan_entitlements (plan_id, feature_id, limit_value, interval)
- VALUES ($1, $2, $3, $4)`, id, featureID, e.Limit, e.Interval); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO plan_entitlements (plan_id, feature_id, limit_value, interval, rolling_window_seconds)
+ VALUES ($1, $2, $3, $4, $5)`, id, featureID, e.Limit, e.Interval, windowSeconds(e)); err != nil {
 				if c := Classify(OpWrite, err); errors.Is(c, ErrValidation) {
 					return &Error{Code: api.ErrorCodeValidationFailed, Field: "entitlements[" + strconv.Itoa(i) + "]"}
 				} else {
@@ -623,7 +633,7 @@ func (a *Admin) CreateTenant(ctx context.Context, actor admin.Actor, in admin.Ne
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT f.key, e.limit_value, e.interval
   FROM plan_entitlements e JOIN features f ON f.id = e.feature_id
- WHERE e.plan_id = $1 AND f.state = 'active' AND e.limit_value IS NOT NULL ORDER BY f.key`, planID)
+ WHERE e.plan_id = $1 AND f.state = 'active' AND e.interval IS NOT NULL ORDER BY f.key`, planID)
 		if err != nil {
 			return Classify(OpWrite, err)
 		}
@@ -896,12 +906,30 @@ func collect[T any](rows *sql.Rows, scan func(rowScanner) (T, error)) ([]T, erro
 // PlanEntitlement states and the schema alone cannot (IP-17 DoD 7).
 func entitlementKind(kind string, e admin.Entitlement, i int) error {
 	prefix := "entitlements[" + strconv.Itoa(i) + "]."
-	boolean := kind == "boolean"
+	boolean, rolling := kind == "boolean", kind == "rolling"
 	switch {
 	case boolean && e.Limit != nil, !boolean && e.Limit == nil:
 		return &Error{Code: api.ErrorCodeValidationFailed, Field: prefix + "limit"}
-	case boolean && e.Interval != nil, !boolean && e.Interval == nil:
+	case (boolean || rolling) && e.Interval != nil, !boolean && !rolling && e.Interval == nil:
 		return &Error{Code: api.ErrorCodeValidationFailed, Field: prefix + "reset_interval"}
+	case !rolling && e.Window != nil, rolling && e.Window == nil:
+		// A window belongs to a rolling feature and to nothing else, and a
+		// rolling feature has one (DR-052).
+		return &Error{Code: api.ErrorCodeValidationFailed, Field: prefix + "window"}
 	}
 	return nil
+}
+
+// windowSeconds is the stored form of an entitlement's window, nil when it has
+// none. The name was checked against the seven when the body was read.
+func windowSeconds(e admin.Entitlement) *int64 {
+	if e.Window == nil {
+		return nil
+	}
+	w, ok := rolling.Parse(*e.Window)
+	if !ok {
+		return nil
+	}
+	s := w.Seconds()
+	return &s
 }

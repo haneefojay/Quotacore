@@ -67,7 +67,7 @@ caller get charged for the failure?
 | --- | --- | --- | --- | --- | --- |
 | `validation_failed` | 400 | Malformed body, unknown field, bad amount, bad time zone, bad reset interval, window/cadence mismatch | no | no, fix input | Correct the request. `details.errors` names each offending field |
 | `invalid_amount` | 400 | `amount` is negative | no | no | Use the endpoint for the direction you want. A sign is never a direction (DR-023) |
-| `invalid_window` | 400 | `window` not valid for the feature's cadence, or unsupported for this release | no | no | Omit `window` for anchored cycles, or use a valid rolling window (v0.2) |
+| `invalid_window` | 400 | `window` outside the supported set, absent on a rolling feature, different from the one its entitlement configures, or sent to an anchored or boolean feature (DR-052) | no | no | Omit `window` for anchored cycles; on a rolling feature name the window its plan configures |
 | `invalid_timezone` | 400 | Time zone is not a known IANA name | no | no | Use an IANA name such as `Europe/Berlin`. Abbreviations are rejected |
 | `missing_idempotency_key` | 400 | `Idempotency-Key` absent on `consume` or `refund` | no | no | Send the header. Generate it in the SDK if available (DR-026) |
 | `unauthorized` | 401 | No credential presented | no | no | Send `Authorization: Bearer <key>` |
@@ -92,10 +92,11 @@ caller get charged for the failure?
 | `grant_exceeds_ceiling` | 409 | A `set` above `limit + bonus`, or a grant that would take the balance or the bonus past `2^53 − 1` | no | no | For a `set`, grant first; for a lasting increase, raise the limit with an override |
 | `reset_not_supported` | 409 | Rollover attempted on a `never` entitlement | no | no | Grant explicitly. There is no cycle to roll (DR-008) |
 | `feature_not_metered` | 409 | A counted operation on a boolean entitlement: `consume` or `check` of more than 1, any `refund`, or a `grant`, `set`, `force-rollover` or override | no | no | The feature is included or not and has no counter. Consume or check `1`, or make the feature metered by creating a new one (DR-050) |
+| `feature_not_anchored` | 409 | A `grant`, `set`, `force-rollover` or override on a rolling feature, which is counted over a sliding window and has no cycle balance (DR-052) | no | no | Raise the window's limit in the plan. Per-window overrides are deferred |
 | `feature_unit_immutable` | 409 | Unit change on an assigned feature | no | no | Create a new feature. Reinterpreting historical amounts is not allowed (INV-F2) |
 | `resource_version_conflict` | 409 | Optimistic concurrency on a control-plane resource | no | after re-read | Re-read the resource and retry with the current version |
 | `confirmation_required` | 409 | `apply-now` would affect more tenants than `QUOTACORE_PLAN_APPLY_CONFIRM_THRESHOLD`, so it applied nothing and returned a token | no | yes, by re-issuing **with** the token | Read `affected_tenants` and `earliest_cycle_end`, then re-issue with `confirmation_token`. Nothing was applied (DR-046) |
-| `quota_exceeded` | 429 | `balance < amount` for `consume` | no | **at `cycle_end`** | Wait for the reset, or ask for a grant. `details.cycle_end` is authoritative |
+| `quota_exceeded` | 429 | `balance < amount` for `consume`; on a rolling feature, the window sum plus the amount above the limit | no | **at `cycle_end`**, or on a rolling feature as units age out | Wait for the reset, or ask for a grant. `details.cycle_end` is authoritative; a rolling feature's `details.next_release_at` is when the oldest counted bucket leaves the window (DR-052) |
 | `rate_limited` | 429 | Service's own protective rate limit: per key on the data plane, per client address on the admin API | no | yes, with `Retry-After` | Back off. This is the *service* protecting itself, and is deliberately distinguishable from `quota_exceeded` (DR-040) |
 
 ### 2.2 Server errors — 5xx
@@ -142,6 +143,13 @@ caller get charged for the failure?
 > code is retired only in a major version, and it is reserved, which the specification checker and
 > the endpoint matrix test both name as the one exemption (Q-34).
 
+> **Amended 2026-10-31 (`IP-19`).** `feature_not_anchored` is new: a balance operation on a
+> rolling feature, which has a window and no cycle balance (DR-052). It is not
+> `feature_not_metered`, because a rolling feature is metered, and it is not
+> `reset_not_supported`, because a grant and a set are refused too. `invalid_window` is now raised
+> by v0.2's rolling features rather than by every window, and UC-17's `validation_failed` for a
+> mismatch is read as `invalid_window`, which this catalogue already named for it.
+
 **The 500 guarantee.** A `500` on `consume` or `refund` always means the balance is unchanged.
 The mutation is a single atomic script execution, so there is no state in which a deduction was
 partially applied. This is a strong, testable guarantee and it is what makes a client-side retry
@@ -173,7 +181,7 @@ The complete mapping, so no error can be documented in one place and forgotten i
 | `GET /v1/admin/plans`, `POST /v1/admin/plans`, `GET /v1/admin/plans/{id}`, `PATCH /v1/admin/plans/{id}`, `DELETE /v1/admin/plans/{id}`, `POST /v1/admin/plans/{id}/apply`, `POST /v1/admin/plans/{id}/archive` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `plan_not_found`, `plan_key_exists`, `plan_in_use`, `resource_version_conflict`, `confirmation_required`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
 | `GET /v1/admin/plans/{id}/impact` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `plan_not_found`, `rate_limited`, `control_plane_unavailable`, `internal_error` |
 | `GET /v1/admin/tenants`, `POST /v1/admin/tenants`, `GET /v1/admin/tenants/{id}`, `PATCH /v1/admin/tenants/{id}`, `POST /v1/admin/tenants/{id}/suspend`, `POST /v1/admin/tenants/{id}/resume`, `DELETE /v1/admin/tenants/{id}` | `validation_failed`, `invalid_timezone`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `tenant_exists`, `tenant_deleted`, `resource_version_conflict`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
-| `POST /v1/admin/tenants/{id}/grant`, `POST /v1/admin/tenants/{id}/set`, `POST /v1/admin/tenants/{id}/force-rollover`, `POST /v1/admin/tenants/{id}/overrides` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `feature_not_found`, `tenant_deleted`, `grant_exceeds_ceiling`, `reset_not_supported`, `feature_not_metered`, `resource_version_conflict`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
+| `POST /v1/admin/tenants/{id}/grant`, `POST /v1/admin/tenants/{id}/set`, `POST /v1/admin/tenants/{id}/force-rollover`, `POST /v1/admin/tenants/{id}/overrides` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `feature_not_found`, `tenant_deleted`, `grant_exceeds_ceiling`, `reset_not_supported`, `feature_not_metered`, `feature_not_anchored`, `resource_version_conflict`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
 | `DELETE /v1/admin/tenants/{id}/overrides/{feature_key}` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `feature_not_found`, `tenant_deleted`, `payload_too_large`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
 | `GET /v1/admin/tenants/{id}/events` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `tenant_not_found`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |
 | `GET /v1/admin/audit` | `validation_failed`, `unauthorized`, `api_key_invalid`, `insufficient_scope`, `rate_limited`, `service_unavailable`, `control_plane_unavailable`, `internal_error` |

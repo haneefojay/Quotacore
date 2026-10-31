@@ -236,10 +236,12 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	forever := asTenant(t, s.createTenant(externalID("never"), np, "UTC"))
 	// A tenant whose plan includes a boolean feature, which has no counter
 	// for a grant, a set, a rollover or an override to change (DR-050).
-	bf, bp := uniq("bf"), uniq("bp")
+	bf, bp, rf := uniq("bf"), uniq("bp"), uniq("rf")
 	s.createBooleanFeature(bf)
+	s.createRollingFeature(rf)
 	mustStatus(t, s.adminDo(http.MethodPost, "/v1/admin/plans",
-		`{"plan_key":"`+bp+`","name":"P","entitlements":[{"feature_key":"`+bf+`","limit":null,"reset_interval":null}]}`), http.StatusCreated)
+		`{"plan_key":"`+bp+`","name":"P","entitlements":[{"feature_key":"`+bf+`","limit":null,"reset_interval":null},`+
+			`{"feature_key":"`+rf+`","limit":10,"reset_interval":null,"window":"rolling_1h"}]}`), http.StatusCreated)
 	incl := asTenant(t, s.createTenant(externalID("incl"), bp, "UTC"))
 	watched := []string{tn.ID, tn2.ID, gone.ID, forever.ID, incl.ID}
 	invalidTok := "qc_admin_0123456789abcdef.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -335,6 +337,18 @@ func adminProvocations(t *testing.T) map[int]map[string]bool {
 	at("feature_not_metered", "POST /v1/admin/tenants/{id}/force-rollover", adm(http.MethodPost, ip+"/force-rollover", `{"feature_key":"`+bf+`","reason":"x"}`))
 	at("feature_not_metered", "POST /v1/admin/tenants/{id}/overrides", adm(http.MethodPost, ip+"/overrides",
 		`{"feature_key":"`+bf+`","limit_value":5,"interval":null}`))
+	// A rolling feature has a window and no cycle balance (DR-052).
+	at("feature_not_anchored", "POST /v1/admin/tenants/{id}/grant", adm(http.MethodPost, ip+"/grant", `{"feature_key":"`+rf+`","amount":1,"reason":"x"}`))
+	at("feature_not_anchored", "POST /v1/admin/tenants/{id}/set", adm(http.MethodPost, ip+"/set", `{"feature_key":"`+rf+`","value":1,"reason":"x"}`))
+	at("feature_not_anchored", "POST /v1/admin/tenants/{id}/force-rollover", adm(http.MethodPost, ip+"/force-rollover", `{"feature_key":"`+rf+`","reason":"x"}`))
+	at("feature_not_anchored", "POST /v1/admin/tenants/{id}/overrides", adm(http.MethodPost, ip+"/overrides",
+		`{"feature_key":"`+rf+`","limit_value":5,"interval":null}`))
+	// A window on a feature that is not rolling, and none on one that is,
+	// are refused naming the field (DR-052).
+	at("validation_failed", "POST /v1/admin/plans", adm(http.MethodPost, "/v1/admin/plans",
+		`{"plan_key":"`+uniq("rq")+`","name":"P","entitlements":[{"feature_key":"`+f+`","limit":5,"reset_interval":"daily","window":"rolling_1h"}]}`))
+	at("validation_failed", "POST /v1/admin/plans", adm(http.MethodPost, "/v1/admin/plans",
+		`{"plan_key":"`+uniq("rq")+`","name":"P","entitlements":[{"feature_key":"`+rf+`","limit":5,"reset_interval":null}]}`))
 	// A limit supplied for a boolean entitlement is refused, not ignored
 	// (IP-17 DoD 7).
 	at("validation_failed", "POST /v1/admin/plans", adm(http.MethodPost, "/v1/admin/plans",

@@ -380,7 +380,8 @@ type BalanceEntry struct {
 	FeatureKey FeatureKey `json:"feature_key"`
 	// The feature's kind. An included boolean entitlement is an entry whose `balance`, `limit`, `bonus`,
 	// `consumed`, `cycle_start` and `cycle_end` are all `null`: present, with no counter (DR-050). Its
-	// presence is the answer.
+	// presence is the answer. A `rolling` entry has a `window`, a `window_precision_seconds`, a null
+	// `bonus` and null cycle fields (DR-052).
 	Kind FeatureKind `json:"kind"`
 	// The balance now. Null for a boolean entitlement.
 	Balance NilAmount `json:"balance"`
@@ -391,10 +392,16 @@ type BalanceEntry struct {
 	// Net consumption in the stored cycle, derived as `limit + bonus - balance`. A refund lowers it and an
 	// administrative `set` shows through it. It is computed from the balance hash rather than read from
 	// the ledger, because this route never reads the control plane (DR-039). Null for a boolean
-	// entitlement, whose use is not counted.
+	// entitlement, whose use is not counted. For a `rolling` feature it is the window sum, and `balance`
+	// is `limit` minus it.
 	Consumed   NilAmount    `json:"consumed"`
 	CycleStart NilTimestamp `json:"cycle_start"`
 	CycleEnd   NilTimestamp `json:"cycle_end"`
+	// Present only for a `rolling` feature, the window the numbers describe (DR-052).
+	Window OptRollingWindow `json:"window"`
+	// Present only for a `rolling` feature: the width of one bucket, which is the precision of the window
+	// sum. A unit counts for at least the window less this and at most the window (DR-052).
+	WindowPrecisionSeconds OptInt64 `json:"window_precision_seconds"`
 }
 
 // GetFeatureKey returns the value of FeatureKey.
@@ -437,6 +444,16 @@ func (s *BalanceEntry) GetCycleEnd() NilTimestamp {
 	return s.CycleEnd
 }
 
+// GetWindow returns the value of Window.
+func (s *BalanceEntry) GetWindow() OptRollingWindow {
+	return s.Window
+}
+
+// GetWindowPrecisionSeconds returns the value of WindowPrecisionSeconds.
+func (s *BalanceEntry) GetWindowPrecisionSeconds() OptInt64 {
+	return s.WindowPrecisionSeconds
+}
+
 // SetFeatureKey sets the value of FeatureKey.
 func (s *BalanceEntry) SetFeatureKey(val FeatureKey) {
 	s.FeatureKey = val
@@ -475,6 +492,16 @@ func (s *BalanceEntry) SetCycleStart(val NilTimestamp) {
 // SetCycleEnd sets the value of CycleEnd.
 func (s *BalanceEntry) SetCycleEnd(val NilTimestamp) {
 	s.CycleEnd = val
+}
+
+// SetWindow sets the value of Window.
+func (s *BalanceEntry) SetWindow(val OptRollingWindow) {
+	s.Window = val
+}
+
+// SetWindowPrecisionSeconds sets the value of WindowPrecisionSeconds.
+func (s *BalanceEntry) SetWindowPrecisionSeconds(val OptInt64) {
+	s.WindowPrecisionSeconds = val
 }
 
 // BalanceEntryOKHeaders wraps BalanceEntry with response headers.
@@ -679,7 +706,9 @@ type CheckResponse struct {
 	// A denial is `allowed: false` at `200`, not a `429` (DR-024). A `429` from this route means the
 	// service is rate-limiting you. An included boolean entitlement is always `allowed: true` (DR-050).
 	Allowed bool `json:"allowed"`
-	// The feature's kind. For `boolean`, `balance`, `limit`, `bonus` and `cycle_end` are `null`.
+	// The feature's kind. For `boolean`, `balance`, `limit`, `bonus` and `cycle_end` are `null`. For
+	// `rolling`, `bonus` and `cycle_end` are `null`, `balance` is what remains in the window, and `window`
+	// and `window_precision_seconds` are present (DR-052).
 	Kind FeatureKind `json:"kind"`
 	// The balance now. Null for a boolean entitlement.
 	Balance NilAmount `json:"balance"`
@@ -688,8 +717,14 @@ type CheckResponse struct {
 	// Cycle-scoped granted quota. Null for a boolean entitlement.
 	Bonus     NilAmount `json:"bonus"`
 	Requested Amount    `json:"requested"`
-	// When a currently-denied amount would become available.
+	// When a currently-denied amount would become available. Null for a `rolling` feature, which has no
+	// cycle.
 	CycleEnd NilTimestamp `json:"cycle_end"`
+	// Present only for a `rolling` feature, the window the numbers describe (DR-052).
+	Window OptRollingWindow `json:"window"`
+	// Present only for a `rolling` feature: the width of one bucket, which is the precision of the window
+	// sum. A unit counts for at least the window less this and at most the window (DR-052).
+	WindowPrecisionSeconds OptInt64 `json:"window_precision_seconds"`
 }
 
 // GetAllowed returns the value of Allowed.
@@ -727,6 +762,16 @@ func (s *CheckResponse) GetCycleEnd() NilTimestamp {
 	return s.CycleEnd
 }
 
+// GetWindow returns the value of Window.
+func (s *CheckResponse) GetWindow() OptRollingWindow {
+	return s.Window
+}
+
+// GetWindowPrecisionSeconds returns the value of WindowPrecisionSeconds.
+func (s *CheckResponse) GetWindowPrecisionSeconds() OptInt64 {
+	return s.WindowPrecisionSeconds
+}
+
 // SetAllowed sets the value of Allowed.
 func (s *CheckResponse) SetAllowed(val bool) {
 	s.Allowed = val
@@ -760,6 +805,16 @@ func (s *CheckResponse) SetRequested(val Amount) {
 // SetCycleEnd sets the value of CycleEnd.
 func (s *CheckResponse) SetCycleEnd(val NilTimestamp) {
 	s.CycleEnd = val
+}
+
+// SetWindow sets the value of Window.
+func (s *CheckResponse) SetWindow(val OptRollingWindow) {
+	s.Window = val
+}
+
+// SetWindowPrecisionSeconds sets the value of WindowPrecisionSeconds.
+func (s *CheckResponse) SetWindowPrecisionSeconds(val OptInt64) {
+	s.WindowPrecisionSeconds = val
 }
 
 type Cursor string
@@ -1105,6 +1160,7 @@ const (
 	ErrorCodeGrantExceedsCeiling     ErrorCode = "grant_exceeds_ceiling"
 	ErrorCodeResetNotSupported       ErrorCode = "reset_not_supported"
 	ErrorCodeFeatureNotMetered       ErrorCode = "feature_not_metered"
+	ErrorCodeFeatureNotAnchored      ErrorCode = "feature_not_anchored"
 	ErrorCodeFeatureUnitImmutable    ErrorCode = "feature_unit_immutable"
 	ErrorCodeResourceVersionConflict ErrorCode = "resource_version_conflict"
 	ErrorCodeConfirmationRequired    ErrorCode = "confirmation_required"
@@ -1146,6 +1202,7 @@ func (ErrorCode) AllValues() []ErrorCode {
 		ErrorCodeGrantExceedsCeiling,
 		ErrorCodeResetNotSupported,
 		ErrorCodeFeatureNotMetered,
+		ErrorCodeFeatureNotAnchored,
 		ErrorCodeFeatureUnitImmutable,
 		ErrorCodeResourceVersionConflict,
 		ErrorCodeConfirmationRequired,
@@ -1214,6 +1271,8 @@ func (s ErrorCode) MarshalText() ([]byte, error) {
 	case ErrorCodeResetNotSupported:
 		return []byte(s), nil
 	case ErrorCodeFeatureNotMetered:
+		return []byte(s), nil
+	case ErrorCodeFeatureNotAnchored:
 		return []byte(s), nil
 	case ErrorCodeFeatureUnitImmutable:
 		return []byte(s), nil
@@ -1321,6 +1380,9 @@ func (s *ErrorCode) UnmarshalText(data []byte) error {
 		return nil
 	case ErrorCodeFeatureNotMetered:
 		*s = ErrorCodeFeatureNotMetered
+		return nil
+	case ErrorCodeFeatureNotAnchored:
+		*s = ErrorCodeFeatureNotAnchored
 		return nil
 	case ErrorCodeFeatureUnitImmutable:
 		*s = ErrorCodeFeatureUnitImmutable
@@ -2709,6 +2771,7 @@ type FeatureCreateKind string
 const (
 	FeatureCreateKindMetered FeatureCreateKind = "metered"
 	FeatureCreateKindBoolean FeatureCreateKind = "boolean"
+	FeatureCreateKindRolling FeatureCreateKind = "rolling"
 )
 
 // AllValues returns all FeatureCreateKind values.
@@ -2716,6 +2779,7 @@ func (FeatureCreateKind) AllValues() []FeatureCreateKind {
 	return []FeatureCreateKind{
 		FeatureCreateKindMetered,
 		FeatureCreateKindBoolean,
+		FeatureCreateKindRolling,
 	}
 }
 
@@ -2725,6 +2789,8 @@ func (s FeatureCreateKind) MarshalText() ([]byte, error) {
 	case FeatureCreateKindMetered:
 		return []byte(s), nil
 	case FeatureCreateKindBoolean:
+		return []byte(s), nil
+	case FeatureCreateKindRolling:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -2739,6 +2805,9 @@ func (s *FeatureCreateKind) UnmarshalText(data []byte) error {
 		return nil
 	case FeatureCreateKindBoolean:
 		*s = FeatureCreateKindBoolean
+		return nil
+	case FeatureCreateKindRolling:
+		*s = FeatureCreateKindRolling
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -2776,14 +2845,16 @@ func (*FeatureCreatedHeaders) createFeatureRes() {}
 type FeatureKey string
 
 // `metered` is counted in a unit, with an allowance per cycle. `boolean` is present or absent, with no
-// counter: no balance, no limit, no bonus and no exhaustion (DR-050). A feature's kind is chosen when
-// it is created and never changes.
+// counter: no balance, no limit, no bonus and no exhaustion (DR-050). `rolling` is counted in a unit
+// against a limit over a sliding lookback window, with no calendar cycle (DR-052). A feature's kind is
+// chosen when it is created and never changes.
 // Ref: #/components/schemas/FeatureKind
 type FeatureKind string
 
 const (
 	FeatureKindMetered FeatureKind = "metered"
 	FeatureKindBoolean FeatureKind = "boolean"
+	FeatureKindRolling FeatureKind = "rolling"
 )
 
 // AllValues returns all FeatureKind values.
@@ -2791,6 +2862,7 @@ func (FeatureKind) AllValues() []FeatureKind {
 	return []FeatureKind{
 		FeatureKindMetered,
 		FeatureKindBoolean,
+		FeatureKindRolling,
 	}
 }
 
@@ -2800,6 +2872,8 @@ func (s FeatureKind) MarshalText() ([]byte, error) {
 	case FeatureKindMetered:
 		return []byte(s), nil
 	case FeatureKindBoolean:
+		return []byte(s), nil
+	case FeatureKindRolling:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -2814,6 +2888,9 @@ func (s *FeatureKind) UnmarshalText(data []byte) error {
 		return nil
 	case FeatureKindBoolean:
 		*s = FeatureKindBoolean
+		return nil
+	case FeatureKindRolling:
+		*s = FeatureKindRolling
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -3632,10 +3709,11 @@ type MeteredRequest struct {
 	// The customer never handles an internal `tenant_id`.
 	TenantExternalID ExternalId  `json:"tenant_external_id"`
 	Metadata         OptMetadata `json:"metadata"`
-	// V0.2. Omitted means the anchored cycle, which is the only cadence in v0.1 (ADR-0008). A window that
-	// disagrees with the feature's cadence is `400 invalid_window`, and supplying any window on a v0.1
-	// build is also `invalid_window`, because the two cadences are never silently mixed.
-	Window OptMeteredRequestWindow `json:"window"`
+	// Omitted means the anchored cycle (ADR-0008). A `rolling` feature must name the window its plan
+	// entitlement configures, and any other feature must omit it: a window that is absent, different,
+	// unknown or sent to an anchored feature is `400 invalid_window`, because the two cadences are never
+	// silently mixed (DR-052).
+	Window OptRollingWindow `json:"window"`
 }
 
 // GetFeatureKey returns the value of FeatureKey.
@@ -3659,7 +3737,7 @@ func (s *MeteredRequest) GetMetadata() OptMetadata {
 }
 
 // GetWindow returns the value of Window.
-func (s *MeteredRequest) GetWindow() OptMeteredRequestWindow {
+func (s *MeteredRequest) GetWindow() OptRollingWindow {
 	return s.Window
 }
 
@@ -3684,87 +3762,8 @@ func (s *MeteredRequest) SetMetadata(val OptMetadata) {
 }
 
 // SetWindow sets the value of Window.
-func (s *MeteredRequest) SetWindow(val OptMeteredRequestWindow) {
+func (s *MeteredRequest) SetWindow(val OptRollingWindow) {
 	s.Window = val
-}
-
-// V0.2. Omitted means the anchored cycle, which is the only cadence in v0.1 (ADR-0008). A window that
-// disagrees with the feature's cadence is `400 invalid_window`, and supplying any window on a v0.1
-// build is also `invalid_window`, because the two cadences are never silently mixed.
-type MeteredRequestWindow string
-
-const (
-	MeteredRequestWindowRolling5m  MeteredRequestWindow = "rolling_5m"
-	MeteredRequestWindowRolling15m MeteredRequestWindow = "rolling_15m"
-	MeteredRequestWindowRolling1h  MeteredRequestWindow = "rolling_1h"
-	MeteredRequestWindowRolling6h  MeteredRequestWindow = "rolling_6h"
-	MeteredRequestWindowRolling24h MeteredRequestWindow = "rolling_24h"
-	MeteredRequestWindowRolling7d  MeteredRequestWindow = "rolling_7d"
-	MeteredRequestWindowRolling30d MeteredRequestWindow = "rolling_30d"
-)
-
-// AllValues returns all MeteredRequestWindow values.
-func (MeteredRequestWindow) AllValues() []MeteredRequestWindow {
-	return []MeteredRequestWindow{
-		MeteredRequestWindowRolling5m,
-		MeteredRequestWindowRolling15m,
-		MeteredRequestWindowRolling1h,
-		MeteredRequestWindowRolling6h,
-		MeteredRequestWindowRolling24h,
-		MeteredRequestWindowRolling7d,
-		MeteredRequestWindowRolling30d,
-	}
-}
-
-// MarshalText implements encoding.TextMarshaler.
-func (s MeteredRequestWindow) MarshalText() ([]byte, error) {
-	switch s {
-	case MeteredRequestWindowRolling5m:
-		return []byte(s), nil
-	case MeteredRequestWindowRolling15m:
-		return []byte(s), nil
-	case MeteredRequestWindowRolling1h:
-		return []byte(s), nil
-	case MeteredRequestWindowRolling6h:
-		return []byte(s), nil
-	case MeteredRequestWindowRolling24h:
-		return []byte(s), nil
-	case MeteredRequestWindowRolling7d:
-		return []byte(s), nil
-	case MeteredRequestWindowRolling30d:
-		return []byte(s), nil
-	default:
-		return nil, errors.Errorf("invalid value: %q", s)
-	}
-}
-
-// UnmarshalText implements encoding.TextUnmarshaler.
-func (s *MeteredRequestWindow) UnmarshalText(data []byte) error {
-	switch MeteredRequestWindow(data) {
-	case MeteredRequestWindowRolling5m:
-		*s = MeteredRequestWindowRolling5m
-		return nil
-	case MeteredRequestWindowRolling15m:
-		*s = MeteredRequestWindowRolling15m
-		return nil
-	case MeteredRequestWindowRolling1h:
-		*s = MeteredRequestWindowRolling1h
-		return nil
-	case MeteredRequestWindowRolling6h:
-		*s = MeteredRequestWindowRolling6h
-		return nil
-	case MeteredRequestWindowRolling24h:
-		*s = MeteredRequestWindowRolling24h
-		return nil
-	case MeteredRequestWindowRolling7d:
-		*s = MeteredRequestWindowRolling7d
-		return nil
-	case MeteredRequestWindowRolling30d:
-		*s = MeteredRequestWindowRolling30d
-		return nil
-	default:
-		return errors.Errorf("invalid value: %q", data)
-	}
 }
 
 // One feature's numbers after a metered call, describing the cycle the call fell in. A replay returns
@@ -3775,7 +3774,9 @@ type MeteredResponse struct {
 	TenantExternalID ExternalId `json:"tenant_external_id"`
 	FeatureKey       FeatureKey `json:"feature_key"`
 	// The feature's kind. For `boolean`, `balance`, `limit` and `bonus` are `null` and the cycle fields
-	// are `null`, because an inclusion has no counter and no cycle (DR-050).
+	// are `null`, because an inclusion has no counter and no cycle (DR-050). For `rolling`, `balance` is
+	// what remains in the window, `bonus` and the cycle fields are `null`, and `window` and
+	// `window_precision_seconds` are present (DR-052).
 	Kind FeatureKind `json:"kind"`
 	// The remaining balance after the deduction. Null for a boolean entitlement.
 	Balance NilAmount `json:"balance"`
@@ -3791,6 +3792,11 @@ type MeteredResponse struct {
 	Consumed   Amount       `json:"consumed"`
 	CycleStart NilTimestamp `json:"cycle_start"`
 	CycleEnd   NilTimestamp `json:"cycle_end"`
+	// Present only for a `rolling` feature, the window the numbers describe (DR-052).
+	Window OptRollingWindow `json:"window"`
+	// Present only for a `rolling` feature: the width of one bucket, which is the precision of the window
+	// sum. A unit counts for at least the window less this and at most the window (DR-052).
+	WindowPrecisionSeconds OptInt64 `json:"window_precision_seconds"`
 	// Whether this response is a replay of a stored one. A client that needs to know whether this call
 	// moved anything reads this, rather than inferring it from arithmetic, and it can also read the
 	// `Idempotent-Replay` header.
@@ -3842,6 +3848,16 @@ func (s *MeteredResponse) GetCycleEnd() NilTimestamp {
 	return s.CycleEnd
 }
 
+// GetWindow returns the value of Window.
+func (s *MeteredResponse) GetWindow() OptRollingWindow {
+	return s.Window
+}
+
+// GetWindowPrecisionSeconds returns the value of WindowPrecisionSeconds.
+func (s *MeteredResponse) GetWindowPrecisionSeconds() OptInt64 {
+	return s.WindowPrecisionSeconds
+}
+
 // GetReplayed returns the value of Replayed.
 func (s *MeteredResponse) GetReplayed() bool {
 	return s.Replayed
@@ -3890,6 +3906,16 @@ func (s *MeteredResponse) SetCycleStart(val NilTimestamp) {
 // SetCycleEnd sets the value of CycleEnd.
 func (s *MeteredResponse) SetCycleEnd(val NilTimestamp) {
 	s.CycleEnd = val
+}
+
+// SetWindow sets the value of Window.
+func (s *MeteredResponse) SetWindow(val OptRollingWindow) {
+	s.Window = val
+}
+
+// SetWindowPrecisionSeconds sets the value of WindowPrecisionSeconds.
+func (s *MeteredResponse) SetWindowPrecisionSeconds(val OptInt64) {
+	s.WindowPrecisionSeconds = val
 }
 
 // SetReplayed sets the value of Replayed.
@@ -5042,52 +5068,6 @@ func (o OptMetadata) Or(d Metadata) Metadata {
 	return d
 }
 
-// NewOptMeteredRequestWindow returns new OptMeteredRequestWindow with value set to v.
-func NewOptMeteredRequestWindow(v MeteredRequestWindow) OptMeteredRequestWindow {
-	return OptMeteredRequestWindow{
-		Value: v,
-		Set:   true,
-	}
-}
-
-// OptMeteredRequestWindow is optional MeteredRequestWindow.
-type OptMeteredRequestWindow struct {
-	Value MeteredRequestWindow
-	Set   bool
-}
-
-// IsSet returns true if OptMeteredRequestWindow was set.
-func (o OptMeteredRequestWindow) IsSet() bool { return o.Set }
-
-// Reset unsets value.
-func (o *OptMeteredRequestWindow) Reset() {
-	var v MeteredRequestWindow
-	o.Value = v
-	o.Set = false
-}
-
-// SetTo sets value to v.
-func (o *OptMeteredRequestWindow) SetTo(v MeteredRequestWindow) {
-	o.Set = true
-	o.Value = v
-}
-
-// Get returns value and boolean that denotes whether value was set.
-func (o OptMeteredRequestWindow) Get() (v MeteredRequestWindow, ok bool) {
-	if !o.Set {
-		return v, false
-	}
-	return o.Value, true
-}
-
-// Or returns value if set, or given parameter if does not.
-func (o OptMeteredRequestWindow) Or(d MeteredRequestWindow) MeteredRequestWindow {
-	if v, ok := o.Get(); ok {
-		return v
-	}
-	return d
-}
-
 // NewOptNilCursor returns new OptNilCursor with value set to v.
 func NewOptNilCursor(v Cursor) OptNilCursor {
 	return OptNilCursor{
@@ -5150,6 +5130,74 @@ func (o OptNilCursor) Get() (v Cursor, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptNilCursor) Or(d Cursor) Cursor {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNilRollingWindow returns new OptNilRollingWindow with value set to v.
+func NewOptNilRollingWindow(v RollingWindow) OptNilRollingWindow {
+	return OptNilRollingWindow{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilRollingWindow is optional nullable RollingWindow.
+type OptNilRollingWindow struct {
+	Value RollingWindow
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilRollingWindow was set.
+func (o OptNilRollingWindow) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilRollingWindow) Reset() {
+	var v RollingWindow
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilRollingWindow) SetTo(v RollingWindow) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilRollingWindow) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilRollingWindow) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v RollingWindow
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilRollingWindow) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilRollingWindow) Get() (v RollingWindow, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilRollingWindow) Or(d RollingWindow) RollingWindow {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -5242,6 +5290,52 @@ func (o OptPlanKey) Get() (v PlanKey, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptPlanKey) Or(d PlanKey) PlanKey {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptRollingWindow returns new OptRollingWindow with value set to v.
+func NewOptRollingWindow(v RollingWindow) OptRollingWindow {
+	return OptRollingWindow{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptRollingWindow is optional RollingWindow.
+type OptRollingWindow struct {
+	Value RollingWindow
+	Set   bool
+}
+
+// IsSet returns true if OptRollingWindow was set.
+func (o OptRollingWindow) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptRollingWindow) Reset() {
+	var v RollingWindow
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptRollingWindow) SetTo(v RollingWindow) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptRollingWindow) Get() (v RollingWindow, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptRollingWindow) Or(d RollingWindow) RollingWindow {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -6087,14 +6181,19 @@ func (*PlanCreatedHeaders) createPlanRes() {}
 // by the convention in api-conventions.md section 7.4: a metered feature takes a number and an
 // interval, and a boolean feature takes `null` for both, because an inclusion has no ceiling and no
 // cycle (UC-02, DR-050). A number for either on a boolean feature, or a `null` on a metered one, is
-// `400 validation_failed` naming the field, rather than being ignored.
+// `400 validation_failed` naming the field, rather than being ignored. A rolling feature takes a
+// `limit`, a `null` `reset_interval` and a `window`, and `window` is absent or `null` for any other
+// kind (DR-052).
 // Ref: #/components/schemas/PlanEntitlement
 type PlanEntitlement struct {
 	FeatureKey FeatureKey `json:"feature_key"`
-	// The cycle allowance of a metered feature; `null` for a boolean one.
+	// The cycle allowance of a metered feature, or the window allowance of a rolling one; `null` for a
+	// boolean one.
 	Limit NilLimit `json:"limit"`
-	// The cadence of a metered feature; `null` for a boolean one.
+	// The cadence of a metered feature; `null` for a boolean or rolling one.
 	ResetInterval NilResetInterval `json:"reset_interval"`
+	// The lookback of a rolling feature; absent or `null` for any other kind (DR-052).
+	Window OptNilRollingWindow `json:"window"`
 }
 
 // GetFeatureKey returns the value of FeatureKey.
@@ -6112,6 +6211,11 @@ func (s *PlanEntitlement) GetResetInterval() NilResetInterval {
 	return s.ResetInterval
 }
 
+// GetWindow returns the value of Window.
+func (s *PlanEntitlement) GetWindow() OptNilRollingWindow {
+	return s.Window
+}
+
 // SetFeatureKey sets the value of FeatureKey.
 func (s *PlanEntitlement) SetFeatureKey(val FeatureKey) {
 	s.FeatureKey = val
@@ -6125,6 +6229,11 @@ func (s *PlanEntitlement) SetLimit(val NilLimit) {
 // SetResetInterval sets the value of ResetInterval.
 func (s *PlanEntitlement) SetResetInterval(val NilResetInterval) {
 	s.ResetInterval = val
+}
+
+// SetWindow sets the value of Window.
+func (s *PlanEntitlement) SetWindow(val OptNilRollingWindow) {
+	s.Window = val
 }
 
 // What an apply-now of the plan as saved would affect, read-only. Nothing is re-anchored, no audit row
@@ -6501,6 +6610,86 @@ func (s *ResetInterval) UnmarshalText(data []byte) error {
 		return nil
 	case ResetIntervalNever:
 		*s = ResetIntervalNever
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// The lookback of a `rolling` entitlement (DR-052). A string, never a number of seconds, so a unit
+// mistake cannot reach the service (Q-11). Each window is counted in 60 buckets, so its precision is
+// one sixtieth of it: 5 s for `rolling_5m`, 12 h for `rolling_30d`.
+// Ref: #/components/schemas/RollingWindow
+type RollingWindow string
+
+const (
+	RollingWindowRolling5m  RollingWindow = "rolling_5m"
+	RollingWindowRolling15m RollingWindow = "rolling_15m"
+	RollingWindowRolling1h  RollingWindow = "rolling_1h"
+	RollingWindowRolling6h  RollingWindow = "rolling_6h"
+	RollingWindowRolling24h RollingWindow = "rolling_24h"
+	RollingWindowRolling7d  RollingWindow = "rolling_7d"
+	RollingWindowRolling30d RollingWindow = "rolling_30d"
+)
+
+// AllValues returns all RollingWindow values.
+func (RollingWindow) AllValues() []RollingWindow {
+	return []RollingWindow{
+		RollingWindowRolling5m,
+		RollingWindowRolling15m,
+		RollingWindowRolling1h,
+		RollingWindowRolling6h,
+		RollingWindowRolling24h,
+		RollingWindowRolling7d,
+		RollingWindowRolling30d,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s RollingWindow) MarshalText() ([]byte, error) {
+	switch s {
+	case RollingWindowRolling5m:
+		return []byte(s), nil
+	case RollingWindowRolling15m:
+		return []byte(s), nil
+	case RollingWindowRolling1h:
+		return []byte(s), nil
+	case RollingWindowRolling6h:
+		return []byte(s), nil
+	case RollingWindowRolling24h:
+		return []byte(s), nil
+	case RollingWindowRolling7d:
+		return []byte(s), nil
+	case RollingWindowRolling30d:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *RollingWindow) UnmarshalText(data []byte) error {
+	switch RollingWindow(data) {
+	case RollingWindowRolling5m:
+		*s = RollingWindowRolling5m
+		return nil
+	case RollingWindowRolling15m:
+		*s = RollingWindowRolling15m
+		return nil
+	case RollingWindowRolling1h:
+		*s = RollingWindowRolling1h
+		return nil
+	case RollingWindowRolling6h:
+		*s = RollingWindowRolling6h
+		return nil
+	case RollingWindowRolling24h:
+		*s = RollingWindowRolling24h
+		return nil
+	case RollingWindowRolling7d:
+		*s = RollingWindowRolling7d
+		return nil
+	case RollingWindowRolling30d:
+		*s = RollingWindowRolling30d
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	contract "github.com/quotacore/quotacore/api"
+	"github.com/quotacore/quotacore/internal/rolling"
 )
 
 var intervals = map[string]bool{"hourly": true, "daily": true, "weekly": true, "monthly": true, "yearly": true, "never": true}
@@ -110,7 +112,7 @@ func (b *body) entitlements() []Entitlement {
 		sub := &body{fields: fields}
 		for name := range fields {
 			switch name {
-			case "feature_key", "limit", "reset_interval":
+			case "feature_key", "limit", "reset_interval", "window":
 			default:
 				sub.add(name, "is not a field of an entitlement")
 			}
@@ -132,6 +134,16 @@ func (b *body) entitlements() []Entitlement {
 					sub.add("reset_interval", "must be hourly, daily, weekly, monthly, yearly or never")
 				}
 				e.Interval = &v
+			}
+		}
+		// window is optional and nullable: absent or null for every kind but
+		// rolling, which must name one (DR-052).
+		if raw, present := sub.fields["window"]; present && string(bytes.TrimSpace(raw)) != "null" {
+			if v, ok := sub.str("window", true, nil, 1, 16); ok {
+				if _, known := rolling.Parse(v); !known {
+					sub.add("window", "must be rolling_5m, rolling_15m, rolling_1h, rolling_6h, rolling_24h, rolling_7d or rolling_30d")
+				}
+				e.Window = &v
 			}
 		}
 		if e.Feature != "" {

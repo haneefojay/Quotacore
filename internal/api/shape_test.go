@@ -115,17 +115,20 @@ func TestNoProductBehaviour(t *testing.T) {
 	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
 
 	wantPackages := map[string]bool{
-		"api":                    true,
-		"internal/admin":         true,
-		"cmd/quotacore":          true,
-		"internal/api":           true,
-		"internal/auth":          true,
-		"internal/cli":           true,
-		"internal/cycle":         true,
-		"internal/dataplane":     true,
-		"internal/envelope":      true,
-		"internal/ledger":        true,
-		"internal/reconcile":     true,
+		"api":                true,
+		"internal/admin":     true,
+		"cmd/quotacore":      true,
+		"internal/api":       true,
+		"internal/auth":      true,
+		"internal/cli":       true,
+		"internal/cycle":     true,
+		"internal/dataplane": true,
+		"internal/envelope":  true,
+		"internal/ledger":    true,
+		"internal/reconcile": true,
+		// IP-19's: the seven rolling windows, which import nothing of the
+		// calendar's (DR-052, ADR-0008).
+		"internal/rolling":       true,
 		"internal/db":            true,
 		"internal/observability": true,
 		"internal/snapshot":      true,

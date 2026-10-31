@@ -135,6 +135,36 @@ boolean check fails with `503` exactly when a metered one does and a client's fa
 fail-closed choice (DR-037) behaves the same for both kinds.
 *Verified by:* T-16, and the `Endpoint × error matrix` contract test for the `409 feature_not_metered` mapping.
 
+### DR-052 — A rolling entitlement is a limit over a sliding window, counted in sixty buckets
+A feature whose `kind` is `rolling` is counted in its unit against a `limit` over one of seven
+windows, `rolling_5m`, `rolling_15m`, `rolling_1h`, `rolling_6h`, `rolling_24h`, `rolling_7d` or
+`rolling_30d`, which the plan entitlement fixes. It has no reset interval, no anchor, no cycle, no
+bonus and no pin, and shares no key, script or rule with an anchored entitlement (ADR-0008). Every
+call names the window: a `window` that is absent, unknown, different from the entitlement's, or sent
+to an anchored or boolean feature, is `400 invalid_window`, because the two cadences are never
+silently mixed. The window is counted in 60 buckets of one sixtieth of it, aligned to the Unix
+epoch, in one hash per tenant-feature; the window sum is the current bucket and the 59 before it, so
+a unit counts for **at least the window less one bucket and at most the window** after it was
+consumed. The sum is therefore never above the exact sum, and a bucket never denies a request an
+exact count would admit; the cost is that up to one bucket's worth of extra use can be admitted
+within one bucket's span (Q-36). A `consume` is all or nothing (DR-017) against `sum + amount <=
+limit`; a `refund` takes units out of the newest buckets first and is `409 refund_exceeds_grant`
+when the window holds less than the amount (DR-019); a `check` writes nothing. The response's
+`balance` is the limit less the sum, `bonus` and the cycle fields are `null`, and `window` and
+`window_precision_seconds` are present. A `grant`, `set`, `force-rollover` or override on a rolling
+feature is `409 feature_not_anchored`; per-window overrides are deferred. The hash expires when its
+newest bucket leaves the window, so it holds at most one window's buckets. A bucket written by a
+host whose clock runs ahead is counted, not pruned, so a skew can raise the sum and never quietly
+lower it beyond the skew itself, which the clock-skew alert bounds (NFR-D8, Q-26). A plan change
+that keeps the feature keeps its buckets, because rolling use is history and not an allowance.
+Rolling consumption writes no ledger row (Q-37). A feature's kind never changes (F-5).
+*Rationale:* ADR-0008 left exact against approximate open, on condition that the decision state its
+error bound. Sixty buckets bound memory per tenant-feature regardless of the limit, keep to the
+keyspace that was frozen for it, and err in the direction that never refuses a paying customer.
+*Consequence:* a limit is a rate over a window, not a total for a period, and a customer who
+needs both holds a metered and a rolling feature side by side.
+*Verified by:* T-18, and the `Endpoint × error matrix` contract test for `400 invalid_window` and `409 feature_not_anchored`.
+
 ### DR-013 — Plan assignment change is a hard reset
 Assigning a tenant to a different plan applies the new plan's limits immediately and sets the
 tenant's anchor to the current instant, starting a fresh cycle.

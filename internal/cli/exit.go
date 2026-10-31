@@ -38,7 +38,8 @@ func ExitFor(code contract.ErrorCode) int {
 	case contract.ErrorCodeIdempotencyKeyReuse, contract.ErrorCodePlanInUse, contract.ErrorCodeFeatureInUse,
 		contract.ErrorCodeFeatureKeyExists, contract.ErrorCodeTenantExists, contract.ErrorCodeTenantDeleted,
 		contract.ErrorCodePlanKeyExists, contract.ErrorCodeRefundExceedsGrant, contract.ErrorCodeGrantExceedsCeiling,
-		contract.ErrorCodeResetNotSupported, contract.ErrorCodeFeatureNotMetered, contract.ErrorCodeFeatureUnitImmutable,
+		contract.ErrorCodeResetNotSupported, contract.ErrorCodeFeatureNotMetered, contract.ErrorCodeFeatureNotAnchored,
+		contract.ErrorCodeFeatureUnitImmutable,
 		contract.ErrorCodeResourceVersionConflict, contract.ErrorCodeConfirmationRequired:
 		return ExitConflict
 	case contract.ErrorCodeQuotaExceeded:

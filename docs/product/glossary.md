@@ -85,7 +85,7 @@ most of the confusion in this product comes from words that sound right and mean
 | **Re-anchor** | Moving a tenant's anchor to a new instant, by a plan change or an apply-now, which starts cycle 0 under the new anchor, re-pins the tenant and discards its balances (DR-013). The balances are rewritten after the commit by the re-anchor drain | A rollover. A rollover advances the index under one anchor; a re-anchor restarts it |
 | **Replayed** | An idempotency-key repeat whose fingerprint matches: the stored response is returned with `replayed: true` and nothing changed | A retry that re-applied the mutation. A replay never mutates |
 | **Reset interval** | One of `hourly`, `daily`, `weekly`, `monthly`, `yearly`, `never` | A duration in seconds, or a cron expression. A `monthly` tenant is not "every 30 days" |
-| **Rolling window** | A lookback of a fixed duration over recent events, requested per call, in the current cycle. v0.2 | A sliding counter with exact boundary semantics, or a moving average. The MVP does not do this (ADR-0008) |
+| **Rolling window** | A lookback of a fixed duration over recent use, configured on a `rolling` feature's entitlement and named on every call, counted in 60 buckets so a unit counts for at least the window less one bucket and at most the window. v0.2 (DR-052) | A calendar cycle: it has no anchor, no reset and no cycle index. Nor an exact per-event log, or a moving average |
 | **Runtime scope** | The `runtime` API-key scope, sufficient for the data plane and not for `/v1/admin` | Read-only. It can deduct and refund, which is why refund rights carry the ceiling invariant (DR-019) |
 | **Runtime-reconstructed balance** | A balance rebuilt from the ledger when the data store is lost entirely, valid for a full-allowance-recovery case and flagged approximate (ADR-0016) | A general recovery mechanism. It is not equivalent to the live balance in every case |
 | **Service instance** | One running Quotacore process, owning one Postgres schema and one Redis key space | A multi-tenant cloud service. One customer per instance (ADR-0013) |
@@ -99,7 +99,7 @@ most of the confusion in this product comes from words that sound right and mean
 | **TTL** | The Redis key expiry, `cycle_end + 24h`, a garbage-collection bound | The reset schedule, or a data retention policy |
 | **UC-nn** | A use case in [use-cases.md](use-cases.md) | A user story. Use cases here are normative and testable |
 | **Usage event** (`usage_events`) | One appended record of one applied balance mutation, with a signed delta and a `request_id` | An audit record, or a metric |
-| **Window** | In the MVP, the current cycle. In v0.2, an explicit `window` parameter selecting a rolling lookback | A configurable duration in the MVP. Omitting it means the anchored cycle |
+| **Window** | For an anchored feature, the current cycle. For a `rolling` feature, the lookback its entitlement configures, which every call names in `window` (DR-052) | A duration the caller chooses. Omitting it means the anchored cycle, and naming one a feature does not have is `invalid_window` |
 | **Zone data version** | The `tzdata` version the binary was built with, reported by `GET /v1/admin/status` so a boundary discrepancy is diagnosable (DR-001) | A timezone itself |
 
 ---

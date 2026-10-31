@@ -69,6 +69,11 @@ func (s *Service) resolve(t *snapshot.LoadedTenant, feature string) (held, error
 		// re-limit (DR-050).
 		return held{}, refuse(dataplane.NotMetered(feature))
 	}
+	if !e.Rolling.IsZero() {
+		// A rolling entitlement counts in a window and has no cycle balance
+		// to grant to, set, roll over or re-limit (DR-052).
+		return held{}, refuse(dataplane.NotAnchored(feature))
+	}
 	loc, err := time.LoadLocation(tenant.Timezone)
 	if err != nil {
 		return held{}, fmt.Errorf("load zone: %w", err)
